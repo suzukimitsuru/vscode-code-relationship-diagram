@@ -1,0 +1,2 @@
+# vscode-code-dependency-diagram
+コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています
