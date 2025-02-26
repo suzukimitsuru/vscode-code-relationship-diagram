@@ -6,4 +6,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- 設定ファイルのファイル指定を読み込み検索する #3
+- 多言語対応を行う #2
+- 設定ファイルがある場合に拡張機能を起動する #1
 - Initial release

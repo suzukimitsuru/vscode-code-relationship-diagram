@@ -6,18 +6,27 @@
   "engines": {
     "vscode": "^1.97.0"
   },
-  "categories": [
-    "Other"
+  "categories": [ "Visualization" ],
+  "activationEvents": [
+    "workspaceContains:.vscode/code-dependency-diagram_settings.json"
   ],
-  "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "vscode-code-dependency-diagram.helloWorld",
-        "title": "Hello World"
+        "title": "Hello World",
+        "category": "code-dependency-diagram"
       }
-    ]
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "vscode-code-dependency-diagram.helloWorld",
+          "description": "Displays a Hello World message"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "yarn run package",
@@ -31,7 +40,7 @@
     "pretest": "yarn run compile-tests && yarn run compile && yarn run lint",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "rm -rf .vscode-test/user-data && vscode-test"
   },
   "devDependencies": {
     "@types/vscode": "^1.97.0",
