@@ -16,17 +16,10 @@
       {
         "command": "vscode-code-dependency-diagram.helloWorld",
         "title": "Hello World",
-        "category": "code-dependency-diagram"
+        "category": "code-dependency-diagram",
+        "description": "%hello-description%"
       }
-    ],
-    "menus": {
-      "commandPalette": [
-        {
-          "command": "vscode-code-dependency-diagram.helloWorld",
-          "description": "Displays a Hello World message"
-        }
-      ]
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "yarn run package",
