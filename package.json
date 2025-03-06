@@ -1,6 +1,6 @@
 {
-  "name": "vscode-code-dependency-diagram",
-  "displayName": "vscode-code-dependency-diagram",
+  "name": "vscode-code-relationship-diagram",
+  "displayName": "CRD: Code Relationship Diagram",
   "description": "コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています",
   "version": "0.0.1",
   "engines": {
@@ -8,15 +8,15 @@
   },
   "categories": [ "Visualization" ],
   "activationEvents": [
-    "workspaceContains:.vscode/code-dependency-diagram_settings.json"
+    "workspaceContains:.vscode/crd_settings.json"
   ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "vscode-code-dependency-diagram.helloWorld",
+        "command": "vscode-code-relationship-diagram.helloWorld",
         "title": "Hello World",
-        "category": "code-dependency-diagram",
+        "category": "CRD",
         "description": "%hello-description%"
       }
     ]

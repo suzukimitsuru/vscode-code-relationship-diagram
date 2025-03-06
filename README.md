@@ -1,8 +1,8 @@
-# vscode-code-dependency-diagram README
+# vscode-code-relationship-diagram README
 
 コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています。
 
-This is the README for your extension "vscode-code-dependency-diagram". After writing up a brief description, we recommend including the following sections.
+This is the README for your extension "vscode-code-relationship-diagram". After writing up a brief description, we recommend including the following sections.
 
 ## Features
 

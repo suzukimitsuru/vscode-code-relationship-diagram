@@ -18,10 +18,10 @@ const localeMap = (key : LocaleKeyType) : string => localeString(key);
  * @param context extention contexest
  */
 export function activate(context: vscode.ExtensionContext) {
-	console.log('extension "vscode-code-dependency-diagram" is now active!');
+	console.log('extension "vscode-code-relationship-diagram" is now active!');
 
 	// 挨拶を表示するコマンドの登録
-	const disposable = vscode.commands.registerCommand('vscode-code-dependency-diagram.helloWorld', () => {
+	const disposable = vscode.commands.registerCommand('vscode-code-relationship-diagram.helloWorld', () => {
 		// 右下にメッセージを表示する
 		vscode.window.showInformationMessage(localeMap('hello-message'));
 	});
@@ -30,5 +30,5 @@ export function activate(context: vscode.ExtensionContext) {
 
 // This method is called when your extension is deactivated
 export function deactivate() {
-	console.log('extension "vscode-code-dependency-diagram" is now deactivate!');
+	console.log('extension "vscode-code-relationship-diagram" is now deactivate!');
 }
