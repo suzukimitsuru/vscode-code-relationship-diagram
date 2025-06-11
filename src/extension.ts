@@ -29,18 +29,12 @@ export function activate(context: vscode.ExtensionContext) {
 			const db = new codeDb.Db(path.join(root_folder.uri.path, '.vscode', 'crd.duckdb'));
 			////context.subscriptions.push(db);
 			db.table_create().then(async () => {
-
-				// コードファイルを列挙する
-				const patterns = codeFile.list(root_folder.uri.path, associations);
 				try {
-					// コードファイルを収集する
-					let files: codeFile.Resolve[] = [];
-					for (const pattern of patterns) { 
-						const paths = await pattern;
-						for (const path of paths) {
-							files.push(await path);
-						}
-					}
+					// コードファイルを列挙する
+					const files: codeFile.File[] = [];
+					const patterns = codeFile.list(root_folder.uri.path, associations, (file: codeFile.File) => {
+						files.push(file);
+					});
 
 					// コードファイルをパスでソートする
 					const sorted = files.sort((a, b) => a.relative_path.localeCompare(b.relative_path));
@@ -57,8 +51,7 @@ export function activate(context: vscode.ExtensionContext) {
 					// 初期化メッセージを表示する
 					logs.info(locale('initialize-message'));
 				} catch (error) {
-					const reject = error as codeFile.Reject;
-					logs.trace(`codeFile.list(${reject.context}): ${reject.error.message}`);
+					logs.trace(`codeFile.list(${root_folder.uri.path}): ${error instanceof Error ? error.message : ''}`);
 				}
 			}).catch((error: Error) => {
 				logs.trace(`db.table_create(): ${error.message}`);
