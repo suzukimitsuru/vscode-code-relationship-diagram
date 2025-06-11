@@ -1,73 +1,47 @@
 # vscode-code-relationship-diagram README
 
 コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています。
+関係の強さを引力として表現すれば、ソフトウェアの形が見える様になると考えています。  
+良い設計のソフトウェアは、美しく見える事を期待しています。  
+Visual Studio Code の拡張機能として動作します。
 
-This is the README for your extension "vscode-code-relationship-diagram". After writing up a brief description, we recommend including the following sections.
+## Operation
 
-## Features
+![Screenshot](vscode-code-attractor.png)
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+- 1.シンボルを立体的に表示
+  - a) 「エクスプローラー」アクティビティバーを選ぶ。
+  - b) 「CODE ATTRACTOR」サイドバーを展開し、右上のアイコンを押す。
+  - c) 編集エリアの右側に「CODE ATTRACTOR」タブが開く。
+  - d) ソースにカーソルを移すと、シンボルを立体的に表示する。
+    - 「CODE ATTRACTOR」サイドバーにはソースのシンボルをツリー表示する。
+- 2.操作方法
+  - a) ドラッグで上下左右に視点を動かす。
+  - b) 拡大/縮小で前進/後退する。マウスホイールでも同じ。
 
-For example if there is an image subfolder under your extension project workspace:
+## Rordmap @beta
 
-\!\[feature X\]\(images/feature-x.png\)
+- 1.Visual Studio Code の拡張機能として動作させる。
+  - 1-1.拡張機能プロジェクトを作成する。
+  - 1-2.各部の操作方法を模索する。
+    - 1-2-1.ファイル選択で定義したシンボルを正方形として吊り下げる。
+    - 1-2-2.シーン内を動き回れる WalkThroughControls を作る。
+    - 1-2-3.ポイントしたシンボル名を表示する。
+  - 1-3.拡張機能を公開する。
+- 2.呼び出し階層を表示する。 <- **今ココ！**
+  - Visual Studio Code の呼び出し階層(Call Tree)を取得し表示できないか？
+- 3.引力図を表示する。
+  - 物理エンジンで三次元の引力図を表示する。
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+## Features @alpha
 
-## Requirements
+- ディレクトリ・ファイル・名前空間でグループ分けして、依存を線で現わす。
+  - 階層構造を飛び越した依存を発見できる。
+- 依存関係の数を、引力として近く現わす。
+  - 凝集度の関係を一覧できる。
+- 行数を大きさとして、大きく現わす。
+  - 行数が多すぎる複雑なモジュールを発見し易い。
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+## Bbuild steps
 
-## Extension Settings
-
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+こちらで[このプロジェクトを作った手順](construction-steps.md)を説明します。

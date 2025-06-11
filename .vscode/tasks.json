@@ -41,6 +41,18 @@
                 "reveal": "never"
             }
         },
+        {
+            "type": "npm",
+            "script": "compile",
+            "group": "build",
+            "problemMatcher": "$tsc-watch",
+            "isBackground": true,
+            "label": "npm: compile",
+            "presentation": {
+                "group": "watch",
+                "reveal": "never"
+            }
+        },
 		{
 			"type": "npm",
 			"script": "watch-tests",

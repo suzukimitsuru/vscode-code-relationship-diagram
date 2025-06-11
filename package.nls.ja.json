@@ -1,4 +1,5 @@
 {
-    "hello-description": "挨拶のメッセージを表示します。",
-    "hello-message": "コード関係図へようこそ！"
+    "initialize-description": "コード関係図を初期化します。",
+    "initialize-message": "コード関係図へようこそ！",
+    "error-no-associations": "ワークスペースを作り files.associations(ファイルの関連付けのパターン)を設定して下さい。"
 }
