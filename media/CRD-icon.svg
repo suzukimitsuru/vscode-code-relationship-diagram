@@ -1,0 +1,17 @@
+<svg width="16" height="16" viewBox="0 0 16 16" stroke="white" fill="transparmnet" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(0.5,0.5) scale(0.65)" stroke-width="1">
+    <rect stroke-width="1.6" rx="1" x="0" y="0" width="10" height="10" />
+    <line stroke-width="1.0" rx="0" x1="2" x2="8" y1="3.0" y2="3.0" />
+    <line stroke-width="1.0" rx="0" x1="2" x2="5" y1="5.5" y2="5.5" />
+  </g>
+  <g transform="translate(10.5,1.5) scale(0.5)" stroke-width="0.7">
+    <rect stroke-width="1.6" rx="1" x="0" y="0" width="10" height="10" />
+    <line stroke-width="1.0" rx="0" x1="2" x2="8" y1="3.0" y2="3.0" />
+    <line stroke-width="1.0" rx="0" x1="2" x2="5" y1="5.5" y2="5.5" />
+  </g>
+  <g transform="translate(3,5) scale(1)">
+    <rect stroke-width="1.6" rx="1" x="0" y="0" width="10" height="10" />
+    <line stroke-width="1.0" rx="0" x1="2" x2="8" y1="3.0" y2="3.0" />
+    <line stroke-width="1.0" rx="0" x1="2" x2="5" y1="5.5" y2="5.5" />
+  </g>
+</svg>

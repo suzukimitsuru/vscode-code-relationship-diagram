@@ -14,6 +14,7 @@
   "categories": [
     "Visualization"
   ],
+  "icon": "media/CRD-icon.png",
   "homepage": "https://github.com/suzukimitsuru/vscode-code-relationship-diagram",
   "repository": {
     "type": "git",
