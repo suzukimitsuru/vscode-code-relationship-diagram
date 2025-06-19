@@ -12,8 +12,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - [Security] in case of vulnerabilities.
 
 ## [Unreleased]
+CSVを読み込んでmarmaidのganttを作るVSCode拡張機能を作って下さい。
+yarnでプロジェクトの作成からコマンドも含めて説明して下さい。
+Webview 対応版や マークダウンへの貼り付け対応 も段階的に追加して下さい。
 
-## [0.0.2]
+## [0.0.2]　- 2025-06-19
 
 ### Fixed
 
