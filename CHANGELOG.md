@@ -4,9 +4,26 @@ All notable changes to the "vscode-code-relationship-diagram" extension will be 
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+- [Added] for new features.
+- [Changed] for changes in existing functionality.
+- [Deprecated] for soon-to-be removed features.
+- [Removed] for now removed features.
+- [Fixed] for any bug fixes.
+- [Security] in case of vulnerabilities.
+
 ## [Unreleased]
 
-## 0.0.1
+## [0.0.2]
+
+### Fixed
+
+- 初期化(`initialize`)コマンドで、`Cannot find module 'duckdb'`エラーが発生する #6
+  - `duckdb`モジュールを`.vscodeignore`で除外していた。
+    - その他の参照モジュールも除外から外した。
+
+## [0.0.1] - 2025-06-18
+
+### Added
 
 - 列挙ファイルでコードファイルテーブルを更新する #5
 - 設定ファイルのファイル指定を読み込み検索する #3

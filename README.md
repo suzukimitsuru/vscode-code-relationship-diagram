@@ -1,47 +1,67 @@
-# vscode-code-relationship-diagram README
+# vscode-code-relationship-diagram
 
-コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています。
-関係の強さを引力として表現すれば、ソフトウェアの形が見える様になると考えています。  
-良い設計のソフトウェアは、美しく見える事を期待しています。  
-Visual Studio Code の拡張機能として動作します。
+コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています。  
+コードと連携した図で、ソフトウェアの形を見える様にします。  
+良い設計のソフトウェアは、美しく見えると思います。  
+`Visual Studio Code`の拡張機能として動作します。
 
 ## Operation
 
-![Screenshot](vscode-code-attractor.png)
-
-- 1.シンボルを立体的に表示
-  - a) 「エクスプローラー」アクティビティバーを選ぶ。
-  - b) 「CODE ATTRACTOR」サイドバーを展開し、右上のアイコンを押す。
-  - c) 編集エリアの右側に「CODE ATTRACTOR」タブが開く。
-  - d) ソースにカーソルを移すと、シンボルを立体的に表示する。
-    - 「CODE ATTRACTOR」サイドバーにはソースのシンボルをツリー表示する。
-- 2.操作方法
-  - a) ドラッグで上下左右に視点を動かす。
-  - b) 拡大/縮小で前進/後退する。マウスホイールでも同じ。
+- 1.定義(シンボル)をデータベースに保存する。
+  - a) `Ctrl(⌘)+Shift(⇧)+P`キーを押し、コマンドパレットを出力する。
+  - b) `CRD: Initialize Code Relationship Diagram`コマンドを選ぶ。
 
 ## Rordmap @beta
 
-- 1.Visual Studio Code の拡張機能として動作させる。
-  - 1-1.拡張機能プロジェクトを作成する。
-  - 1-2.各部の操作方法を模索する。
-    - 1-2-1.ファイル選択で定義したシンボルを正方形として吊り下げる。
-    - 1-2-2.シーン内を動き回れる WalkThroughControls を作る。
-    - 1-2-3.ポイントしたシンボル名を表示する。
-  - 1-3.拡張機能を公開する。
-- 2.呼び出し階層を表示する。 <- **今ココ！**
-  - Visual Studio Code の呼び出し階層(Call Tree)を取得し表示できないか？
-- 3.引力図を表示する。
-  - 物理エンジンで三次元の引力図を表示する。
+- 1.ソースコードから定義(シンボル)を抽出する。 <- **今ココ！**
+- 2.`Visual Studio Code`から、定義(シンボル)の関係を抽出する。
+- 3.関係図を表示する。
 
 ## Features @alpha
 
-- ディレクトリ・ファイル・名前空間でグループ分けして、依存を線で現わす。
+- ディレクトリ・ファイル・名前空間でグループ分けして、関係を線で現わす。
   - 階層構造を飛び越した依存を発見できる。
-- 依存関係の数を、引力として近く現わす。
-  - 凝集度の関係を一覧できる。
-- 行数を大きさとして、大きく現わす。
-  - 行数が多すぎる複雑なモジュールを発見し易い。
 
-## Bbuild steps
+## Build steps
 
-こちらで[このプロジェクトを作った手順](construction-steps.md)を説明します。
+このプロジェクトを作った手順を説明します。
+
+### Tips
+
+- VSCode DevTools: Option+Command+I
+- uninstall Extension: code --uninstall-extension suzukimitsuru.vscode-code-relationship-diagram
+
+### 1.プロジェクトの作成
+
+- [vscodeの拡張機能を作ってみる](https://qiita.com/yuu_1st/items/d2d5a18de4859a165260)
+  - sudo npm install -g yo generator-code
+  - yo code
+
+### 2.VSCode の拡張機能を公開する
+
+#### 2-1.VSCode Extention Marketplace コマンドのインストール
+
+- `sudo npm install -g vsce`
+
+### 2-2.パッケージ(`*.vsix`)の作成
+
+  ``` shell
+  yarn package
+  vsce package
+  unzip -l vscode-code-relationship-diagram-0.0.1.vsix
+  ```
+
+#### 2-3.[Marketplace](https://marketplace.visualstudio.com/manage/publishers/suzukimitsuru)にアップロード
+
+以下のサイトを参考にしました。
+
+- [Azure DevOps Organization](https://dev.azure.com/suzukimitsuru/)
+- [【VScode】自作した拡張機能を公開する方法](https://qiita.com/yusu79/items/44520c4c67864b0bb3e9)
+
+### 3.[Cytoscape.js](https://js.cytoscape.org/#getting-started) - Graph theory (network) library for visualisation and analysis
+
+視覚化と分析のためのグラフ理論(ネットワーク)ライブラリ
+
+``` shell
+curl -o src/cytoscape.esm.min.mjs https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.32.0/cytoscape.esm.min.mjs
+```
