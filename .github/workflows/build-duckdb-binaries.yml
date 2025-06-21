@@ -1,0 +1,89 @@
+name: Build duckdb.node for all platforms
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Build for Linux (x64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Find duckdb.node
+        run: find node_modules/duckdb/lib/binding -name "*.node"
+
+      - name: Copy Linux duckdb.node
+        run: |
+          mkdir -p duckdb-binaries/linux-x64
+          cp node_modules/duckdb/lib/binding/Release/duckdb.node duckdb-binaries/linux-x64/duckdb-linux-x64.node
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: duckdb-linux-x64
+          path: duckdb-binaries/linux-x64/duckdb-linux-x64.node
+
+  build-macos:
+    name: Build for macOS (darwin-arm64)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Find duckdb.node
+        run: find node_modules/duckdb/lib/binding -name "*.node"
+
+      - name: Copy macOS duckdb.node
+        run: |
+          mkdir -p duckdb-binaries/darwin-arm64
+          cp node_modules/duckdb/lib/binding/Release/duckdb.node duckdb-binaries/darwin-arm64/duckdb-darwin-arm64.node
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: duckdb-darwin-arm64
+          path: duckdb-binaries/darwin-arm64/duckdb-darwin-arm64.node
+
+  build-windows:
+    name: Build for Windows (win32-x64)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Find duckdb.node
+        run: Get-ChildItem -Recurse -Filter "duckdb*.node"
+
+      - name: Copy Windows duckdb.node
+        run: |
+          mkdir duckdb-binaries\win32-x64
+          copy node_modules\duckdb\lib\binding\Release\duckdb.node duckdb-binaries\win32-x64\duckdb-win32-x64.node
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: duckdb-win32-x64
+          path: duckdb-binaries/win32-x64/duckdb-win32-x64.node
