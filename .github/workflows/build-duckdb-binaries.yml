@@ -25,7 +25,7 @@ jobs:
       - name: Copy Linux duckdb.node
         run: |
           mkdir -p duckdb-binaries/linux-x64
-          cp node_modules/duckdb/lib/binding/Release/duckdb.node duckdb-binaries/linux-x64/duckdb-linux-x64.node
+          cp node_modules/duckdb/lib/binding/duckdb.node duckdb-binaries/linux-x64/duckdb-linux-x64.node
 
       - uses: actions/upload-artifact@v4
         with:
@@ -53,7 +53,7 @@ jobs:
       - name: Copy macOS duckdb.node
         run: |
           mkdir -p duckdb-binaries/darwin-arm64
-          cp node_modules/duckdb/lib/binding/Release/duckdb.node duckdb-binaries/darwin-arm64/duckdb-darwin-arm64.node
+          cp node_modules/duckdb/lib/binding/duckdb.node duckdb-binaries/darwin-arm64/duckdb-darwin-arm64.node
 
       - uses: actions/upload-artifact@v4
         with:
@@ -81,7 +81,7 @@ jobs:
       - name: Copy Windows duckdb.node
         run: |
           mkdir duckdb-binaries\win32-x64
-          copy node_modules\duckdb\lib\binding\Release\duckdb.node duckdb-binaries\win32-x64\duckdb-win32-x64.node
+          copy node_modules\duckdb\lib\binding\duckdb.node duckdb-binaries\win32-x64\duckdb-win32-x64.node
 
       - uses: actions/upload-artifact@v4
         with:
