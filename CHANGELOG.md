@@ -12,9 +12,17 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - [Security] in case of vulnerabilities.
 
 ## [Unreleased]
-CSVを読み込んでmarmaidのganttを作るVSCode拡張機能を作って下さい。
-yarnでプロジェクトの作成からコマンドも含めて説明して下さい。
-Webview 対応版や マークダウンへの貼り付け対応 も段階的に追加して下さい。
+
+## [0.0.3]　- 2025-06-22
+
+### Fixed
+
+- 初期化(`initialize`)コマンドで、`Error: Cannot load duckdb.node: not a valid Win32 application`エラーが発生する #7
+  - 原因: `duckdb.node`が、開発環境のMacOS用で、Windows用では無いため発生していた。
+  - 対策: 各々のOS用の`duckdb.node`を`GitHub Actions`で作成してバンドルした。
+    - MacOS:   `duckdb-darwin-arm64.node`
+    - Windows: `duckdb-win32-x64.node`
+    - Ubuntu:  `duckdb-linux-x64.node`
 
 ## [0.0.2]　- 2025-06-19
 
