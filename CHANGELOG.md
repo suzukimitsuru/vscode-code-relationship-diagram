@@ -13,9 +13,22 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.0.4]　- 2025-06-23
+
+### [0.0.4]　- Fixed
+
+- 初期化(`initialize`)コマンドで、`Error: Cannot load duckdb.node: not a valid Win32 application`エラーが発生する #7
+  - 原因1: データベースファイル名が、Windows用では無いため発生していた。
+    - 対策1: ファイルパスを`uri.path`から`uri.fsPath`に変更して、環境ごとのパス名にした。
+  - 原因1: `duckdb.node`が、開発環境のMacOS用で、Windows用では無いため発生していた。
+    - 対策1: `.vscodeignore`に`!node_modules/duckdb/node_modules/**`を追加して、環境ごとの動的バインディング(`node-gyp`)が動作する様にした。
+      - MacOS:   `duckdb-darwin-arm64.node`
+      - Windows: `duckdb-win32-x64.node`
+      - Ubuntu:  `duckdb-linux-x64.node`
+
 ## [0.0.3]　- 2025-06-22
 
-### Fixed
+### [0.0.3]　- Fixed
 
 - 初期化(`initialize`)コマンドで、`Error: Cannot load duckdb.node: not a valid Win32 application`エラーが発生する #7
   - 原因: `duckdb.node`が、開発環境のMacOS用で、Windows用では無いため発生していた。
@@ -26,7 +39,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [0.0.2]　- 2025-06-19
 
-### Fixed
+### [0.0.2]　- Fixed
 
 - 初期化(`initialize`)コマンドで、`Cannot find module 'duckdb'`エラーが発生する #6
   - `duckdb`モジュールを`.vscodeignore`で除外していた。
@@ -34,7 +47,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [0.0.1] - 2025-06-18
 
-### Added
+### [0.0.1] - Added
 
 - 列挙ファイルでコードファイルテーブルを更新する #5
 - 設定ファイルのファイル指定を読み込み検索する #3

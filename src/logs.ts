@@ -31,6 +31,11 @@ export class Logs {
         this._channel.info(message, ...args);
     }
 
+    public log(message: string, ...args: any[]): void {
+        console.log(`[LOG]: ${message}`, ...args);
+        this._channel.info(message, ...args);
+    }
+
     public debug(message: string, ...args: any[]): void {
         console.debug(`[DEBUG]: ${message}`, ...args);
     }

@@ -16,6 +16,7 @@ vsc-extension-quickstart.md
 # bundle modules
 !node_modules/duckdb/*
 !node_modules/duckdb/lib/**
+!node_modules/duckdb/node_modules/**
 !node_modules/@mapbox/node-pre-gyp/**
 !node_modules/consola/**
 !node_modules/semver/**
