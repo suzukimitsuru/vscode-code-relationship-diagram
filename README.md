@@ -28,8 +28,8 @@
 
 ### Tips
 
-- VSCode DevTools: Option+Command+I
-- uninstall Extension: code --uninstall-extension suzukimitsuru.vscode-code-relationship-diagram
+- VSCode DevTools: `Option+Command+I`
+- uninstall Extension: `code --uninstall-extension suzukimitsuru.vscode-code-relationship-diagram`
 
 ### 1.プロジェクトの作成
 

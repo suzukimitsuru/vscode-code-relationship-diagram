@@ -13,6 +13,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.0.５]　- 2025-06-28
+
+- 初期化(`initialize`)コマンドで、`Error: Cannot load duckdb.node: not a valid Win32 application`エラーが発生する fixed #7
+  - 原因2: `duckdb.node`が、開発環境のMacOS用で、動作環境のWindows用では無いため発生していた。
+    - 対策2-2: `duckdb`を動作環境により動的に読み込む様にした。
+
 ## [0.0.4]　- 2025-06-23
 
 ### [0.0.4]　- Fixed
@@ -20,8 +26,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - 初期化(`initialize`)コマンドで、`Error: Cannot load duckdb.node: not a valid Win32 application`エラーが発生する #7
   - 原因1: データベースファイル名が、Windows用では無いため発生していた。
     - 対策1: ファイルパスを`uri.path`から`uri.fsPath`に変更して、環境ごとのパス名にした。
-  - 原因1: `duckdb.node`が、開発環境のMacOS用で、Windows用では無いため発生していた。
-    - 対策1: `.vscodeignore`に`!node_modules/duckdb/node_modules/**`を追加して、環境ごとの動的バインディング(`node-gyp`)が動作する様にした。
+  - 原因2: `duckdb.node`が、開発環境のMacOS用で、Windows用では無いため発生していた。
+    - 対策2: `.vscodeignore`に`!node_modules/duckdb/node_modules/**`を追加して、環境ごとの動的バインディング(`node-gyp`)が動作する様にした。
       - MacOS:   `duckdb-darwin-arm64.node`
       - Windows: `duckdb-win32-x64.node`
       - Ubuntu:  `duckdb-linux-x64.node`

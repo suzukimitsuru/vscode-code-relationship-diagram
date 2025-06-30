@@ -68,6 +68,9 @@ export function activate(context: vscode.ExtensionContext) {
 						}
 					}
 
+					// DBを破棄する
+					db.dispose();
+
 					logs.log(`${(performance.now() - start).toFixed(2)} ms`);
 
 					// 初期化メッセージを表示する

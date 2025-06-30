@@ -1,14 +1,16 @@
 /** @file DB操作 with DuckDB */
 import * as vscode from 'vscode';
+import * as path from 'path';
 import * as duckdb from 'duckdb';
+const dynDuckdb = require(path.join(__dirname, '..', 'bindings', `duckdb-${process.platform}-${process.arch}.node`)) as typeof duckdb;
 
 /** @description データベース操作 */
 export class Db extends vscode.Disposable {
 
     /** @description データベース */
-    private readonly _db: duckdb.Database;
+    private _db: duckdb.Database;
     /** @description 接続 */
-    private readonly _conn: duckdb.Connection;
+    private _conn: duckdb.Connection;
     
     /**
      * @description コンストラクタ
@@ -16,11 +18,22 @@ export class Db extends vscode.Disposable {
      */
     public constructor(dbFile: string) {
         super(() => {
-            this._conn.close();
-            this._db.close();    
+            this._conn?.close((err?: Error | null) => {});
+            this._conn = null as any;
+            this._db = null as any;
         });
-        this._db = new duckdb.Database(dbFile);
+        this._db = new dynDuckdb.Database(dbFile);
         this._conn = this._db.connect();
+    }
+
+    /**
+     * @description データベースを破棄する
+     */
+    public dispose() {
+        this._conn?.close((err?: Error | null) => {});
+        this._conn = null as any;
+        this._db = null as any;
+        super.dispose();    
     }
 
     /**
@@ -29,7 +42,7 @@ export class Db extends vscode.Disposable {
      */
     public table_create(): Promise<void> {
         return new Promise<void>((resolve, reject) => {
-            this._conn.run(`
+            this._conn.prepare(`
                 CREATE TABLE IF NOT EXISTS code_files (
                     relative_path TEXT PRIMARY KEY,
                     updated_at TIMESTAMP
@@ -41,7 +54,7 @@ export class Db extends vscode.Disposable {
                 } else {
                     resolve();
                 }
-            });
+            }).run();
         });
     }
  
@@ -52,8 +65,7 @@ export class Db extends vscode.Disposable {
      */
     public codeFile_query(relative_path: string): Promise<duckdb.TableData> {
         return new Promise<duckdb.TableData>((resolve, reject) => {
-            this._conn.all(
-                `SELECT * FROM code_files WHERE relative_path = ?;`,
+            this._conn.prepare(`SELECT * FROM code_files WHERE relative_path = ?;`).all(
                 relative_path,
                 (err: Error | null, res: duckdb.TableData) => {
                     if (err) {
@@ -61,7 +73,8 @@ export class Db extends vscode.Disposable {
                     } else {
                         resolve(res);
                     }
-                });
+                }
+            );
         });
     }
 
@@ -71,14 +84,15 @@ export class Db extends vscode.Disposable {
      */
     public codeFile_queryAll(): Promise<duckdb.TableData> {
         return new Promise<duckdb.TableData>((resolve, reject) => {
-            this._conn.all(`SELECT * FROM code_files;`,
+            this._conn.prepare(`SELECT * FROM code_files;`).all(
                 (err: Error | null, res: duckdb.TableData) => {
                     if (err) {
                         reject(err);
                     } else {
                         resolve(res);
                     }
-                });
+                }
+            );
         });
     }
 
@@ -92,8 +106,7 @@ export class Db extends vscode.Disposable {
         return new Promise<void>((resolve, reject) => {
 
             // コードファイルの存在確認
-            this._conn.all(
-                `SELECT COUNT(*) AS count FROM code_files WHERE relative_path = ?;`,
+            this._conn.prepare(`SELECT COUNT(*) AS count FROM code_files WHERE relative_path = ?;`).all(
                 relative_path,
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
@@ -101,10 +114,11 @@ export class Db extends vscode.Disposable {
                     } else {
 
                         // 更新または挿入
-                        this._conn.run(
+                        this._conn.prepare(
                             (rows.length > 0) && (rows[0].count > 0)
                                 ? `UPDATE code_files SET updated_at = ? WHERE relative_path = ?;`
-                                : `INSERT INTO code_files (updated_at, relative_path) VALUES (?, ?);`,
+                                : `INSERT INTO code_files (updated_at, relative_path) VALUES (?, ?);`
+                        ).run(
                             updated.toISOString(), relative_path,
                             (err: Error | null) => {
                                 if (err) {
@@ -127,8 +141,7 @@ export class Db extends vscode.Disposable {
      */
     public codeFile_remove(relative_path: string): Promise<void> {
         return new Promise<void>((resolve, reject) => {
-            this._conn.run(
-                `DELETE FROM code_files WHERE relative_path = ?;`,
+            this._conn.prepare(`DELETE FROM code_files WHERE relative_path = ?;`).run(
                 relative_path,
                 (err: Error | null) => {
                     if (err) {
