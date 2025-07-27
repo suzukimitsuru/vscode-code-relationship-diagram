@@ -6,6 +6,8 @@ import { Logs } from './logs';
 import * as codeDb from './codeDb';
 import * as codeFile from './codeFiles';
 import * as codeSymbols from './codeSymbols';
+import * as codeReferences from './codeReferences';
+import { GraphVisualization } from './graphVisualization';
 
 let _logs: Logs | null = null;
 
@@ -20,7 +22,7 @@ export function activate(context: vscode.ExtensionContext) {
 	logs.log(`extension is now active! Node.js:${process.version}, VSCode:${vscode.version}, Platform:${platform}-${arch}`);
 
 	// 初期化するコマンドの登録
-	const disposable = vscode.commands.registerCommand('vscode-code-relationship-diagram.initialize', async () => {
+	const initializeDisposable = vscode.commands.registerCommand('vscode-code-relationship-diagram.initialize', async () => {
 
 		// ワークスペースが在り、ファイルの関連付けのパターンが在ったら
 		const workspace_folders = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders : [];
@@ -79,6 +81,15 @@ export function activate(context: vscode.ExtensionContext) {
 								// シンボルをDBにアップサートする
 								await db.symbol_upsert(symbol);
 								logs.log(`${(performance.now() - start).toFixed(2)} ms: load symbol ${symbol.path} (${vscode.SymbolKind[symbol.kind]})`);
+								
+								// シンボル参照関係を抽出
+								const references = await codeReferences.extractReferences(document, symbol.id);
+								for (const ref of references) {
+									await db.symbolReference_upsert(ref);
+								}
+								if (references.length > 0) {
+									logs.log(`${(performance.now() - start).toFixed(2)} ms: extracted ${references.length} references from ${symbol.path}`);
+								}
 							}
 						} catch (error) {
 							logs.trace(`codeSymbols.load(${file.relative_path}): ${error instanceof Error ? error.message : error}`);
@@ -102,7 +113,44 @@ export function activate(context: vscode.ExtensionContext) {
 			logs.error(locale('error-no-associations'));
 		}
 	});
-	context.subscriptions.push(disposable);
+
+	// グラフ表示コマンドの登録
+	const showGraphDisposable = vscode.commands.registerCommand('vscode-code-relationship-diagram.showGraph', async () => {
+		const workspace_folders = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders : [];
+		const root_folder = selectRootFolder(workspace_folders);
+		
+		if (root_folder) {
+			const db_file = path.join(root_folder.uri.fsPath, '.vscode', 'crd.duckdb');
+			try {
+				const db = new codeDb.Db(db_file);
+				
+				// 全てのシンボルを読み込み
+				const allSymbols: any[] = [];
+				const files = await db.codeFile_queryAll();
+				for (const fileRow of files) {
+					const symbols = await db.symbol_loadAll(fileRow.relative_path);
+					allSymbols.push(...symbols);
+				}
+				
+				// シンボル参照関係を読み込み
+				const references = await db.symbolReference_loadAll();
+				
+				// グラフを表示
+				const graphViz = new GraphVisualization();
+				await graphViz.showGraph(allSymbols, references);
+				
+				db.dispose();
+				logs.info('Code relationship diagram displayed');
+			} catch (error) {
+				logs.error(`Failed to show graph: ${error instanceof Error ? error.message : error}`);
+			}
+		} else {
+			logs.error('No workspace folder found');
+		}
+	});
+
+	context.subscriptions.push(initializeDisposable);
+	context.subscriptions.push(showGraphDisposable);
 }
 
 // This method is called when your extension is deactivated

@@ -2,6 +2,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as SYMBOL from './symbol';
+import * as codeReferences from './codeReferences';
 
 import * as duckdb from 'duckdb';
 const dynDuckdb = require(path.join(__dirname, '..', 'bindings', `duckdb-${process.platform}-${process.arch}.node`)) as typeof duckdb;
@@ -73,7 +74,26 @@ export class Db extends vscode.Disposable {
                         if (err) {
                             reject(err);
                         } else {
-                            resolve();
+                            // シンボル参照関係テーブル
+                            this._conn.prepare(`
+                                CREATE TABLE IF NOT EXISTS symbol_references (
+                                    id TEXT PRIMARY KEY,
+                                    from_symbol_id TEXT,
+                                    to_symbol_id TEXT,
+                                    from_path TEXT,
+                                    to_path TEXT,
+                                    reference_type TEXT,
+                                    line_number INTEGER,
+                                    FOREIGN KEY (from_symbol_id) REFERENCES symbols(id),
+                                    FOREIGN KEY (to_symbol_id) REFERENCES symbols(id)
+                                )
+                            `, (err: Error | null) => {
+                                if (err) {
+                                    reject(err);
+                                } else {
+                                    resolve();
+                                }
+                            }).run();
                         }
                     }).run();
                 }
@@ -276,6 +296,63 @@ export class Db extends vscode.Disposable {
                             }
                         }
                         resolve(roots);
+                    }
+                }
+            );
+        });
+    }
+
+    /**
+     * @description シンボル参照を保存
+     * @param reference シンボル参照情報
+     * @returns 保存の完了を示すPromise
+     */
+    public symbolReference_upsert(reference: codeReferences.SymbolReference): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this._conn.prepare(
+                `INSERT OR REPLACE INTO symbol_references 
+                (id, from_symbol_id, to_symbol_id, from_path, to_path, reference_type, line_number) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)`
+            ).run(
+                reference.id,
+                reference.fromSymbolId,
+                reference.toSymbolId,
+                reference.fromPath,
+                reference.toPath,
+                reference.referenceType,
+                reference.lineNumber,
+                (err: Error | null) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve();
+                    }
+                }
+            );
+        });
+    }
+
+    /**
+     * @description シンボル参照の全てを読み込み
+     * @returns シンボル参照の配列
+     */
+    public symbolReference_loadAll(): Promise<codeReferences.SymbolReference[]> {
+        return new Promise<codeReferences.SymbolReference[]>((resolve, reject) => {
+            this._conn.prepare(`SELECT * FROM symbol_references`).all(
+                (err: Error | null, rows: duckdb.TableData) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        const references: codeReferences.SymbolReference[] = rows.map(row => ({
+                            id: row.id,
+                            fromSymbolId: row.from_symbol_id,
+                            toSymbolId: row.to_symbol_id,
+                            fromPath: row.from_path,
+                            toPath: row.to_path,
+                            referenceType: row.reference_type,
+                            lineNumber: row.line_number
+                        }));
+                        resolve(references);
                     }
                 }
             );
