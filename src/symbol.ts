@@ -16,6 +16,7 @@ export class Position extends Vector {
 export class SymbolModel {
     public readonly id: string;
     public readonly parentId: string | null;
+    public readonly name: string;
     public readonly kind: vscode.SymbolKind;
     public readonly path: string;
     public readonly startLine: number;
@@ -25,6 +26,7 @@ export class SymbolModel {
     public position: Position | null = null;
     public children: SymbolModel[] = [];
     public constructor(
+        name: string,
         kind: vscode.SymbolKind,
         path: string,
         startLine: number,
@@ -36,6 +38,7 @@ export class SymbolModel {
     ) {
         this.id = id ?? randomUUID();
         this.parentId = parentId;
+        this.name = name;
         this.kind = kind;
         this.path = path;
         this.startLine = startLine;

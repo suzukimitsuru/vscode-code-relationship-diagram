@@ -136,7 +136,7 @@ export function activate(context: vscode.ExtensionContext) {
 				const references = await db.symbolReference_loadAll();
 				
 				// グラフを表示
-				const graphViz = new GraphVisualization();
+				const graphViz = new GraphVisualization(context);
 				await graphViz.showGraph(allSymbols, references);
 				
 				db.dispose();

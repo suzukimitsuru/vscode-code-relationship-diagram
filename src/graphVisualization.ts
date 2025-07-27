@@ -4,8 +4,10 @@ import * as codeReferences from './codeReferences';
 
 export class GraphVisualization {
     private panel: vscode.WebviewPanel | null = null;
+    private context: vscode.ExtensionContext;
 
-    constructor() {
+    constructor(context: vscode.ExtensionContext) {
+        this.context = context;
     }
 
     public async showGraph(symbols: SYMBOL.SymbolModel[], references: codeReferences.SymbolReference[]) {
@@ -32,18 +34,19 @@ export class GraphVisualization {
         const nodes: any[] = [];
         const edges: any[] = [];
 
-        const addSymbolNodes = (symbol: SYMBOL.SymbolModel) => {
+        const addSymbolNodes = (symbol: SYMBOL.SymbolModel, depth: number = 0) => {
             nodes.push({
                 data: {
                     id: symbol.id,
                     label: this.getSymbolLabel(symbol),
                     kind: symbol.kind,
-                    path: symbol.path
+                    path: symbol.path,
+                    depth: depth
                 }
             });
 
             for (const child of symbol.children) {
-                addSymbolNodes(child);
+                addSymbolNodes(child, depth + 1);
                 edges.push({
                     data: {
                         id: `${symbol.id}-${child.id}`,
@@ -72,51 +75,71 @@ export class GraphVisualization {
     }
 
     private getSymbolLabel(symbol: SYMBOL.SymbolModel): string {
-        const kindName = vscode.SymbolKind[symbol.kind];
         const fileName = symbol.path.split('/').pop() || symbol.path;
-        return symbol.kind === vscode.SymbolKind.File ? fileName : `${kindName}`;
+        return symbol.kind === vscode.SymbolKind.File ? fileName : symbol.name;
     }
 
     private generateWebviewContent(elements: { nodes: any[], edges: any[] }): string {
+        // VSCodeのテーマ色を取得
+        const isDarkTheme = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
+        const backgroundColor = isDarkTheme ? '#1e1e1e' : '#ffffff';
+        const controlsBackground = isDarkTheme ? '#2d2d30' : '#ffffff';
+        const controlsColor = isDarkTheme ? '#cccccc' : '#333333';
+        const buttonBackground = isDarkTheme ? '#0e639c' : '#007ACC';
+        const buttonHoverBackground = isDarkTheme ? '#1177bb' : '#005A9E';
+        const boxShadowColor = isDarkTheme ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.1)';
+        
+        // ローカルJSファイルのURIを生成
+        const cytoscapeUri = this.panel!.webview.asWebviewUri(
+            vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'cytoscape', 'dist', 'cytoscape.min.js')
+        );
+        const cytoscapeDagreUri = this.panel!.webview.asWebviewUri(
+            vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'cytoscape-dagre', 'cytoscape-dagre.js')
+        );
+        
         return `
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <title>Code Relationship Diagram</title>
-    <script src="https://unpkg.com/cytoscape@3.30.3/dist/cytoscape.min.js"></script>
+    <script src="${cytoscapeUri}"></script>
+    <script src="${cytoscapeDagreUri}"></script>
     <style>
         body {
             margin: 0;
             padding: 0;
             font-family: Arial, sans-serif;
+            background-color: ${backgroundColor};
         }
         #cy {
             width: 100%;
             height: 100vh;
-            background-color: #fafafa;
+            background-color: ${backgroundColor};
         }
         .controls {
             position: absolute;
             top: 10px;
             left: 10px;
             z-index: 1000;
-            background: white;
+            background: ${controlsBackground};
+            color: ${controlsColor};
             padding: 10px;
             border-radius: 5px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px ${boxShadowColor};
+            border: ${isDarkTheme ? '1px solid #3e3e42' : '1px solid #e1e1e1'};
         }
         button {
             margin: 5px;
             padding: 8px 12px;
             border: none;
             border-radius: 3px;
-            background: #007ACC;
+            background: ${buttonBackground};
             color: white;
             cursor: pointer;
         }
         button:hover {
-            background: #005A9E;
+            background: ${buttonHoverBackground};
         }
     </style>
 </head>
@@ -132,6 +155,9 @@ export class GraphVisualization {
         const cy = cytoscape({
             container: document.getElementById('cy'),
             elements: ${JSON.stringify([...elements.nodes, ...elements.edges])},
+            
+            // Compound graphsを有効にする
+            // これにより親子関係のあるノードがグループ化される
             style: [
                 {
                     selector: 'node',
@@ -141,37 +167,85 @@ export class GraphVisualization {
                         'text-valign': 'center',
                         'text-halign': 'center',
                         'color': '#fff',
-                        'font-size': '12px',
-                        'width': '60px',
-                        'height': '60px'
+                        'font-size': '10px',
+                        'width': '80px',
+                        'height': '40px',
+                        'text-wrap': 'wrap',
+                        'text-max-width': '70px'
                     }
                 },
                 {
                     selector: 'node[kind="1"]',
                     style: {
                         'background-color': '#4A90E2',
-                        'shape': 'rectangle'
+                        'shape': 'rectangle',
+                        'width': '200px',
+                        'height': '150px',
+                        'text-valign': 'top',
+                        'text-halign': 'center',
+                        'padding': '20px',
+                        'border-width': '2px',
+                        'border-color': '#2E5984',
+                        'background-opacity': 0.2,
+                        'font-size': '12px',
+                        'font-weight': 'bold'
                     }
                 },
                 {
                     selector: 'node[kind="6"]',
                     style: {
                         'background-color': '#7ED321',
-                        'shape': 'ellipse'
+                        'shape': 'ellipse',
+                        'width': '100px',
+                        'height': '50px'
                     }
                 },
                 {
                     selector: 'node[kind="13"]',
                     style: {
                         'background-color': '#F5A623',
-                        'shape': 'diamond'
+                        'shape': 'rectangle',
+                        'width': '90px',
+                        'height': '45px'
                     }
                 },
                 {
                     selector: 'node[kind="5"]',
                     style: {
                         'background-color': '#D0021B',
-                        'shape': 'hexagon'
+                        'shape': 'rectangle',
+                        'width': '85px',
+                        'height': '40px'
+                    }
+                },
+                {
+                    selector: 'node[kind="12"]',
+                    style: {
+                        'background-color': '#9013FE',
+                        'shape': 'rectangle',
+                        'width': '75px',
+                        'height': '35px'
+                    }
+                },
+                {
+                    selector: 'node[depth="0"]',
+                    style: {
+                        'border-width': '3px',
+                        'border-color': '#000'
+                    }
+                },
+                {
+                    selector: 'node[depth="1"]',
+                    style: {
+                        'border-width': '2px',
+                        'border-color': '#333'
+                    }
+                },
+                {
+                    selector: 'node[depth="2"]',
+                    style: {
+                        'border-width': '1px',
+                        'border-color': '#666'
                     }
                 },
                 {
@@ -190,15 +264,45 @@ export class GraphVisualization {
                         'line-color': '#E74C3C',
                         'target-arrow-color': '#E74C3C'
                     }
+                },
+                {
+                    selector: 'edge[referenceType="contains"]',
+                    style: {
+                        'line-color': '#4A90E2',
+                        'target-arrow-color': '#4A90E2',
+                        'line-style': 'solid',
+                        'width': 4,
+                        'opacity': 0.9,
+                        'curve-style': 'straight'
+                    }
                 }
             ],
             layout: {
                 name: 'cose',
                 animate: true,
                 animationDuration: 1000,
-                nodeRepulsion: 10000,
-                idealEdgeLength: 100,
-                edgeElasticity: 100
+                fit: true,
+                padding: 50,
+                nodeRepulsion: function( node ) {
+                    // ファイルノードは強い反発力で分散配置
+                    return node.data('depth') === 0 ? 80000 : 40000;
+                },
+                nodeOverlap: 40,
+                idealEdgeLength: function( edge ) {
+                    // containsエッジ（階層関係）は短く、referenceエッジは長く
+                    return edge.data('referenceType') === 'contains' ? 60 : 250;
+                },
+                edgeElasticity: function( edge ) {
+                    // containsエッジの方が強い結合力
+                    return edge.data('referenceType') === 'contains' ? 500 : 50;
+                },
+                gravity: 30,
+                numIter: 1000,
+                initialTemp: 200,
+                coolingFactor: 0.95,
+                minTemp: 1.0,
+                avoidOverlap: true,
+                randomize: false
             }
         });
 
@@ -211,9 +315,25 @@ export class GraphVisualization {
                 name: 'cose',
                 animate: true,
                 animationDuration: 1000,
-                nodeRepulsion: 10000,
-                idealEdgeLength: 100,
-                edgeElasticity: 100
+                fit: true,
+                padding: 50,
+                nodeRepulsion: function( node ) {
+                    return node.data('depth') === 0 ? 80000 : 40000;
+                },
+                nodeOverlap: 40,
+                idealEdgeLength: function( edge ) {
+                    return edge.data('referenceType') === 'contains' ? 60 : 250;
+                },
+                edgeElasticity: function( edge ) {
+                    return edge.data('referenceType') === 'contains' ? 500 : 50;
+                },
+                gravity: 30,
+                numIter: 1000,
+                initialTemp: 200,
+                coolingFactor: 0.95,
+                minTemp: 1.0,
+                avoidOverlap: true,
+                randomize: false
             });
             layout.run();
         }

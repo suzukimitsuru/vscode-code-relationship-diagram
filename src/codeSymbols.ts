@@ -10,9 +10,10 @@ export function load(path: string, document: vscode.TextDocument): Promise<SYMBO
             const foundSymbols = docSymbols ? docSymbols.filter(symbol => symbolKinds.includes(symbol.kind)) : undefined;
 
             // シンボル階層を構築
-            const rootSymbol = new SYMBOL.SymbolModel(vscode.SymbolKind.File, path, 0, document.lineCount ? document.lineCount - 1 : 0);
+            const fileName = path.split('/').pop() || path;
+            const rootSymbol = new SYMBOL.SymbolModel(fileName, vscode.SymbolKind.File, path, 0, document.lineCount ? document.lineCount - 1 : 0);
             const sumSymbol = (found: vscode.DocumentSymbol, symbol: SYMBOL.SymbolModel) => {
-                const branch = new SYMBOL.SymbolModel(found.kind, path, found.range.start.line, found.range.end.line);
+                const branch = new SYMBOL.SymbolModel(found.name, found.kind, path, found.range.start.line, found.range.end.line);
                 found.children.forEach(child => { sumSymbol(child, branch); });
                 symbol.addChild(branch);
             };

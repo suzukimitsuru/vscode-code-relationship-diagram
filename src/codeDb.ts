@@ -61,6 +61,7 @@ export class Db extends vscode.Disposable {
                         CREATE TABLE IF NOT EXISTS symbols (
                             id TEXT PRIMARY KEY,
                             parent_id TEXT,
+                            name TEXT,
                             kind INTEGER,
                             path TEXT,
                             start_line INTEGER,
@@ -231,10 +232,11 @@ export class Db extends vscode.Disposable {
     private _saveSymbol(symbol: SYMBOL.SymbolModel, parentId: string | null): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             this._conn.prepare(
-                `INSERT INTO symbols (id, parent_id, kind, path, start_line, end_line, update_id, pos_x, pos_y)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+                `INSERT INTO symbols (id, parent_id, name, kind, path, start_line, end_line, update_id, pos_x, pos_y)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
                     symbol.id,
                     parentId,
+                    symbol.name,
                     symbol.kind,
                     symbol.path,
                     symbol.startLine,
@@ -277,6 +279,7 @@ export class Db extends vscode.Disposable {
                         const map = new Map<string, SYMBOL.SymbolModel>();
                         for (const row of rows) {
                             map.set(row.id, new SYMBOL.SymbolModel(
+                                row.name,
                                 row.kind,
                                 row.path,
                                 row.start_line,
