@@ -13,7 +13,15 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.0.6]　- 2025-06-30
+
+### [0.0.6]　- Fixed
+
+- `duckdb-*.node`の`node-version`を`18`から`22`にアップグレード
+
 ## [0.0.５]　- 2025-06-28
+
+### [0.0.5]　- Fixed
 
 - 初期化(`initialize`)コマンドで、`Error: Cannot load duckdb.node: not a valid Win32 application`エラーが発生する fixed #7
   - 原因2: `duckdb.node`が、開発環境のMacOS用で、動作環境のWindows用では無いため発生していた。

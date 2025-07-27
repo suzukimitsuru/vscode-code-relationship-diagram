@@ -5,6 +5,7 @@ import locale from './locale';
 import { Logs } from './logs';
 import * as codeDb from './codeDb';
 import * as codeFile from './codeFiles';
+import * as codeSymbols from './codeSymbols';
 
 let _logs: Logs | null = null;
 
@@ -68,10 +69,26 @@ export function activate(context: vscode.ExtensionContext) {
 						}
 					}
 
+					for (const file of sorted) {
+						try {
+							// コードファイルのシンボルを読み込む
+							const fullname = path.join(root_folder.uri.fsPath, file.relative_path);
+							const document = await vscode.workspace.openTextDocument(vscode.Uri.file(fullname));
+							const symbol = await codeSymbols.load(file.relative_path, document);
+							if (symbol) {
+								// シンボルをDBにアップサートする
+								await db.symbol_upsert(symbol);
+								logs.log(`${(performance.now() - start).toFixed(2)} ms: load symbol ${symbol.path} (${vscode.SymbolKind[symbol.kind]})`);
+							}
+						} catch (error) {
+							logs.trace(`codeSymbols.load(${file.relative_path}): ${error instanceof Error ? error.message : error}`);
+						}
+					}
+					
 					// DBを破棄する
 					db.dispose();
 
-					logs.log(`${(performance.now() - start).toFixed(2)} ms`);
+					logs.log(`${(performance.now() - start).toFixed(2)} ms list ${files.length} files, upserted ${upserts.length} files, removed ${removes.length} files`);
 
 					// 初期化メッセージを表示する
 					logs.info(locale('initialize-message'));
