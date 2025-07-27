@@ -25,9 +25,30 @@ export class GraphVisualization {
             }
         );
 
+        // 初期HTML（ローディング状態）を表示
+        this.panel.webview.html = this.generateLoadingContent();
+        
+        // 進捗を段階的に更新
+        await this.updateProgress(20, 'Processing symbols...');
+        
         const elements = this.createGraphElements(symbols, references);
         
+        await this.updateProgress(50, 'Generating graph...');
+        
+        // 最終的なHTMLを設定
         this.panel.webview.html = this.generateWebviewContent(elements);
+    }
+    
+    private async updateProgress(percent: number, message: string): Promise<void> {
+        if (this.panel) {
+            await this.panel.webview.postMessage({
+                type: 'progress',
+                percent: percent,
+                message: message
+            });
+            // 短い待機でUI更新を確実にする
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
     }
 
     private createGraphElements(symbols: SYMBOL.SymbolModel[], references: codeReferences.SymbolReference[]) {
@@ -78,6 +99,79 @@ export class GraphVisualization {
         const fileName = symbol.path.split('/').pop() || symbol.path;
         return symbol.kind === vscode.SymbolKind.File ? fileName : symbol.name;
     }
+    
+    private generateLoadingContent(): string {
+        const isDarkTheme = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
+        const backgroundColor = isDarkTheme ? '#1e1e1e' : '#ffffff';
+        const controlsColor = isDarkTheme ? '#cccccc' : '#333333';
+        
+        return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Code Relationship Diagram - Loading</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: ${backgroundColor};
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        #progress-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background-color: ${isDarkTheme ? '#333' : '#e0e0e0'};
+            z-index: 2000;
+        }
+        #progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #007ACC, #4A90E2);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 0 2px 2px 0;
+        }
+        #progress-text {
+            color: ${controlsColor};
+            font-size: 16px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="progress-container">
+        <div id="progress-bar"></div>
+    </div>
+    <div id="progress-text">Initializing...</div>
+    
+    <script>
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        
+        function updateProgress(percent, message) {
+            progressBar.style.width = percent + '%';
+            progressText.textContent = message;
+        }
+        
+        window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.type === 'progress') {
+                updateProgress(message.percent, message.message);
+            }
+        });
+        
+        updateProgress(5, 'Starting...');
+    </script>
+</body>
+</html>`;
+    }
 
     private generateWebviewContent(elements: { nodes: any[], edges: any[] }): string {
         // VSCodeのテーマ色を取得
@@ -112,10 +206,39 @@ export class GraphVisualization {
             font-family: Arial, sans-serif;
             background-color: ${backgroundColor};
         }
+        #progress-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background-color: ${isDarkTheme ? '#333' : '#e0e0e0'};
+            z-index: 2000;
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+        #progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #007ACC, #4A90E2);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 0 2px 2px 0;
+        }
+        #progress-text {
+            position: fixed;
+            top: 8px;
+            left: 10px;
+            color: ${controlsColor};
+            font-size: 12px;
+            z-index: 2001;
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
         #cy {
             width: 100%;
             height: 100vh;
             background-color: ${backgroundColor};
+            padding-top: 4px;
         }
         .controls {
             position: absolute;
@@ -144,6 +267,10 @@ export class GraphVisualization {
     </style>
 </head>
 <body>
+    <div id="progress-container">
+        <div id="progress-bar"></div>
+    </div>
+    <div id="progress-text">Loading...</div>
     <div class="controls">
         <button onclick="fitGraph()">Fit to Screen</button>
         <button onclick="resetLayout()">Reset Layout</button>
@@ -152,9 +279,46 @@ export class GraphVisualization {
     <div id="cy"></div>
     
     <script>
+        // 進捗表示の管理
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const progressContainer = document.getElementById('progress-container');
+        
+        function updateProgress(percent, message) {
+            progressBar.style.width = percent + '%';
+            progressText.textContent = message;
+            
+            if (percent >= 100) {
+                setTimeout(() => {
+                    progressContainer.style.opacity = '0';
+                    progressText.style.opacity = '0';
+                    setTimeout(() => {
+                        progressContainer.style.display = 'none';
+                        progressText.style.display = 'none';
+                    }, 300);
+                }, 500);
+            }
+        }
+        
+        // VSCode Extension からのメッセージ受信
+        window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.type === 'progress') {
+                updateProgress(message.percent, message.message);
+            }
+        });
+        
+        // 初期進捗表示
+        updateProgress(10, 'Initializing graph...');
+        
         const cy = cytoscape({
             container: document.getElementById('cy'),
             elements: ${JSON.stringify([...elements.nodes, ...elements.edges])},
+            
+            // ズーム制限を設定
+            minZoom: 0.1,
+            maxZoom: 3.0,
+            wheelSensitivity: 0.2,
             
             // Compound graphsを有効にする
             // これにより親子関係のあるノードがグループ化される
@@ -305,9 +469,28 @@ export class GraphVisualization {
                 randomize: false
             }
         });
+        
+        // レイアウト開始時とレイアウト完了時の進捗表示
+        cy.on('layoutstart', function() {
+            updateProgress(60, 'Arranging nodes...');
+        });
+        
+        cy.on('layoutstop', function() {
+            updateProgress(100, 'Complete!');
+            // レイアウト完了後に自動的にfitし、最小ズームを設定
+            setTimeout(() => {
+                fitGraph();
+            }, 100);
+        });
+        
+        // グラフ初期化完了
+        updateProgress(40, 'Loading graph elements...');
 
         function fitGraph() {
             cy.fit();
+            // Fit後のズームレベルを取得して、それを最小ズームとして設定
+            const fitZoom = cy.zoom();
+            cy.minZoom(Math.max(fitZoom * 0.8, 0.1)); // Fitレベルの80%まで縮小を許可
         }
 
         function resetLayout() {
@@ -336,6 +519,13 @@ export class GraphVisualization {
                 randomize: false
             });
             layout.run();
+            
+            // レイアウト完了後にfitして最小ズームを更新
+            layout.on('layoutstop', function() {
+                setTimeout(() => {
+                    fitGraph();
+                }, 100);
+            });
         }
 
         function exportPNG() {
