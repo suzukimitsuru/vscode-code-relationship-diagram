@@ -42,7 +42,7 @@ export function activate(context: vscode.ExtensionContext) {
 					const files: codeFile.File[] = [];
 					const patterns = codeFile.list(root_folder.uri.fsPath, associations, (file: codeFile.File) => {
 						files.push(file);
-						logs.log(`${(performance.now() - start).toFixed(2)} ms: list ${file.relative_path}`);
+						logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: list ${file.relative_path}`);
 					});
 
 					// コードファイルをパスでソートする
@@ -56,7 +56,7 @@ export function activate(context: vscode.ExtensionContext) {
 					for (const upsert of upserts) {
 						try {
 							await db.codeFile_upsert(upsert.relative_path, upsert.updated);
-							logs.log(`${(performance.now() - start).toFixed(2)} ms: upsert ${upsert.relative_path}`);
+							logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: upsert ${upsert.relative_path}`);
 						} catch (error) {
 							logs.trace(`db.codeFile_upsert(${upsert.relative_path}): ${error instanceof Error ? error.message : error}`);
 						}
@@ -66,7 +66,7 @@ export function activate(context: vscode.ExtensionContext) {
 					for (const remove of removes) {
 						try {
 							await db.codeFile_remove(remove);
-							logs.log(`${(performance.now() - start).toFixed(2)} ms: remove ${remove}`);
+							logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: remove ${remove}`);
 						} catch (error) {
 							logs.trace(`db.codeFile_remove(${remove}): ${error instanceof Error ? error.message : error}`);
 						}
@@ -81,7 +81,7 @@ export function activate(context: vscode.ExtensionContext) {
 							if (symbol) {
 								// シンボルをDBにアップサートする
 								await db.symbol_upsert(symbol);
-								logs.log(`${(performance.now() - start).toFixed(2)} ms: load symbol ${symbol.path}`);
+								logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: load symbol ${symbol.path}`);
 								
 								// シンボル参照関係を抽出
 								const references = await codeReferences.extractReferences(document, symbol.id, db, root_folder.uri.fsPath);
@@ -89,7 +89,7 @@ export function activate(context: vscode.ExtensionContext) {
 									await db.symbolReference_upsert(ref);
 								}
 								if (references.length > 0) {
-									logs.log(`${(performance.now() - start).toFixed(2)} ms: extracted ${references.length} references from ${symbol.path}`);
+									logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: extracted ${references.length} references from ${symbol.path}`);
 								}
 							}
 						} catch (error) {
@@ -100,7 +100,7 @@ export function activate(context: vscode.ExtensionContext) {
 					// DBを破棄する
 					db.dispose();
 
-					logs.log(`${(performance.now() - start).toFixed(2)} ms list ${files.length} files, upserted ${upserts.length} files, removed ${removes.length} files`);
+					logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: processed ${files.length} files, upserted ${upserts.length} files, removed ${removes.length} files`);
 
 					// 初期化メッセージを表示する
 					logs.info(locale('initialize-message'));

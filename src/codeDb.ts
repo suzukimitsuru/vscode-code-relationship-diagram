@@ -205,17 +205,27 @@ export class Db extends vscode.Disposable {
      */
     public symbol_upsert(symbol: SYMBOL.SymbolModel): Promise<void> {
         return new Promise<void>((resolve, reject) => {
-            // 既存のシンボルを削除（path一致のものを全削除）
-            this._conn.prepare(`DELETE FROM symbols WHERE path = ?`).run(
-                symbol.path,
+            // 既存のシンボル参照関係を先に削除（path一致のものを全削除）
+            this._conn.prepare(`DELETE FROM symbol_references WHERE from_path = ? OR to_path = ?`).run(
+                symbol.path, symbol.path,
                 (err: Error | null) => {
                     if (err) {
                         reject(err);
                     } else {
-                        // 再帰的に保存
-                        this._saveSymbol(symbol, null).then(
-                            () => resolve(),
-                            (err: Error) => reject(err)
+                        // 既存のシンボルを削除（path一致のものを全削除）
+                        this._conn.prepare(`DELETE FROM symbols WHERE path = ?`).run(
+                            symbol.path,
+                            (err: Error | null) => {
+                                if (err) {
+                                    reject(err);
+                                } else {
+                                    // 再帰的に保存
+                                    this._saveSymbol(symbol, null).then(
+                                        () => resolve(),
+                                        (err: Error) => reject(err)
+                                    );
+                                }
+                            }
                         );
                     }
                 }

@@ -36,7 +36,7 @@ export class GraphVisualization {
         if (this.panel) {
             this.panel.dispose();
             const elapsed = (performance.now() - startTime) / 1000;
-            this.logs.log(`[${elapsed.toFixed(3)}s][  5.00%] Disposed existing webview panel`);
+            this.logs.log(`${elapsed.toFixed(3)}s   5.00%: Disposed existing webview panel`);
         }
 
         try {
@@ -50,7 +50,7 @@ export class GraphVisualization {
                 }
             );
             const panelElapsed = (performance.now() - startTime) / 1000;
-            this.logs.log(`[${panelElapsed.toFixed(3)}s][ 10.00%] Created new webview panel`);
+            this.logs.log(`${panelElapsed.toFixed(3)}s  10.00%: Created new webview panel`);
         } catch (panelError) {
             this.logs.error(`Failed to create webview panel: ${panelError instanceof Error ? panelError.message : panelError}`);
             console.error('Panel creation error:', panelError);
@@ -60,7 +60,7 @@ export class GraphVisualization {
         // 初期HTML（ローディング状態）を表示
         this.panel.webview.html = this.generateLoadingContent(locale('window-title'));
         const loadingElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`[${loadingElapsed.toFixed(3)}s][ 15.00%] Generated loading content`);
+        this.logs.log(`${loadingElapsed.toFixed(3)}s  15.00%: Generated loading content`);
         
         // 進捗を段階的に更新
         await this.updateProgress(20, 'Processing symbols...');
@@ -69,7 +69,7 @@ export class GraphVisualization {
         const elements = this.createGraphElements(symbols, references, startTime);
         const elementsEndTime = performance.now();
         const elementsElapsed = (elementsEndTime - startTime) / 1000;
-        this.logs.log(`[${elementsElapsed.toFixed(3)}s][ 60.00%] Created graph elements: ${elements.nodes.length} nodes, ${elements.edges.length} edges (${(elementsEndTime - elementsStartTime).toFixed(3)}ms)`);
+        this.logs.log(`${elementsElapsed.toFixed(3)}s  60.00%: Created graph elements: ${elements.nodes.length} nodes, ${elements.edges.length} edges (${(elementsEndTime - elementsStartTime).toFixed(3)}ms)`);
         
         await this.updateProgress(50, 'Generating graph...');
         
@@ -78,13 +78,13 @@ export class GraphVisualization {
         this.panel.webview.html = this.generateWebviewContent(locale('window-title'), elements);
         const htmlEndTime = performance.now();
         const htmlElapsed = (htmlEndTime - startTime) / 1000;
-        this.logs.log(`[${htmlElapsed.toFixed(3)}s][ 90.00%] Generated webview content (${(htmlEndTime - htmlStartTime).toFixed(3)}ms)`);
+        this.logs.log(`${htmlElapsed.toFixed(3)}s  90.00%: Generated webview content (${(htmlEndTime - htmlStartTime).toFixed(3)}ms)`);
         
             const totalTime = (performance.now() - startTime) / 1000;
-            this.logs.log(`[${totalTime.toFixed(3)}s][100.00%] Code relationship diagram generation completed in ${totalTime.toFixed(3)}s`);
+            this.logs.log(`${totalTime.toFixed(3)}s 100.00%: Code relationship diagram generation completed in ${totalTime.toFixed(3)}s`);
         } catch (error) {
             const errorTime = (performance.now() - startTime) / 1000;
-            this.logs.error(`[${errorTime.toFixed(3)}s] Error during graph visualization: ${error instanceof Error ? error.message : error}`);
+            this.logs.error(`${errorTime.toFixed(3)}s: Error during graph visualization: ${error instanceof Error ? error.message : error}`);
             console.error('ShowGraph detailed error:', error);
             
             // エラーが発生した場合でもパネルが残っていたら削除
@@ -121,7 +121,7 @@ export class GraphVisualization {
 
     private createGraphElements(symbols: SYMBOL.SymbolModel[], references: codeReferences.SymbolReference[], startTime: number) {
         const currentElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`[${currentElapsed.toFixed(3)}s][ 20.00%] Creating graph elements from symbols and references...`);
+        this.logs.log(`${currentElapsed.toFixed(3)}s  20.00%: Creating graph elements from symbols and references...`);
         const nodes: any[] = [];
         const edges: any[] = [];
         const fileNodes = new Map<string, any>();
@@ -147,7 +147,7 @@ export class GraphVisualization {
             }
         });
         const nodesElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`[${nodesElapsed.toFixed(3)}s][ 30.00%] Created ${fileSymbolCount} file nodes from ${symbols.length} total symbols`);
+        this.logs.log(`${nodesElapsed.toFixed(3)}s  30.00%: Created ${fileSymbolCount} file nodes from ${symbols.length} total symbols`);
 
         // ファイル間の関係を集約
         let processedReferences = 0;
@@ -172,7 +172,7 @@ export class GraphVisualization {
             processedReferences++;
         });
         const relationsElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`[${relationsElapsed.toFixed(3)}s][ 40.00%] Processed ${processedReferences} references into ${fileRelations.size} file relations`);
+        this.logs.log(`${relationsElapsed.toFixed(3)}s  40.00%: Processed ${processedReferences} references into ${fileRelations.size} file relations`);
 
         // ノードを配列に追加
         nodes.push(...Array.from(fileNodes.values()));
@@ -209,26 +209,26 @@ export class GraphVisualization {
                 });
                 const edgeElapsed = (performance.now() - startTime) / 1000;
                 if (edgeCount <= 3) {
-                    this.logs.log(`[${edgeElapsed.toFixed(3)}s][ 47.${String(edgeCount).padStart(2, '0')}%] Created edge: ${fromNode.data.label} → ${toNode.data.label} (${count} relations)`);
+                    this.logs.log(`${edgeElapsed.toFixed(3)}s  47.${String(edgeCount).padStart(2, '0')}%: Created edge: ${fromNode.data.label} → ${toNode.data.label} (${count} relations)`);
                 }
             } else {
                 const skipElapsed = (performance.now() - startTime) / 1000;
-                this.logs.log(`[${skipElapsed.toFixed(3)}s][ 47.XX%] Skipped edge: ${fromPath.split('/').pop()} → ${toPath.split('/').pop()} (nodes not found)`);
-                this.logs.log(`[${skipElapsed.toFixed(3)}s][ 47.XX%] fromNode: ${fromNode ? 'found' : 'NOT FOUND'}, toNode: ${toNode ? 'found' : 'NOT FOUND'}`);
+                this.logs.log(`${skipElapsed.toFixed(3)}s  47.XX%: Skipped edge: ${fromPath.split('/').pop()} → ${toPath.split('/').pop()} (nodes not found)`);
+                this.logs.log(`${skipElapsed.toFixed(3)}s  47.XX%: fromNode: ${fromNode ? 'found' : 'NOT FOUND'}, toNode: ${toNode ? 'found' : 'NOT FOUND'}`);
             }
         });
         const edgesElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`[${edgesElapsed.toFixed(3)}s][ 50.00%] Generated ${edgeCount} edges from ${fileRelations.size} file relations`);
+        this.logs.log(`${edgesElapsed.toFixed(3)}s  50.00%: Generated ${edgeCount} edges from ${fileRelations.size} file relations`);
         
         // 関係線の詳細情報をログ出力
         if (edgeDetails.length > 0) {
-            this.logs.log(`[${edgesElapsed.toFixed(3)}s][ 52.00%] Relationship details:`);
+            this.logs.log(`${edgesElapsed.toFixed(3)}s  52.00%: Relationship details:`);
             
             // 関係数でソートして表示
             const sortedEdges = edgeDetails.sort((a, b) => b.count - a.count);
             sortedEdges.forEach((edge, index) => {
                 const detailElapsed = (performance.now() - startTime) / 1000;
-                this.logs.log(`[${detailElapsed.toFixed(3)}s][ 52.${((index + 1) / sortedEdges.length * 100).toFixed(0).padStart(2, '0')}%]   ${edge.from} → ${edge.to}: ${edge.count} references`);
+                this.logs.log(`${detailElapsed.toFixed(3)}s  52.${((index + 1) / sortedEdges.length * 100).toFixed(0).padStart(2, '0')}%:   ${edge.from} → ${edge.to}: ${edge.count} references`);
             });
             
             // 統計情報も出力
@@ -238,12 +238,12 @@ export class GraphVisualization {
             const minRelations = Math.min(...edgeDetails.map(e => e.count));
             
             const statsElapsed = (performance.now() - startTime) / 1000;
-            this.logs.log(`[${statsElapsed.toFixed(3)}s][ 53.00%] Relations statistics: Total=${totalRelations}, Avg=${avgRelations}, Max=${maxRelations}, Min=${minRelations}`);
+            this.logs.log(`${statsElapsed.toFixed(3)}s  53.00%: Relations statistics: Total=${totalRelations}, Avg=${avgRelations}, Max=${maxRelations}, Min=${minRelations}`);
         }
 
         const totalSymbolCount = Array.from(fileNodes.values()).reduce((sum, node) => sum + node.data.symbolCount, 0);
         const summaryElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`[${summaryElapsed.toFixed(3)}s][ 58.00%] Graph summary: ${nodes.length} nodes, ${edges.length} edges, ${totalSymbolCount} total symbols`);
+        this.logs.log(`${summaryElapsed.toFixed(3)}s  58.00%: Graph summary: ${nodes.length} nodes, ${edges.length} edges, ${totalSymbolCount} total symbols`);
 
         return { nodes, edges };
     }
