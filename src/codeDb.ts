@@ -336,6 +336,32 @@ export class Db extends vscode.Disposable {
     }
 
     /**
+     * @description パス、名前、開始行でシンボルを検索
+     * @param path ファイルパス
+     * @param name シンボル名
+     * @param startLine 開始行
+     * @returns シンボルのID（見つからない場合はnull）
+     */
+    public symbol_findByPathNameLine(path: string, name: string, startLine: number): Promise<string | null> {
+        return new Promise<string | null>((resolve, reject) => {
+            this._conn.prepare(`
+                SELECT id FROM symbols 
+                WHERE path = ? AND name = ? AND start_line = ?
+                LIMIT 1
+            `).all(
+                path, name, startLine,
+                (err: Error | null, rows: duckdb.TableData) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve(rows.length > 0 ? rows[0].id : null);
+                    }
+                }
+            );
+        });
+    }
+
+    /**
      * @description シンボル参照の全てを読み込み
      * @returns シンボル参照の配列
      */

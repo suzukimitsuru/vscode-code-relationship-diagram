@@ -1,4 +1,5 @@
 {
+    "window-title": "Code Relationship Diagram",
     "initialize-description": "Displays a Hello World message.",
     "initialize-message": "Hello World from Code Relationship Diagram!",
     "error-no-associations": "Create workspace and set 'files.associations'."

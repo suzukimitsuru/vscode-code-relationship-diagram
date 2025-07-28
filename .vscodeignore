@@ -21,4 +21,5 @@ vsc-extension-quickstart.md
 !node_modules/consola/**
 !node_modules/semver/**
 !node_modules/detect-libc/**
-
+!node_modules/cytoscape/dist/cytoscape.min.js
+!node_modules/cytoscape-dagre/cytoscape-dagre.js
