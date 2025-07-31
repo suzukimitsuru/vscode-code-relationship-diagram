@@ -13,6 +13,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## 0.0.8　- 2025-07-28
+
+### 0.0.8　- Added
+
+- コード関係の取得を平行実行して高速化
+
 ## 0.0.7　- 2025-07-28
 
 ### 0.0.7　- Added

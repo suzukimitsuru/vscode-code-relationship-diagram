@@ -42,61 +42,102 @@ export function activate(context: vscode.ExtensionContext) {
 					const files: codeFile.File[] = [];
 					const patterns = codeFile.list(root_folder.uri.fsPath, associations, (file: codeFile.File) => {
 						files.push(file);
-						logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: list ${file.relative_path}`);
+						logs.log(`listed ${file.relative_path}`);
 					});
 
 					// コードファイルをパスでソートする
 					const sorted = files.sort((a, b) => a.relative_path.localeCompare(b.relative_path));
 
 					// コードファイルテーブルの変更を抽出する
-					const rows = await db.codeFile_queryAll();
+					const rows = await db.codeFile_query(null);
 					const [upserts, removes] = codeFile.updates(sorted, rows);
+					const save_promises: Promise<void>[] = [];
 
-					// コードファイルを更新する
+					// ファイル削除を追加する
+					for (const remove of removes) {
+						save_promises.push(new Promise<void>((resolve, reject) => {
+							db.symbol_delete(remove).then(() => {
+								logs.log(`Removed symbol: ${remove}`);
+								db.codeFile_delete(remove).then(() => {
+									logs.log(`Removed file: ${remove}`);
+									resolve();
+								}).catch(error => {
+									reject(`db.codeFile_delete(${remove}): ${error instanceof Error ? error.message : error}`);
+								});
+							}).catch(error => {
+								reject(`db.symbol_delete(${remove}): ${error instanceof Error ? error.message : error}`);
+							});
+						}));
+					}
+
+					// ファイル更新を追加する
 					for (const upsert of upserts) {
-						try {
-							await db.codeFile_upsert(upsert.relative_path, upsert.updated);
-							logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: upsert ${upsert.relative_path}`);
-						} catch (error) {
-							logs.trace(`db.codeFile_upsert(${upsert.relative_path}): ${error instanceof Error ? error.message : error}`);
-						}
+						save_promises.push(new Promise<void>((resolve, reject) => {
+							logs.log(`Upsert file: ${upsert.relative_path}`);
+
+							// シンボルを削除する
+							db.symbol_delete(upsert.relative_path).then(() => {
+								logs.log(`   Removed symbol: ${upsert.relative_path}`);
+
+								// コードファイルのシンボルを読み込む
+								const fullname = path.join(root_folder.uri.fsPath, upsert.relative_path);
+								vscode.workspace.openTextDocument(vscode.Uri.file(fullname)).then(document => {
+
+									codeSymbols.load(upsert.relative_path, document).then(symbol => {
+										if (symbol) {
+
+											// シンボルをDBにアップサートする
+											db.symbol_save(symbol, null).then(() => {
+												logs.log(`  saved symbol: ${symbol.path}`);
+
+												// シンボル参照関係を抽出
+												codeReferences.extractReferences(document, symbol.id, db, logs, root_folder.uri.fsPath).then(references => {
+													const inserts: Promise<void>[] = [];
+													if (references.length > 0) {
+														for (const reference of references) {
+															inserts.push( db.reference_insert(reference) );
+														}
+													}
+													Promise.all(inserts).then(() => {
+														logs.log(`  extracted ${references.length} references from ${symbol.path}`);
+
+														// コードファイルを更新または挿入する
+														db.codeFile_upsert(upsert.relative_path, upsert.updated).then(() => {
+															logs.log(`Upserted file: ${upsert.relative_path}`);
+															resolve();
+														}).catch(error => {
+															reject(`db.codeFile_upsert(${upsert.relative_path}): ${error instanceof Error ? error.message : error}`);
+														});
+													}).catch(error => {
+														logs.error(`Failed to insert references for ${symbol.path}: ${error instanceof Error ? error.message : error}`);
+													});
+												}).catch(error => {
+													logs.error(`Failed to extract references from ${symbol.path}: ${error instanceof Error ? error.message : error}`);
+												});
+											}).catch(error => {
+												reject(`db.symbol_save(${symbol.path}): ${error instanceof Error ? error.message : error}`);
+											});											
+										}
+									}, error => {
+										reject(`Failed to load symbols from ${fullname}: ${error instanceof Error ? error.message : error}`);
+									});
+								}, error => {
+									reject(`Failed to open document ${fullname}: ${error instanceof Error ? error.message : error}`);
+								});
+							}).catch(error => {
+								reject(`db.symbol_delete(${upsert.relative_path}): ${error instanceof Error ? error.message : error}`);
+							});
+						}));
 					}
 
 					// コードファイルを削除する
-					for (const remove of removes) {
-						try {
-							await db.codeFile_remove(remove);
-							logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: remove ${remove}`);
-						} catch (error) {
-							logs.trace(`db.codeFile_remove(${remove}): ${error instanceof Error ? error.message : error}`);
-						}
+					try {
+						await Promise.all(save_promises);
+						logs.log(`Upserted ${upserts.length} files, removed ${removes.length} files`);
+					} catch (error) {
+						logs.trace(`save_promises(): ${error instanceof Error ? error.message : error}`);
 					}
 
-					for (const file of sorted) {
-						try {
-							// コードファイルのシンボルを読み込む
-							const fullname = path.join(root_folder.uri.fsPath, file.relative_path);
-							const document = await vscode.workspace.openTextDocument(vscode.Uri.file(fullname));
-							const symbol = await codeSymbols.load(file.relative_path, document);
-							if (symbol) {
-								// シンボルをDBにアップサートする
-								await db.symbol_upsert(symbol);
-								logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: load symbol ${symbol.path}`);
-								
-								// シンボル参照関係を抽出
-								const references = await codeReferences.extractReferences(document, symbol.id, db, root_folder.uri.fsPath);
-								for (const ref of references) {
-									await db.symbolReference_upsert(ref);
-								}
-								if (references.length > 0) {
-									logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: extracted ${references.length} references from ${symbol.path}`);
-								}
-							}
-						} catch (error) {
-							logs.trace(`codeSymbols.load(${file.relative_path}): ${error instanceof Error ? error.message : error}`);
-						}
-					}
-					
 					// DBを破棄する
 					db.dispose();
 
@@ -155,7 +196,7 @@ export function activate(context: vscode.ExtensionContext) {
 				
 				// タイムアウト機能付きでファイル一覧を取得
 				const files = await Promise.race([
-					db.codeFile_queryAll(),
+					db.codeFile_query(null),
 					new Promise((_, reject) => 
 						setTimeout(() => reject(new Error('Database query timeout (10s)')), 10000)
 					)
@@ -169,7 +210,7 @@ export function activate(context: vscode.ExtensionContext) {
 					logs.log(`Loading symbols from file: ${fileRow.relative_path}`);
 					
 					const symbols = await Promise.race([
-						db.symbol_loadAll(fileRow.relative_path),
+						db.symbol_load(fileRow.relative_path),
 						new Promise((_, reject) => 
 							setTimeout(() => reject(new Error(`Symbol load timeout for ${fileRow.relative_path}`)), 5000)
 						)
@@ -187,7 +228,7 @@ export function activate(context: vscode.ExtensionContext) {
 				logs.log('Loading symbol references...');
 				
 				const references = await Promise.race([
-					db.symbolReference_loadAll(),
+					db.reference_quaryAll(),
 					new Promise((_, reject) => 
 						setTimeout(() => reject(new Error('References load timeout (10s)')), 10000)
 					)

@@ -15,7 +15,7 @@ export class GraphVisualization {
         this.logs = logs;
     }
 
-    public async showGraph(symbols: SYMBOL.SymbolModel[], references: codeReferences.SymbolReference[]) {
+    public async showGraph(symbols: SYMBOL.SymbolModel[], references: codeReferences.Reference[]) {
         const startTime = performance.now();
         
         try {
@@ -119,7 +119,7 @@ export class GraphVisualization {
         }
     }
 
-    private createGraphElements(symbols: SYMBOL.SymbolModel[], references: codeReferences.SymbolReference[], startTime: number) {
+    private createGraphElements(symbols: SYMBOL.SymbolModel[], references: codeReferences.Reference[], startTime: number) {
         const currentElapsed = (performance.now() - startTime) / 1000;
         this.logs.log(`${currentElapsed.toFixed(3)}s  20.00%: Creating graph elements from symbols and references...`);
         const nodes: any[] = [];

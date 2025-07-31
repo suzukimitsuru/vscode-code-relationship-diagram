@@ -107,39 +107,32 @@ export class Db extends vscode.Disposable {
      * @param relative_path 相対パス
      * @returns コードファイルの情報を含むPromise
      */
-    public codeFile_query(relative_path: string): Promise<duckdb.TableData> {
+    public codeFile_query(relative_path: string | null): Promise<duckdb.TableData> {
         return new Promise<duckdb.TableData>((resolve, reject) => {
-            this._conn.prepare(`SELECT * FROM code_files WHERE relative_path = ?;`).all(
-                relative_path,
-                (err: Error | null, res: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve(res);
+            if (relative_path) {
+                this._conn.prepare(`SELECT * FROM code_files WHERE relative_path = ?;`).all(
+                    relative_path,
+                    (err: Error | null, res: duckdb.TableData) => {
+                        if (err) {
+                            reject(err);
+                        } else {
+                            resolve(res);
+                        }
                     }
-                }
-            );
+                );
+            } else {
+                this._conn.prepare(`SELECT * FROM code_files;`).all(
+                    (err: Error | null, res: duckdb.TableData) => {
+                        if (err) {
+                            reject(err);
+                        } else {
+                            resolve(res);
+                        }
+                    }
+                );
+            }
         });
     }
-
-    /**
-     * @description コードファイルの全てを問い合わせ
-     * @returns コードファイルの全てを含むPromise
-     */
-    public codeFile_queryAll(): Promise<duckdb.TableData> {
-        return new Promise<duckdb.TableData>((resolve, reject) => {
-            this._conn.prepare(`SELECT * FROM code_files;`).all(
-                (err: Error | null, res: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve(res);
-                    }
-                }
-            );
-        });
-    }
-
     /**
      * @description コードファイルを更新または挿入
      * @param relative_path 更新または挿入するコードファイルの相対パス
@@ -183,7 +176,7 @@ export class Db extends vscode.Disposable {
      * @param relative_path 削除するコードファイルの相対パス
      * @returns 削除の完了を示すPromise
      */
-    public codeFile_remove(relative_path: string): Promise<void> {
+    public codeFile_delete(relative_path: string): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             this._conn.prepare(`DELETE FROM code_files WHERE relative_path = ?;`).run(
                 relative_path,
@@ -199,47 +192,11 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description シンボルを更新または挿入
-     * @param symbol シンボル情報
-     * @returns 更新または挿入の完了を示すPromise
-     */
-    public symbol_upsert(symbol: SYMBOL.SymbolModel): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            // 既存のシンボル参照関係を先に削除（path一致のものを全削除）
-            this._conn.prepare(`DELETE FROM symbol_references WHERE from_path = ? OR to_path = ?`).run(
-                symbol.path, symbol.path,
-                (err: Error | null) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        // 既存のシンボルを削除（path一致のものを全削除）
-                        this._conn.prepare(`DELETE FROM symbols WHERE path = ?`).run(
-                            symbol.path,
-                            (err: Error | null) => {
-                                if (err) {
-                                    reject(err);
-                                } else {
-                                    // 再帰的に保存
-                                    this._saveSymbol(symbol, null).then(
-                                        () => resolve(),
-                                        (err: Error) => reject(err)
-                                    );
-                                }
-                            }
-                        );
-                    }
-                }
-            );
-        });
-    }
-
-    /**
      * @description シンボルの再帰的保存
      * @param symbol シンボル情報
      * @param parentId 親シンボルのID
-     * @private
      */
-    private _saveSymbol(symbol: SYMBOL.SymbolModel, parentId: string | null): Promise<void> {
+    public symbol_save(symbol: SYMBOL.SymbolModel, parentId: string | null): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             this._conn.prepare(
                 `INSERT INTO symbols (id, parent_id, name, kind, path, start_line, end_line, update_id, pos_x, pos_y)
@@ -260,7 +217,7 @@ export class Db extends vscode.Disposable {
                         } else {
                             const children = [];
                             for (const child of symbol.children) {
-                                children.push(this._saveSymbol(child, symbol.id));
+                                children.push(this.symbol_save(child, symbol.id));
                             }
                             Promise.all(children).then(
                                 () => resolve(),
@@ -278,7 +235,7 @@ export class Db extends vscode.Disposable {
      * @param path コードファイルのパス
      * @returns シンボルのルート要素の配列
      */
-    public symbol_loadAll(path: string): Promise<SYMBOL.SymbolModel[]> {
+    public symbol_load(path: string): Promise<SYMBOL.SymbolModel[]> {
         return new Promise<SYMBOL.SymbolModel[]>((resolve, reject) => {
             this._conn.prepare(`SELECT * FROM symbols WHERE path = ? ORDER BY start_line ASC`).all(
                 path,
@@ -316,11 +273,68 @@ export class Db extends vscode.Disposable {
     }
 
     /**
+     * @description パス、名前、開始行でシンボルを検索
+     * @param path ファイルパス
+     * @param name シンボル名
+     * @param startLine 開始行
+     * @returns シンボルのID（見つからない場合はnull）
+     */
+    public symbol_findId(path: string, name: string, startLine: number): Promise<string | null> {
+        return new Promise<string | null>((resolve, reject) => {
+            this._conn.prepare(`
+                SELECT id FROM symbols 
+                WHERE path = ? AND name = ? AND start_line = ?
+                LIMIT 1
+            `).all(
+                path, name, startLine,
+                (err: Error | null, rows: duckdb.TableData) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve(rows.length > 0 ? rows[0].id : null);
+                    }
+                }
+            );
+        });
+    }
+
+    /**
+     * @description シンボルを削除
+     * @param symbol シンボルのパス
+     * @returns 更新または挿入の完了を示すPromise
+     */
+    public symbol_delete(symbol_path: string): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            // 既存のシンボル参照関係を先に削除（path一致のものを全削除）
+            this._conn.prepare(`DELETE FROM symbol_references WHERE from_path = ? OR to_path = ?`).run(
+                symbol_path, symbol_path,
+                (err: Error | null) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        // 既存のシンボルを削除（path一致のものを全削除）
+                        this._conn.prepare(`DELETE FROM symbols WHERE path = ?`).run(
+                            symbol_path,
+                            (err: Error | null) => {
+                                if (err) {
+                                    reject(err);
+                                } else {
+                                    resolve();
+                                }
+                            }
+                        );
+                    }
+                }
+            );
+        });
+    }
+
+    /**
      * @description シンボル参照を保存
      * @param reference シンボル参照情報
      * @returns 保存の完了を示すPromise
      */
-    public symbolReference_upsert(reference: codeReferences.SymbolReference): Promise<void> {
+    public reference_insert(reference: codeReferences.Reference): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             this._conn.prepare(
                 `INSERT OR REPLACE INTO symbol_references 
@@ -346,43 +360,17 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description パス、名前、開始行でシンボルを検索
-     * @param path ファイルパス
-     * @param name シンボル名
-     * @param startLine 開始行
-     * @returns シンボルのID（見つからない場合はnull）
-     */
-    public symbol_findByPathNameLine(path: string, name: string, startLine: number): Promise<string | null> {
-        return new Promise<string | null>((resolve, reject) => {
-            this._conn.prepare(`
-                SELECT id FROM symbols 
-                WHERE path = ? AND name = ? AND start_line = ?
-                LIMIT 1
-            `).all(
-                path, name, startLine,
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve(rows.length > 0 ? rows[0].id : null);
-                    }
-                }
-            );
-        });
-    }
-
-    /**
      * @description シンボル参照の全てを読み込み
      * @returns シンボル参照の配列
      */
-    public symbolReference_loadAll(): Promise<codeReferences.SymbolReference[]> {
-        return new Promise<codeReferences.SymbolReference[]>((resolve, reject) => {
+    public reference_quaryAll(): Promise<codeReferences.Reference[]> {
+        return new Promise<codeReferences.Reference[]>((resolve, reject) => {
             this._conn.prepare(`SELECT * FROM symbol_references`).all(
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
                         reject(err);
                     } else {
-                        const references: codeReferences.SymbolReference[] = rows.map(row => ({
+                        const references: codeReferences.Reference[] = rows.map(row => ({
                             id: row.id,
                             fromSymbolId: row.from_symbol_id,
                             toSymbolId: row.to_symbol_id,
