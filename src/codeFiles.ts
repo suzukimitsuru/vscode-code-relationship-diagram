@@ -40,9 +40,10 @@ export function list(folder: string, associations: object, progress: (file: File
  * @param  rows コードファイルテーブル配列
  * @returns 変更するコードファイル配列, 削除するコードファイル名配列
 */
-export function updates(files: File[], rows: TableData): [upserts: File[], removes: string[]] {
-    const upserts = [];
-    const removes = rows.map((row) => row.relative_path as string);
+export function updates(files: File[], rows: TableData): [upserts: File[], nochanges: File[], removes: string[]] {
+    const upserts: File[] = [];
+    const nochanges: File[] = [];
+    const removes: string[] = rows.map((row) => row.relative_path as string);
     for (const file of files) {
 
         // テーブルに登録済みなら
@@ -58,6 +59,8 @@ export function updates(files: File[], rows: TableData): [upserts: File[], remov
             // 更新日時が変わったら、変更する
             if (rows[row_index].updated_at.toISOString() !== file.updated.toISOString()) {
                 upserts.push(file);
+            } else {
+                nochanges.push(file);
             }
         } else {
             // 追加する
@@ -65,5 +68,5 @@ export function updates(files: File[], rows: TableData): [upserts: File[], remov
         }
     }
 
-    return [upserts, removes];
+    return [upserts, nochanges, removes];
 }

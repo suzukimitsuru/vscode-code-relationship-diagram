@@ -20,7 +20,9 @@ export class SymbolModel {
     public readonly kind: vscode.SymbolKind;
     public readonly path: string;
     public readonly startLine: number;
+    public readonly startCharacter: number;
     public readonly endLine: number;
+    public readonly endCharacter: number;
     public readonly lineCount: number;
     public updateId: string = '';
     public position: Position | null = null;
@@ -30,7 +32,9 @@ export class SymbolModel {
         kind: vscode.SymbolKind,
         path: string,
         startLine: number,
+        startCharacter: number,
         endLine: number,
+        endCharacter: number,
         updateId: string = '',
         position: Position | null = null,
         id: string | null = null,
@@ -42,7 +46,9 @@ export class SymbolModel {
         this.kind = kind;
         this.path = path;
         this.startLine = startLine;
+        this.startCharacter = startCharacter;
         this.endLine = endLine;
+        this.endCharacter = endCharacter;
         this.lineCount = endLine - startLine + 1;
         this.updateId = updateId;
         this.position = position ? new Position(position.x, position.y) : null;

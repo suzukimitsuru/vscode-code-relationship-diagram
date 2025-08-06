@@ -13,6 +13,16 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+- 更新ファイルからの参照の更新が出来ていない。
+
+## 0.0.9　- 2025-08-07
+
+### 0.0.9　- Added
+
+- ステータスバー進捗表示機能の追加 - initializeコマンドの進捗をリアルタイム表示
+- データベーススキーマの改善 - start_character/end_character追加、参照テーブル構造変更
+- コードファイル更新処理の最適化 - nochanges配列追加で不要な処理を削減
+
 ## 0.0.8　- 2025-07-28
 
 ### 0.0.8　- Added

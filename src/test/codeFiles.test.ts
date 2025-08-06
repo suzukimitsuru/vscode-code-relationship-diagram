@@ -13,11 +13,11 @@ suite('codeFiles Test Suite', () => {
 		assert.strictEqual(files.length, 2, 'files.length should be 2');
 		assert.strictEqual(files[0].relative_path, 'folder1/test1.rs', 'files[0].relative_path should be folder1/test1.rs');
 		assert.strictEqual(files[0].language_id, 'rust', 'files[0].language_id should be rust');
-		assert.strictEqual(files[0].updated.toISOString(), new Date('2025-05-30T12:49:06.666Z').toISOString(), 'files[0].updated should be 2025-05-30T12:49:06.666Z');
+		assert.strictEqual(files[0].updated.toISOString(), new Date('2025-08-04T16:30:49.287Z').toISOString(), 'files[0].updated should be 2025-08-04T16:30:49.287Z');
 
 		assert.strictEqual(files[1].relative_path, 'folder2/test2.go', 'files[1].relative_path should be folder2/test2.go');
 		assert.strictEqual(files[1].language_id, 'golang', 'files[1].language_id should be golang');
-		assert.strictEqual(files[1].updated.toISOString(), new Date('2025-05-30T12:49:31.429Z').toISOString(), 'files[1].updated should be 2025-05-30T12:49:31.429Z');
+		assert.strictEqual(files[1].updated.toISOString(), new Date('2025-08-04T16:30:49.288Z').toISOString(), 'files[1].updated should be 2025-08-04T16:30:49.288Z');
 
 	});
 
@@ -32,7 +32,7 @@ suite('codeFiles Test Suite', () => {
 			{relative_path: 'update', updated_at: new Date('2023-10-02T12:34:56.123Z')},
 			{relative_path: 'remove', updated_at: new Date('2023-10-04T12:34:56.123Z')},
 		];
-		const [upserts, removes] = codeFiles.updates(list_files, db_rows);
+		const [upserts, nochanges, removes] = codeFiles.updates(list_files, db_rows);
 
 		// 追加されたファイルと更新されたファイルの数を確認
 		assert.strictEqual(upserts.length, 2, 'upserts.length should be 2');
@@ -47,6 +47,12 @@ suite('codeFiles Test Suite', () => {
 		// 除外ファイル
 		assert.strictEqual(upserts.some(file => file.relative_path === 'equal'), false, 'upserts should not include equal');
 		assert.strictEqual(upserts.some(file => file.relative_path === 'remove'), false, 'upserts should not include remove');
+
+		// 変更のないファイルの数を確認
+		assert.strictEqual(nochanges.length, 1, 'nochanges.length should be 1');
+		assert.strictEqual(nochanges[0].relative_path, 'equal', 'nochanges[0].relative_path should be equal');
+		assert.strictEqual(nochanges[0].language_id, 'ts', 'nochanges[0].language_id should be ts');
+		assert.strictEqual(nochanges[0].updated.toISOString(), new Date('2023-10-01T12:34:56.123Z').toISOString(), 'nochanges[0].updated should be 2023-10-01T12:34:56.123');
 
 		// 削除されたファイルの数を確認
 		assert.strictEqual(removes.length, 1, 'removes.length should be 1');

@@ -65,7 +65,9 @@ export class Db extends vscode.Disposable {
                             kind INTEGER,
                             path TEXT,
                             start_line INTEGER,
+                            start_character INTEGER,
                             end_line INTEGER,
+                            end_character INTEGER,
                             update_id TEXT,
                             pos_x REAL,
                             pos_y REAL
@@ -79,14 +81,14 @@ export class Db extends vscode.Disposable {
                             this._conn.prepare(`
                                 CREATE TABLE IF NOT EXISTS symbol_references (
                                     id TEXT PRIMARY KEY,
-                                    from_symbol_id TEXT,
-                                    to_symbol_id TEXT,
+                                    from_id TEXT,
                                     from_path TEXT,
+                                    from_line INTEGER,
+                                    to_id TEXT,
                                     to_path TEXT,
-                                    reference_type TEXT,
-                                    line_number INTEGER,
-                                    FOREIGN KEY (from_symbol_id) REFERENCES symbols(id),
-                                    FOREIGN KEY (to_symbol_id) REFERENCES symbols(id)
+                                    to_line INTEGER,
+                                    FOREIGN KEY (from_id) REFERENCES symbols(id),
+                                    FOREIGN KEY (to_id) REFERENCES symbols(id)
                                 )
                             `, (err: Error | null) => {
                                 if (err) {
@@ -199,15 +201,17 @@ export class Db extends vscode.Disposable {
     public symbol_save(symbol: SYMBOL.SymbolModel, parentId: string | null): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             this._conn.prepare(
-                `INSERT INTO symbols (id, parent_id, name, kind, path, start_line, end_line, update_id, pos_x, pos_y)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+                `INSERT INTO symbols (id, parent_id, name, kind, path, start_line, start_character, end_line, end_character, update_id, pos_x, pos_y)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
                     symbol.id,
                     parentId,
                     symbol.name,
                     symbol.kind,
                     symbol.path,
                     symbol.startLine,
+                    symbol.startCharacter,
                     symbol.endLine,
+                    symbol.endCharacter,
                     symbol.updateId,
                     symbol.position ? symbol.position.x : null,
                     symbol.position ? symbol.position.y : null,
@@ -250,7 +254,9 @@ export class Db extends vscode.Disposable {
                                 row.kind,
                                 row.path,
                                 row.start_line,
+                                row.start_character,
                                 row.end_line,
+                                row.end_character,
                                 row.update_id,
                                 (row.pos_x !== null && row.pos_y !== null) ? new SYMBOL.Position(row.pos_x, row.pos_y) : null,
                                 row.id,
@@ -266,32 +272,6 @@ export class Db extends vscode.Disposable {
                             }
                         }
                         resolve(roots);
-                    }
-                }
-            );
-        });
-    }
-
-    /**
-     * @description パス、名前、開始行でシンボルを検索
-     * @param path ファイルパス
-     * @param name シンボル名
-     * @param startLine 開始行
-     * @returns シンボルのID（見つからない場合はnull）
-     */
-    public symbol_findId(path: string, name: string, startLine: number): Promise<string | null> {
-        return new Promise<string | null>((resolve, reject) => {
-            this._conn.prepare(`
-                SELECT id FROM symbols 
-                WHERE path = ? AND name = ? AND start_line = ?
-                LIMIT 1
-            `).all(
-                path, name, startLine,
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve(rows.length > 0 ? rows[0].id : null);
                     }
                 }
             );
@@ -338,16 +318,16 @@ export class Db extends vscode.Disposable {
         return new Promise<void>((resolve, reject) => {
             this._conn.prepare(
                 `INSERT OR REPLACE INTO symbol_references 
-                (id, from_symbol_id, to_symbol_id, from_path, to_path, reference_type, line_number) 
+                (id, from_id, from_path, from_line, to_id, to_path, to_line) 
                 VALUES (?, ?, ?, ?, ?, ?, ?)`
             ).run(
                 reference.id,
-                reference.fromSymbolId,
-                reference.toSymbolId,
-                reference.fromPath,
-                reference.toPath,
-                reference.referenceType,
-                reference.lineNumber,
+                reference.from.id,
+                reference.from.path,
+                reference.from.startLine,
+                reference.to.id,
+                reference.to.path,
+                reference.to.startLine,
                 (err: Error | null) => {
                     if (err) {
                         reject(err);
@@ -372,12 +352,16 @@ export class Db extends vscode.Disposable {
                     } else {
                         const references: codeReferences.Reference[] = rows.map(row => ({
                             id: row.id,
-                            fromSymbolId: row.from_symbol_id,
-                            toSymbolId: row.to_symbol_id,
-                            fromPath: row.from_path,
-                            toPath: row.to_path,
-                            referenceType: row.reference_type,
-                            lineNumber: row.line_number
+                            from: {
+                                id: row.from_id,
+                                path: row.from_path,
+                                startLine: row.from_line
+                            },
+                            to: {
+                                id: row.to_id,
+                                path: row.to_path,
+                                startLine: row.to_line
+                            },
                         }));
                         resolve(references);
                     }

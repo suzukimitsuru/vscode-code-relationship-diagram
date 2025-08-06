@@ -5,10 +5,12 @@ import * as fs from 'fs';
 import locale from './locale';
 import { Logs } from './logs';
 import * as codeDb from './codeDb';
-import * as codeFile from './codeFiles';
+import * as codeFiles from './codeFiles';
 import * as codeSymbols from './codeSymbols';
+import * as SYMBOL from './symbol';
 import * as codeReferences from './codeReferences';
 import { GraphVisualization } from './graphVisualization';
+import { on } from 'events';
 
 let _logs: Logs | null = null;
 
@@ -17,6 +19,7 @@ let _logs: Logs | null = null;
  * @param context extention contexest
  */
 export function activate(context: vscode.ExtensionContext) {
+	const short_name = context.extension.packageJSON?.shortName || '';
 	const logs = _logs = new Logs(context.extension.packageJSON?.displayName);
 	const platform = process.platform;  // 'darwin' / 'win32' / 'linux'
 	const arch = process.arch;          // 'x64' / 'arm64'
@@ -24,6 +27,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// 初期化するコマンドの登録
 	const initializeDisposable = vscode.commands.registerCommand('vscode-code-relationship-diagram.initialize', async () => {
+
+		// 経過の初期表示
+		const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
+		statusBarItem.show();
+		const updateProgress = (processed: number, total: number) => {
+			const percentage = total > 0 ? ((processed / total) * 100).toFixed(2) : "0.00";
+			statusBarItem.text = `$(sync~spin) ${short_name}: ${processed}/${total} (${percentage}%)`;
+		};
 
 		// ワークスペースが在り、ファイルの関連付けのパターンが在ったら
 		const workspace_folders = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders : [];
@@ -39,8 +50,8 @@ export function activate(context: vscode.ExtensionContext) {
 					const start = performance.now();
 
 					// コードファイルを列挙する
-					const files: codeFile.File[] = [];
-					const patterns = codeFile.list(root_folder.uri.fsPath, associations, (file: codeFile.File) => {
+					const files: codeFiles.File[] = [];
+					const patterns = codeFiles.list(root_folder.uri.fsPath, associations, (file: codeFiles.File) => {
 						files.push(file);
 						logs.log(`listed ${file.relative_path}`);
 					});
@@ -50,8 +61,43 @@ export function activate(context: vscode.ExtensionContext) {
 
 					// コードファイルテーブルの変更を抽出する
 					const rows = await db.codeFile_query(null);
-					const [upserts, removes] = codeFile.updates(sorted, rows);
+					const [upserts, nochanges, removes] = codeFiles.updates(sorted, rows);
+
+					// コードファイルのシンボルを抽出する
+					const symbol_dic: Record<string,codeSymbols.Dictionary> = {};
+					const upsert_dic: Record<string,codeSymbols.Dictionary> = {};
+					for (const upsert of upserts) {
+						try {
+							const fullname = path.join(root_folder.uri.fsPath, upsert.relative_path);
+							const document = await vscode.workspace.openTextDocument(vscode.Uri.file(fullname));
+							const symbol = await codeSymbols.extract(upsert.relative_path, document);
+							upsert_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, symbol);
+							symbol_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, symbol);
+							logs.log(`extructed symbol: ${upsert.relative_path}`);
+						} catch (error) {
+							logs.error(`Failed to open document ${upsert.relative_path}: `, error);
+						}
+					}
+					logs.log(`loaded ${Object.keys(upsert_dic).length} files`);
+
+					// 変更のないファイルを追加する
+					for (const nochange of nochanges) {
+						try {
+							const symbols = await db.symbol_load(nochange.relative_path);
+							for (const symbol of symbols) {
+								symbol_dic[symbol.path] = new codeSymbols.Dictionary(nochange.updated, symbol);
+								logs.log(`loaded symbol: ${symbol.path}`);
+							}
+						} catch (error) {
+							logs.error(`Failed to load symbols for ${nochange.relative_path}: `, error);
+						}
+					}										
+					logs.log(`symbols ${Object.keys(symbol_dic).length} files`);
+
 					const save_promises: Promise<void>[] = [];
+					const progress_total = upserts.length + removes.length;
+					let progressed = 0;
+					updateProgress(progressed, progress_total);
 
 					// ファイル削除を追加する
 					for (const remove of removes) {
@@ -60,6 +106,7 @@ export function activate(context: vscode.ExtensionContext) {
 								logs.log(`Removed symbol: ${remove}`);
 								db.codeFile_delete(remove).then(() => {
 									logs.log(`Removed file: ${remove}`);
+									updateProgress(++progressed, progress_total);
 									resolve();
 								}).catch(error => {
 									reject(`db.codeFile_delete(${remove}): ${error instanceof Error ? error.message : error}`);
@@ -71,71 +118,58 @@ export function activate(context: vscode.ExtensionContext) {
 					}
 
 					// ファイル更新を追加する
-					for (const upsert of upserts) {
+					Object.values(upsert_dic).forEach(({updated, symbol}) => {
 						save_promises.push(new Promise<void>((resolve, reject) => {
-							logs.log(`Upsert file: ${upsert.relative_path}`);
+							logs.log(`Upsert file: ${symbol.path}`);
 
 							// シンボルを削除する
-							db.symbol_delete(upsert.relative_path).then(() => {
-								logs.log(`   Removed symbol: ${upsert.relative_path}`);
+							db.symbol_delete(symbol.path).then(() => {
+								logs.log(`   Removed symbol: ${symbol.path}`);
 
-								// コードファイルのシンボルを読み込む
-								const fullname = path.join(root_folder.uri.fsPath, upsert.relative_path);
-								vscode.workspace.openTextDocument(vscode.Uri.file(fullname)).then(document => {
+								// シンボルをDBにアップサートする
+								db.symbol_save(symbol, null).then(() => {
+									logs.log(`  saved symbol: ${symbol.path}`);
 
-									codeSymbols.load(upsert.relative_path, document).then(symbol => {
-										if (symbol) {
-
-											// シンボルをDBにアップサートする
-											db.symbol_save(symbol, null).then(() => {
-												logs.log(`  saved symbol: ${symbol.path}`);
-
-												// シンボル参照関係を抽出
-												codeReferences.extractReferences(document, symbol.id, db, logs, root_folder.uri.fsPath).then(references => {
-													const inserts: Promise<void>[] = [];
-													if (references.length > 0) {
-														for (const reference of references) {
-															inserts.push( db.reference_insert(reference) );
-														}
-													}
-													Promise.all(inserts).then(() => {
-														logs.log(`  extracted ${references.length} references from ${symbol.path}`);
-
-														// コードファイルを更新または挿入する
-														db.codeFile_upsert(upsert.relative_path, upsert.updated).then(() => {
-															logs.log(`Upserted file: ${upsert.relative_path}`);
-															resolve();
-														}).catch(error => {
-															reject(`db.codeFile_upsert(${upsert.relative_path}): ${error instanceof Error ? error.message : error}`);
-														});
-													}).catch(error => {
-														logs.error(`Failed to insert references for ${symbol.path}: ${error instanceof Error ? error.message : error}`);
-													});
-												}).catch(error => {
-													logs.error(`Failed to extract references from ${symbol.path}: ${error instanceof Error ? error.message : error}`);
-												});
-											}).catch(error => {
-												reject(`db.symbol_save(${symbol.path}): ${error instanceof Error ? error.message : error}`);
-											});											
+									// シンボル参照関係を抽出
+									codeReferences.extract(root_folder.uri.fsPath, symbol, symbol_dic).then(references => {
+										const inserts: Promise<void>[] = [];
+										if (references.length > 0) {
+											for (const reference of references) {
+												inserts.push( db.reference_insert(reference) );
+											}
 										}
-									}, error => {
-										reject(`Failed to load symbols from ${fullname}: ${error instanceof Error ? error.message : error}`);
+										Promise.all(inserts).then(() => {
+											logs.log(`extracted ${symbol.path}: ${references.length} references`);
+
+											// コードファイルを更新または挿入する
+											db.codeFile_upsert(symbol.path, updated).then(() => {
+												logs.log(`Upserted file: ${symbol.path}`);
+												updateProgress(++progressed, progress_total);
+												resolve();
+											}).catch(error => {
+												reject(`db.codeFile_upsert(${symbol.path}): ${error instanceof Error ? error.message : error}`);
+											});
+										}).catch(error => {
+											logs.error(`Failed to insert references for ${symbol.path}: ${error instanceof Error ? error.message : error}`);
+										});
+									}).catch(error => {
+										logs.error(`Failed to extract references from ${symbol.path}: ${error instanceof Error ? error.message : error}`);
 									});
-								}, error => {
-									reject(`Failed to open document ${fullname}: ${error instanceof Error ? error.message : error}`);
-								});
+								}).catch(error => {
+									reject(`db.symbol_save(${symbol.path}): ${error instanceof Error ? error.message : error}`);
+								});											
 							}).catch(error => {
-								reject(`db.symbol_delete(${upsert.relative_path}): ${error instanceof Error ? error.message : error}`);
+								reject(`db.symbol_delete(${symbol.path}): ${error instanceof Error ? error.message : error}`);
 							});
 						}));
-					}
+					});
 
 					// コードファイルを削除する
 					try {
 						await Promise.all(save_promises);
 						logs.log(`Upserted ${upserts.length} files, removed ${removes.length} files`);
 					} catch (error) {
-						logs.trace(`save_promises(): ${error instanceof Error ? error.message : error}`);
+						logs.trace('save_promises(): ', error);
 					}
 
 					// DBを破棄する
@@ -144,114 +178,101 @@ export function activate(context: vscode.ExtensionContext) {
 					logs.log(`${((performance.now() - start) / 1000).toFixed(3)}s: processed ${files.length} files, upserted ${upserts.length} files, removed ${removes.length} files`);
 
 					// 初期化メッセージを表示する
+					statusBarItem.text = `$(check) ${short_name}: ${progressed}/${progress_total} (100.00%)`;
+					setTimeout(() => {
+						statusBarItem.text = short_name;
+						statusBarItem.command = 'vscode-code-relationship-diagram.showGraph';
+						statusBarItem.tooltip = 'Show diagram';
+					}, 3000);
 					logs.info(locale('initialize-message'));
 				} catch (error) {
-					logs.trace(`codeFile.list(${root_folder.uri.fsPath}): ${error instanceof Error ? error.message : error}`);
+					statusBarItem.text = `$(error) ${short_name}`;
+					setTimeout(() => statusBarItem.dispose(), 3000);
+					logs.trace(`codeFile.list(${root_folder.uri.fsPath}): `, error);
 				}
 			} catch (error) {
-				logs.trace(`db.table_create(${db_file}): ${error instanceof Error ? error.message : error}`);
+				statusBarItem.text = `$(error) ${short_name}`;
+				setTimeout(() => statusBarItem.dispose(), 3000);
+				logs.trace(`db.table_create(${db_file}): `, error);
 			}
 		} else {
+			statusBarItem.text = `$(error) ${short_name}`;
+			setTimeout(() => statusBarItem.dispose(), 3000);
 			logs.error(locale('error-no-associations'));
 		}
 	});
 
 	// グラフ表示コマンドの登録
 	const showGraphDisposable = vscode.commands.registerCommand('vscode-code-relationship-diagram.showGraph', async () => {
-		console.log('=== SHOWGRAPH COMMAND STARTED ===');
 		logs.log('=== SHOWGRAPH COMMAND STARTED ===');
 		
 		const workspace_folders = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders : [];
 		const root_folder = selectRootFolder(workspace_folders);
-		console.log('Root folder selected:', root_folder?.uri.fsPath);
+		logs.log('Root folder selected:', root_folder?.uri.fsPath);
 		
 		if (root_folder) {
 			const db_file = path.join(root_folder.uri.fsPath, '.vscode', 'crd.duckdb');
 			logs.log(`Attempting to open database: ${db_file}`);
 			
 			// DBファイルの存在確認
-			console.log('Checking database file existence:', db_file);
+			logs.log('Checking database file existence:', db_file);
 			if (!fs.existsSync(db_file)) {
-				console.log('Database file does not exist');
 				logs.error(`Database file not found: ${db_file}`);
 				logs.error('Please run "Initialize Code Relationship Diagram" command first to create the database.');
-				return;
-			}
-			console.log('Database file exists');
-			
-			try {
-				console.log('Creating database connection...');
-				const db = new codeDb.Db(db_file);
-				console.log('Database connection created');
-				logs.log('Database opened successfully');
-				
-				// 少し待機してDB接続が安定するのを待つ
-				await new Promise(resolve => setTimeout(resolve, 100));
-				console.log('Database initialization wait completed');
-				
-				// 全てのシンボルを読み込み
-				const allSymbols: any[] = [];
-				console.log('Starting to load code files...');
-				logs.log('Loading code files...');
-				
-				// タイムアウト機能付きでファイル一覧を取得
-				const files = await Promise.race([
-					db.codeFile_query(null),
-					new Promise((_, reject) => 
-						setTimeout(() => reject(new Error('Database query timeout (10s)')), 10000)
-					)
-				]) as any[];
-				
-				console.log(`Files query completed, found: ${files.length}`);
-				logs.log(`Found ${files.length} code files in database`);
-				
-				for (const fileRow of files) {
-					console.log(`Loading symbols from file: ${fileRow.relative_path}`);
-					logs.log(`Loading symbols from file: ${fileRow.relative_path}`);
+			} else {
+				try {
+					const db = new codeDb.Db(db_file);
+					logs.log('Database opened successfully');
 					
-					const symbols = await Promise.race([
-						db.symbol_load(fileRow.relative_path),
+					// 少し待機してDB接続が安定するのを待つ
+					await new Promise(resolve => setTimeout(resolve, 100));
+					logs.log('Database initialization wait completed');
+					
+					// 全てのシンボルを読み込み
+					const allSymbols: any[] = [];
+					logs.log('Loading code files...');
+					
+					// タイムアウト機能付きでファイル一覧を取得
+					const files = await Promise.race([
+						db.codeFile_query(null),
 						new Promise((_, reject) => 
-							setTimeout(() => reject(new Error(`Symbol load timeout for ${fileRow.relative_path}`)), 5000)
+							setTimeout(() => reject(new Error('Database query timeout (10s)')), 10000)
 						)
 					]) as any[];
 					
-					allSymbols.push(...symbols);
-					console.log(`Loaded ${symbols.length} symbols from ${fileRow.relative_path}`);
-					logs.log(`Loaded ${symbols.length} symbols from ${fileRow.relative_path}`);
+					logs.log(`Found ${files.length} code files in database`);
+					
+					for (const fileRow of files) {
+						const symbols = await db.symbol_load(fileRow.relative_path);
+						allSymbols.push(...symbols);
+						logs.log(`Loaded ${symbols.length} symbols from ${fileRow.relative_path}`);
+					}
+					logs.log(`Total symbols loaded: ${allSymbols.length}`);
+					
+					// シンボル参照関係を読み込み
+					logs.log('Loading symbol references...');
+					
+					const references = await Promise.race([
+						db.reference_quaryAll(),
+						new Promise((_, reject) => 
+							setTimeout(() => reject(new Error('References load timeout (10s)')), 10000)
+						)
+					]) as any[];
+					
+					logs.log(`Loaded ${references.length} symbol references`);
+					
+					// グラフを表示
+					const graphViz = new GraphVisualization(context, logs);
+					logs.log('GraphVisualization instance created');
+					
+					await graphViz.showGraph(allSymbols, references);
+					logs.log('GraphVisualization.showGraph completed');
+					
+					db.dispose();
+					logs.info('Code relationship diagram displayed');
+				} catch (error) {
+					logs.error('Failed to show graph: ', error);
 				}
-				console.log(`Total symbols loaded: ${allSymbols.length}`);
-				logs.log(`Total symbols loaded: ${allSymbols.length}`);
-				
-				// シンボル参照関係を読み込み
-				console.log('Loading symbol references...');
-				logs.log('Loading symbol references...');
-				
-				const references = await Promise.race([
-					db.reference_quaryAll(),
-					new Promise((_, reject) => 
-						setTimeout(() => reject(new Error('References load timeout (10s)')), 10000)
-					)
-				]) as any[];
-				
-				console.log(`Loaded ${references.length} symbol references`);
-				logs.log(`Loaded ${references.length} symbol references`);
-				
-				// グラフを表示
-				console.log('Starting graph visualization...');
-				logs.log('Starting graph visualization...');
-				const graphViz = new GraphVisualization(context, logs);
-				console.log('GraphVisualization instance created');
-				
-				await graphViz.showGraph(allSymbols, references);
-				console.log('GraphVisualization.showGraph completed');
-				
-				db.dispose();
-				console.log('Database disposed');
-				logs.info('Code relationship diagram displayed');
-			} catch (error) {
-				logs.error(`Failed to show graph: ${error instanceof Error ? error.message : error}`);
-				console.error('ShowGraph error details:', error);
 			}
 		} else {
 			logs.error('No workspace folder found');

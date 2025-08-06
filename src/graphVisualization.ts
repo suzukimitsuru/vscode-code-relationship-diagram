@@ -155,11 +155,11 @@ export class GraphVisualization {
         
         references.forEach((ref, index) => {
             if (index < 5) {
-                this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 35.${String(index + 1).padStart(2, '0')}%] Reference ${index + 1}: ${ref.fromPath} -> ${ref.toPath}`);
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 35.${String(index + 1).padStart(2, '0')}%] Reference ${index + 1}: ${ref.from.path} -> ${ref.to.path}`);
             }
             
-            const relationKey = `${ref.fromPath}|||${ref.toPath}`;
-            const reverseKey = `${ref.toPath}|||${ref.fromPath}`;
+            const relationKey = `${ref.from.path}|||${ref.to.path}`;
+            const reverseKey = `${ref.to.path}|||${ref.from.path}`;
             
             // 双方向の関係を考慮して集約
             if (fileRelations.has(relationKey)) {
@@ -543,9 +543,9 @@ export class GraphVisualization {
             elements: ${JSON.stringify([...elements.nodes, ...elements.edges])},
             
             // ズーム制限を設定
-            minZoom: 0.1,
-            maxZoom: 3.0,
-            wheelSensitivity: 0.2,
+            //minZoom: 0.1,
+            //maxZoom: 3.0,
+            wheelSensitivity: 1.0,
             
             // Compound graphsを有効にする
             // これにより親子関係のあるノードがグループ化される

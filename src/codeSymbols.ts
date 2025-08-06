@@ -1,7 +1,11 @@
 import * as vscode from 'vscode';
 import * as SYMBOL from './symbol';
 
-export function load(path: string, document: vscode.TextDocument): Promise<SYMBOL.SymbolModel> {
+export class Dictionary {
+    constructor(public updated: Date, public symbol: SYMBOL.SymbolModel) {}
+}
+
+export function extract(path: string, document: vscode.TextDocument): Promise<SYMBOL.SymbolModel> {
     return new Promise(async (resolve, reject) => {
         try {
             // 書類からシンボルを抽出ll
@@ -11,9 +15,9 @@ export function load(path: string, document: vscode.TextDocument): Promise<SYMBO
 
             // シンボル階層を構築
             const fileName = path.split('/').pop() || path;
-            const rootSymbol = new SYMBOL.SymbolModel(fileName, vscode.SymbolKind.File, path, 0, document.lineCount ? document.lineCount - 1 : 0);
+            const rootSymbol = new SYMBOL.SymbolModel(fileName, vscode.SymbolKind.File, path, 0, 0, document.lineCount ? document.lineCount - 1 : 0, 0);
             const sumSymbol = (found: vscode.DocumentSymbol, symbol: SYMBOL.SymbolModel) => {
-                const branch = new SYMBOL.SymbolModel(found.name, found.kind, path, found.range.start.line, found.range.end.line);
+                const branch = new SYMBOL.SymbolModel(found.name, found.kind, path, found.range.start.line, found.range.start.character, found.range.end.line, found.range.end.character);
                 found.children.forEach(child => { sumSymbol(child, branch); });
                 symbol.addChild(branch);
             };
@@ -23,4 +27,13 @@ export function load(path: string, document: vscode.TextDocument): Promise<SYMBO
             reject(error);
         }
     });
+}
+
+export function each(symbol: SYMBOL.SymbolModel, callback: (symbol: SYMBOL.SymbolModel) => void): void {
+    if (symbol.kind !== vscode.SymbolKind.File) {
+        callback(symbol);
+    }
+    for (const child of symbol.children) {
+        each(child, callback);
+    }
 }
