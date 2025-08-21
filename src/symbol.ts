@@ -1,6 +1,5 @@
 /** @file Code Attractor Editor: Symbol */
 import * as vscode from 'vscode';
-import { randomUUID } from 'crypto';
 
 class Vector {
     public constructor(public x: number, public y: number) {}
@@ -35,12 +34,14 @@ export class SymbolModel {
         startCharacter: number,
         endLine: number,
         endCharacter: number,
+        parentId: string | null = null,
         updateId: string = '',
-        position: Position | null = null,
-        id: string | null = null,
-        parentId: string | null = null
+        position: Position | null = null
     ) {
-        this.id = id ?? randomUUID();
+        this.id = parentId ? `${parentId}:${name}` : path;
+        if (this.id === 'src/dataSource.ts:generateFileChanges:additions') {
+            this.id = 'src/dataSource.ts:generateFileChanges:additions';
+        }
         this.parentId = parentId;
         this.name = name;
         this.kind = kind;

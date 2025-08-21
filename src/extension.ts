@@ -53,7 +53,7 @@ export function activate(context: vscode.ExtensionContext) {
 					const files: codeFiles.File[] = [];
 					const patterns = codeFiles.list(root_folder.uri.fsPath, associations, (file: codeFiles.File) => {
 						files.push(file);
-						logs.log(`listed ${file.relative_path}`);
+						logs.log(`Listed ${file.relative_path}`);
 					});
 
 					// コードファイルをパスでソートする
@@ -73,12 +73,12 @@ export function activate(context: vscode.ExtensionContext) {
 							const symbol = await codeSymbols.extract(upsert.relative_path, document);
 							upsert_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, symbol);
 							symbol_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, symbol);
-							logs.log(`extructed symbol: ${upsert.relative_path}`);
+							logs.log(`Extructed: ${upsert.relative_path}`);
 						} catch (error) {
 							logs.error(`Failed to open document ${upsert.relative_path}: `, error);
 						}
 					}
-					logs.log(`loaded ${Object.keys(upsert_dic).length} files`);
+					logs.log(`Extructed ${Object.keys(upsert_dic).length} files`);
 
 					// 変更のないファイルを追加する
 					for (const nochange of nochanges) {
@@ -86,13 +86,13 @@ export function activate(context: vscode.ExtensionContext) {
 							const symbols = await db.symbol_load(nochange.relative_path);
 							for (const symbol of symbols) {
 								symbol_dic[symbol.path] = new codeSymbols.Dictionary(nochange.updated, symbol);
-								logs.log(`loaded symbol: ${symbol.path}`);
+								logs.log(`Not changed: ${symbol.path}`);
 							}
 						} catch (error) {
 							logs.error(`Failed to load symbols for ${nochange.relative_path}: `, error);
 						}
 					}										
-					logs.log(`symbols ${Object.keys(symbol_dic).length} files`);
+					logs.log(`Symbols ${Object.keys(symbol_dic).length} files`);
 
 					const save_promises: Promise<void>[] = [];
 					const progress_total = upserts.length + removes.length;
@@ -103,9 +103,8 @@ export function activate(context: vscode.ExtensionContext) {
 					for (const remove of removes) {
 						save_promises.push(new Promise<void>((resolve, reject) => {
 							db.symbol_delete(remove).then(() => {
-								logs.log(`Removed symbol: ${remove}`);
 								db.codeFile_delete(remove).then(() => {
-									logs.log(`Removed file: ${remove}`);
+									logs.log(`Removed: ${remove}`);
 									updateProgress(++progressed, progress_total);
 									resolve();
 								}).catch(error => {
@@ -118,59 +117,88 @@ export function activate(context: vscode.ExtensionContext) {
 					}
 
 					// ファイル更新を追加する
-					Object.values(upsert_dic).forEach(({updated, symbol}) => {
+					Object.values(upsert_dic).forEach(({updated, symbol: root}) => {
 						save_promises.push(new Promise<void>((resolve, reject) => {
-							logs.log(`Upsert file: ${symbol.path}`);
 
-							// シンボルを削除する
-							db.symbol_delete(symbol.path).then(() => {
-								logs.log(`   Removed symbol: ${symbol.path}`);
+							// 参照先を検索
+							db.reference_toPath(root.path).then(to_refs => {
 
-								// シンボルをDBにアップサートする
-								db.symbol_save(symbol, null).then(() => {
-									logs.log(`  saved symbol: ${symbol.path}`);
+								// シンボルを削除する
+								db.symbol_delete(root.path).then(() => {
 
-									// シンボル参照関係を抽出
-									codeReferences.extract(root_folder.uri.fsPath, symbol, symbol_dic).then(references => {
-										const inserts: Promise<void>[] = [];
-										if (references.length > 0) {
-											for (const reference of references) {
-												inserts.push( db.reference_insert(reference) );
+									// シンボルをDBにアップサートする
+									db.symbol_save(root, null).then(() => {
+										logs.log(`Saved: ${root.path}`);
+
+										// 参照関係を抽出
+										codeReferences.extract(root_folder.uri.fsPath, root, symbol_dic).then(from_refs => {
+											const inserts: Promise<void>[] = [];
+
+											// 参照関係を保存する
+											for (const ref of from_refs) {
+												inserts.push( db.reference_insert(ref) );
 											}
-										}
-										Promise.all(inserts).then(() => {
-											logs.log(`extracted ${symbol.path}: ${references.length} references`);
+											// 参照先を更新する
+											for (const ref of to_refs) {
 
-											// コードファイルを更新または挿入する
-											db.codeFile_upsert(symbol.path, updated).then(() => {
-												logs.log(`Upserted file: ${symbol.path}`);
-												updateProgress(++progressed, progress_total);
-												resolve();
+												// シンボルが見つかったら
+												codeSymbols.each(root, (symbol) => {
+													if (symbol.id === ref.to.id) {
+
+														// 参照先を更新する
+														ref.to.path = symbol.path;
+														ref.to.startLine = symbol.startLine;
+													}
+												});
+
+												// 参照先を保存する
+												inserts.push( db.reference_insert(ref) );
+											}
+											Promise.all(inserts).then(() => {
+
+												// コードファイルを更新または挿入する
+												db.codeFile_upsert(root.path, updated).then(() => {
+													logs.log(`Upserted: ${root.path}`);
+													updateProgress(++progressed, progress_total);
+													resolve();
+												}).catch(error => {
+													reject(`db.codeFile_upsert(${root.path}): ${error instanceof Error ? error.message : error}`);
+												});
 											}).catch(error => {
-												reject(`db.codeFile_upsert(${symbol.path}): ${error instanceof Error ? error.message : error}`);
+												logs.error(`Failed to insert references for ${root.path}: ${error instanceof Error ? error.message : error}`);
 											});
 										}).catch(error => {
-											logs.error(`Failed to insert references for ${symbol.path}: ${error instanceof Error ? error.message : error}`);
+											logs.error(`Failed to extract references from ${root.path}: ${error instanceof Error ? error.message : error}`);
 										});
 									}).catch(error => {
-										logs.error(`Failed to extract references from ${symbol.path}: ${error instanceof Error ? error.message : error}`);
-									});
+										reject(`db.symbol_save(${root.path}): ${error instanceof Error ? error.message : error}`);
+									});											
 								}).catch(error => {
-									reject(`db.symbol_save(${symbol.path}): ${error instanceof Error ? error.message : error}`);
-								});											
+									reject(`db.symbol_delete(${root.path}): ${error instanceof Error ? error.message : error}`);
+								});
 							}).catch(error => {
-								reject(`db.symbol_delete(${symbol.path}): ${error instanceof Error ? error.message : error}`);
+								logs.error(`Failed to query references for ${root.path}: ${error instanceof Error ? error.message : error}`);
 							});
 						}));
 					});
 
 					// コードファイルを削除する
+					for (const save_promise of save_promises) {
+						try {
+							await save_promise;
+						} catch (error) {
+							logs.trace('save_promises(): ', error);
+						}
+					}
+					logs.log(`Upserted ${upserts.length} files, removed ${removes.length} files`);
+					/*
 					try {
 						await Promise.all(save_promises);
 						logs.log(`Upserted ${upserts.length} files, removed ${removes.length} files`);
 					} catch (error) {
 						logs.trace('save_promises(): ', error);
 					}
+					*/
 
 					// DBを破棄する
 					db.dispose();

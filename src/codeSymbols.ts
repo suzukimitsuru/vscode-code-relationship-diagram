@@ -15,11 +15,15 @@ export function extract(path: string, document: vscode.TextDocument): Promise<SY
 
             // シンボル階層を構築
             const fileName = path.split('/').pop() || path;
-            const rootSymbol = new SYMBOL.SymbolModel(fileName, vscode.SymbolKind.File, path, 0, 0, document.lineCount ? document.lineCount - 1 : 0, 0);
-            const sumSymbol = (found: vscode.DocumentSymbol, symbol: SYMBOL.SymbolModel) => {
-                const branch = new SYMBOL.SymbolModel(found.name, found.kind, path, found.range.start.line, found.range.start.character, found.range.end.line, found.range.end.character);
+            const rootSymbol = new SYMBOL.SymbolModel(fileName, vscode.SymbolKind.File, path,
+                0, 0, document.lineCount ? document.lineCount - 1 : 0, 0);
+            const sumSymbol = (found: vscode.DocumentSymbol, parent: SYMBOL.SymbolModel) => {
+                const branch = new SYMBOL.SymbolModel(found.name, found.kind, path,
+                    found.range.start.line, found.range.start.character,
+                    found.range.end.line, found.range.end.character,
+                    parent.id);
                 found.children.forEach(child => { sumSymbol(child, branch); });
-                symbol.addChild(branch);
+                parent.addChild(branch);
             };
             foundSymbols?.forEach(found => { sumSymbol(found, rootSymbol); });
             resolve(rootSymbol);

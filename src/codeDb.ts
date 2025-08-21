@@ -249,18 +249,12 @@ export class Db extends vscode.Disposable {
                     } else {
                         const map = new Map<string, SYMBOL.SymbolModel>();
                         for (const row of rows) {
-                            map.set(row.id, new SYMBOL.SymbolModel(
-                                row.name,
-                                row.kind,
-                                row.path,
-                                row.start_line,
-                                row.start_character,
-                                row.end_line,
-                                row.end_character,
+                            map.set(row.id, new SYMBOL.SymbolModel(row.name, row.kind, row.path,
+                                row.start_line, row.start_character,
+                                row.end_line, row.end_character,
+                                row.parent_id,
                                 row.update_id,
-                                (row.pos_x !== null && row.pos_y !== null) ? new SYMBOL.Position(row.pos_x, row.pos_y) : null,
-                                row.id,
-                                row.parent_id
+                                (row.pos_x !== null && row.pos_y !== null) ? new SYMBOL.Position(row.pos_x, row.pos_y) : null
                             ));
                         }
                         const roots: SYMBOL.SymbolModel[] = [];
@@ -310,8 +304,8 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description シンボル参照を保存
-     * @param reference シンボル参照情報
+     * @description 参照を保存
+     * @param reference 参照情報
      * @returns 保存の完了を示すPromise
      */
     public reference_insert(reference: codeReferences.Reference): Promise<void> {
@@ -339,9 +333,29 @@ export class Db extends vscode.Disposable {
         });
     }
 
+    private _reference_new(
+        id: string,
+        fromId: string, fromPath: string, fromLine: number,
+        toId: string, toPath: string, toLine: number
+    ): codeReferences.Reference {
+        return {
+            id: id,
+            from: {
+                id: fromId,
+                path: fromPath,
+                startLine: fromLine
+            },
+            to: {
+                id: toId,
+                path: toPath,
+                startLine: toLine
+            },
+        };
+    }
+
     /**
-     * @description シンボル参照の全てを読み込み
-     * @returns シンボル参照の配列
+     * @description 参照の全てを読み込み
+     * @returns 参照の配列
      */
     public reference_quaryAll(): Promise<codeReferences.Reference[]> {
         return new Promise<codeReferences.Reference[]>((resolve, reject) => {
@@ -350,23 +364,44 @@ export class Db extends vscode.Disposable {
                     if (err) {
                         reject(err);
                     } else {
-                        const references: codeReferences.Reference[] = rows.map(row => ({
-                            id: row.id,
-                            from: {
-                                id: row.from_id,
-                                path: row.from_path,
-                                startLine: row.from_line
-                            },
-                            to: {
-                                id: row.to_id,
-                                path: row.to_path,
-                                startLine: row.to_line
-                            },
-                        }));
+                        const references: codeReferences.Reference[] = rows.map(row => 
+                            this._reference_new(
+                                row.id,
+                                row.from_id, row.from_path, row.from_line,
+                                row.to_id, row.to_path, row.to_line
+                        ));
                         resolve(references);
                     }
                 }
             );
         });
     }
+
+    /**
+     * @description 参照先を検索
+     * @param toPath 参照先ファイルパス
+     * @returns 参照の配列
+     */
+    public reference_toPath(toPath: string): Promise<codeReferences.Reference[]> {
+        return new Promise<codeReferences.Reference[]>((resolve, reject) => {
+            // 既存のシンボル参照関係を先に削除（path一致のものを全削除）
+            this._conn.prepare(`SELECT * FROM symbol_references WHERE to_path = ?`).all(
+                toPath,
+                (err: Error | null, rows: duckdb.TableData) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        const references: codeReferences.Reference[] = rows.map(row => 
+                            this._reference_new(
+                                row.id,
+                                row.from_id, row.from_path, row.from_line,
+                                row.to_id, row.to_path, row.to_line
+                        ));
+                        resolve(references);
+                    }
+                }
+            );
+        });
+    }
+
 }
