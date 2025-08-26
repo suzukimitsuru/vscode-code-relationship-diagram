@@ -38,7 +38,7 @@ export class SymbolModel {
         updateId: string = '',
         position: Position | null = null
     ) {
-        this.id = parentId ? `${parentId}:${name}` : path;
+        this.id = parentId ? `${parentId}:${vscode.SymbolKind[kind]}:${name}` : path;
         if (this.id === 'src/dataSource.ts:generateFileChanges:additions') {
             this.id = 'src/dataSource.ts:generateFileChanges:additions';
         }

@@ -62,7 +62,6 @@ function extractReferences(rootPath: string, symbol: SYMBOL.SymbolModel, symbol_
                                     startLine: found.range.start.line
                                 }
                             });
-                            //logs.log(`Reference ${symbol.path}:${symbol.startLine}=${symbol.name} -> ${to_path}:${to_symbol.startLine}=${to_symbol.name}`);
                         }
                     }
                 }

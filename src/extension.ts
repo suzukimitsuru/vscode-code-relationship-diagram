@@ -7,10 +7,8 @@ import { Logs } from './logs';
 import * as codeDb from './codeDb';
 import * as codeFiles from './codeFiles';
 import * as codeSymbols from './codeSymbols';
-import * as SYMBOL from './symbol';
 import * as codeReferences from './codeReferences';
 import { GraphVisualization } from './graphVisualization';
-import { on } from 'events';
 
 let _logs: Logs | null = null;
 
@@ -53,7 +51,7 @@ export function activate(context: vscode.ExtensionContext) {
 					const files: codeFiles.File[] = [];
 					const patterns = codeFiles.list(root_folder.uri.fsPath, associations, (file: codeFiles.File) => {
 						files.push(file);
-						logs.log(`Listed ${file.relative_path}`);
+						logs.log(`Listed file: ${file.relative_path}`);
 					});
 
 					// コードファイルをパスでソートする
@@ -73,12 +71,12 @@ export function activate(context: vscode.ExtensionContext) {
 							const symbol = await codeSymbols.extract(upsert.relative_path, document);
 							upsert_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, symbol);
 							symbol_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, symbol);
-							logs.log(`Extructed: ${upsert.relative_path}`);
+							logs.log(`Extructed symbol: ${upsert.relative_path}`);
 						} catch (error) {
 							logs.error(`Failed to open document ${upsert.relative_path}: `, error);
 						}
 					}
-					logs.log(`Extructed ${Object.keys(upsert_dic).length} files`);
+					logs.log(`Extructed symbols: ${Object.keys(upsert_dic).length} files`);
 
 					// 変更のないファイルを追加する
 					for (const nochange of nochanges) {
@@ -104,7 +102,7 @@ export function activate(context: vscode.ExtensionContext) {
 						save_promises.push(new Promise<void>((resolve, reject) => {
 							db.symbol_delete(remove).then(() => {
 								db.codeFile_delete(remove).then(() => {
-									logs.log(`Removed: ${remove}`);
+									logs.log(`Removed file: ${remove}`);
 									updateProgress(++progressed, progress_total);
 									resolve();
 								}).catch(error => {
@@ -128,11 +126,12 @@ export function activate(context: vscode.ExtensionContext) {
 
 									// シンボルをDBにアップサートする
 									db.symbol_save(root, null).then(() => {
-										logs.log(`Saved: ${root.path}`);
+										logs.log(`Saved symbol: ${root.path}`);
 
 										// 参照関係を抽出
 										codeReferences.extract(root_folder.uri.fsPath, root, symbol_dic).then(from_refs => {
 											const inserts: Promise<void>[] = [];
+											logs.log(`Extract reference: ${root.path} ${from_refs.length} counts`);
 
 											// 参照関係を保存する
 											for (const ref of from_refs) {
@@ -158,7 +157,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 												// コードファイルを更新または挿入する
 												db.codeFile_upsert(root.path, updated).then(() => {
-													logs.log(`Upserted: ${root.path}`);
+													logs.log(`Upserted file: ${root.path}`);
 													updateProgress(++progressed, progress_total);
 													resolve();
 												}).catch(error => {
