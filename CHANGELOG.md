@@ -13,6 +13,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## 0.0.12 - 2025-08-27
+
 ### 0.0.12 - Added
 
 - **100言語対応の汎用Language Server サポート**
