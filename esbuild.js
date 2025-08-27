@@ -32,7 +32,7 @@ async function main() {
 		format: 'cjs',
 		minify: production,
 		sourcemap: !production,
-		sourcesContent: false,
+		sourcesContent: !production,
 		platform: 'node',
 		outfile: 'dist/extension.js',
 		external: ['vscode', 'duckdb'],

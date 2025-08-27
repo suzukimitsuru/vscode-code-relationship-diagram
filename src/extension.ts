@@ -22,16 +22,16 @@ export function activate(context: vscode.ExtensionContext) {
 	const platform = process.platform;  // 'darwin' / 'win32' / 'linux'
 	const arch = process.arch;          // 'x64' / 'arm64'
 	logs.log(`extension is now active! Node.js:${process.version}, VSCode:${vscode.version}, Platform:${platform}-${arch}`);
+	const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
 
 	// 初期化するコマンドの登録
 	const initializeDisposable = vscode.commands.registerCommand('vscode-code-relationship-diagram.initialize', async () => {
 
 		// 経過の初期表示
-		const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
 		statusBarItem.show();
 		const updateProgress = (processed: number, total: number) => {
 			const percentage = total > 0 ? ((processed / total) * 100).toFixed(2) : "0.00";
-			statusBarItem.text = `$(sync~spin) ${short_name}: ${processed}/${total} (${percentage}%)`;
+			statusBarItem.text = `$(sync~spin) ${short_name}: ${processed}/${total} ${percentage}%`;
 		};
 
 		// ワークスペースが在り、ファイルの関連付けのパターンが在ったら
@@ -46,12 +46,16 @@ export function activate(context: vscode.ExtensionContext) {
 				await db.table_create();
 				try {
 					const start = performance.now();
+					let progress_total = 0;
+					let progressed = 0;
+					updateProgress(progressed, progress_total);
 
 					// コードファイルを列挙する
 					const files: codeFiles.File[] = [];
 					const patterns = codeFiles.list(root_folder.uri.fsPath, associations, (file: codeFiles.File) => {
 						files.push(file);
 						logs.log(`Listed file: ${file.relative_path}`);
+						updateProgress(progressed++, progress_total++);
 					});
 
 					// コードファイルをパスでソートする
@@ -69,9 +73,10 @@ export function activate(context: vscode.ExtensionContext) {
 							const fullname = path.join(root_folder.uri.fsPath, upsert.relative_path);
 							const document = await vscode.workspace.openTextDocument(vscode.Uri.file(fullname));
 							const symbol = await codeSymbols.extract(upsert.relative_path, document);
-							upsert_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, symbol);
-							symbol_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, symbol);
+							upsert_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, upsert.language_id, symbol);
+							symbol_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, upsert.language_id, symbol);
 							logs.log(`Extructed symbol: ${upsert.relative_path}`);
+							updateProgress(progressed++, progress_total++);
 						} catch (error) {
 							logs.error(`Failed to open document ${upsert.relative_path}: `, error);
 						}
@@ -83,8 +88,9 @@ export function activate(context: vscode.ExtensionContext) {
 						try {
 							const symbols = await db.symbol_load(nochange.relative_path);
 							for (const symbol of symbols) {
-								symbol_dic[symbol.path] = new codeSymbols.Dictionary(nochange.updated, symbol);
+								symbol_dic[symbol.path] = new codeSymbols.Dictionary(nochange.updated, nochange.language_id, symbol);
 								logs.log(`Not changed: ${symbol.path}`);
+								updateProgress(progressed++, progress_total++);
 							}
 						} catch (error) {
 							logs.error(`Failed to load symbols for ${nochange.relative_path}: `, error);
@@ -93,9 +99,8 @@ export function activate(context: vscode.ExtensionContext) {
 					logs.log(`Symbols ${Object.keys(symbol_dic).length} files`);
 
 					const save_promises: Promise<void>[] = [];
-					const progress_total = upserts.length + removes.length;
-					let progressed = 0;
-					updateProgress(progressed, progress_total);
+					//progress_total = upserts.length + nochanges.length + removes.length;
+					//updateProgress(progressed, progress_total);
 
 					// ファイル削除を追加する
 					for (const remove of removes) {
@@ -103,7 +108,7 @@ export function activate(context: vscode.ExtensionContext) {
 							db.symbol_delete(remove).then(() => {
 								db.codeFile_delete(remove).then(() => {
 									logs.log(`Removed file: ${remove}`);
-									updateProgress(++progressed, progress_total);
+									updateProgress(progressed++, progress_total);
 									resolve();
 								}).catch(error => {
 									reject(`db.codeFile_delete(${remove}): ${error instanceof Error ? error.message : error}`);
@@ -115,7 +120,7 @@ export function activate(context: vscode.ExtensionContext) {
 					}
 
 					// ファイル更新を追加する
-					Object.values(upsert_dic).forEach(({updated, symbol: root}) => {
+					Object.values(upsert_dic).forEach(({updated, languageId, symbol: root}) => {
 						save_promises.push(new Promise<void>((resolve, reject) => {
 
 							// 参照先を検索
@@ -129,7 +134,7 @@ export function activate(context: vscode.ExtensionContext) {
 										logs.log(`Saved symbol: ${root.path}`);
 
 										// 参照関係を抽出
-										codeReferences.extract(root_folder.uri.fsPath, root, symbol_dic).then(from_refs => {
+										codeReferences.extract(root_folder.uri.fsPath, languageId, root, symbol_dic).then(from_refs => {
 											const inserts: Promise<void>[] = [];
 											logs.log(`Extract reference: ${root.path} ${from_refs.length} counts`);
 
@@ -158,7 +163,7 @@ export function activate(context: vscode.ExtensionContext) {
 												// コードファイルを更新または挿入する
 												db.codeFile_upsert(root.path, updated).then(() => {
 													logs.log(`Upserted file: ${root.path}`);
-													updateProgress(++progressed, progress_total);
+													updateProgress(progressed++, progress_total);
 													resolve();
 												}).catch(error => {
 													reject(`db.codeFile_upsert(${root.path}): ${error instanceof Error ? error.message : error}`);
@@ -181,7 +186,8 @@ export function activate(context: vscode.ExtensionContext) {
 						}));
 					});
 
-					// コードファイルを削除する
+					// 保存処理を実行する
+					/*
 					for (const save_promise of save_promises) {
 						try {
 							await save_promise;
@@ -189,15 +195,13 @@ export function activate(context: vscode.ExtensionContext) {
 							logs.trace('save_promises(): ', error);
 						}
 					}
-					logs.log(`Upserted ${upserts.length} files, removed ${removes.length} files`);
-					/*
+					*/
 					try {
 						await Promise.all(save_promises);
-						logs.log(`Upserted ${upserts.length} files, removed ${removes.length} files`);
 					} catch (error) {
 						logs.trace('save_promises(): ', error);
 					}
-					*/
+					logs.log(`Upserted ${upserts.length} files, no changed ${nochanges.length} files, removed ${removes.length} files`);
 
 					// DBを破棄する
 					db.dispose();
@@ -208,7 +212,7 @@ export function activate(context: vscode.ExtensionContext) {
 					statusBarItem.text = `$(check) ${short_name}: ${progressed}/${progress_total} (100.00%)`;
 					setTimeout(() => {
 						statusBarItem.text = short_name;
-						statusBarItem.command = 'vscode-code-relationship-diagram.showGraph';
+						statusBarItem.command = 'vscode-code-relationship-diagram.showDiagram';
 						statusBarItem.tooltip = 'Show diagram';
 					}, 3000);
 					logs.info(locale('initialize-message'));
@@ -230,8 +234,8 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	// グラフ表示コマンドの登録
-	const showGraphDisposable = vscode.commands.registerCommand('vscode-code-relationship-diagram.showGraph', async () => {
-		logs.log('=== SHOWGRAPH COMMAND STARTED ===');
+	const showDiagramDisposable = vscode.commands.registerCommand('vscode-code-relationship-diagram.showDiagram', async () => {
+		logs.log('=== SHOWDIAGRAM COMMAND STARTED ===');
 		
 		const workspace_folders = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders : [];
 		const root_folder = selectRootFolder(workspace_folders);
@@ -292,8 +296,8 @@ export function activate(context: vscode.ExtensionContext) {
 					const graphViz = new GraphVisualization(context, logs);
 					logs.log('GraphVisualization instance created');
 					
-					await graphViz.showGraph(allSymbols, references);
-					logs.log('GraphVisualization.showGraph completed');
+					await graphViz.showDiagram(allSymbols, references);
+					logs.log('GraphVisualization.showDiagram completed');
 					
 					db.dispose();
 					logs.info('Code relationship diagram displayed');
@@ -307,7 +311,7 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	context.subscriptions.push(initializeDisposable);
-	context.subscriptions.push(showGraphDisposable);
+	context.subscriptions.push(showDiagramDisposable);
 }
 
 // This method is called when your extension is deactivated

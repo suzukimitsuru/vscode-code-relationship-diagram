@@ -3,7 +3,7 @@
   "displayName": "CRD: Code Relationship Diagram",
   "shortName": "CRD",
   "description": "コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "preview": true,
   "publisher": "suzukimitsuru",
   "keywords": [
@@ -39,8 +39,8 @@
         "description": "%initialize-description%"
       },
       {
-        "command": "vscode-code-relationship-diagram.showGraph",
-        "title": "Show Code Relationship Graph",
+        "command": "vscode-code-relationship-diagram.showDiagram",
+        "title": "Show Code Relationship Diagram",
         "category": "CRD",
         "description": "Display the code relationship diagram using Cytoscape.js"
       }

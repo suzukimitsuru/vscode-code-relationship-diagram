@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as SYMBOL from './symbol';
 
 export class Dictionary {
-    constructor(public updated: Date, public symbol: SYMBOL.SymbolModel) {}
+    constructor(public updated: Date, public languageId: string, public symbol: SYMBOL.SymbolModel) {}
 }
 
 export function extract(path: string, document: vscode.TextDocument): Promise<SYMBOL.SymbolModel> {
@@ -18,8 +18,10 @@ export function extract(path: string, document: vscode.TextDocument): Promise<SY
             const rootSymbol = new SYMBOL.SymbolModel(fileName, vscode.SymbolKind.File, path,
                 0, 0, document.lineCount ? document.lineCount - 1 : 0, 0);
             const sumSymbol = (found: vscode.DocumentSymbol, parent: SYMBOL.SymbolModel) => {
+                // selectionRangeが利用可能な場合はそれを使用（より正確なシンボル名の位置）
+                const symbolRange = found.selectionRange || found.range;
                 const branch = new SYMBOL.SymbolModel(found.name, found.kind, path,
-                    found.range.start.line, found.range.start.character,
+                    symbolRange.start.line, symbolRange.start.character,
                     found.range.end.line, found.range.end.character,
                     parent.id);
                 found.children.forEach(child => { sumSymbol(child, branch); });

@@ -15,7 +15,7 @@ export class GraphVisualization {
         this.logs = logs;
     }
 
-    public async showGraph(symbols: SYMBOL.SymbolModel[], references: codeReferences.Reference[]) {
+    public async showDiagram(symbols: SYMBOL.SymbolModel[], references: codeReferences.Reference[]) {
         const startTime = performance.now();
         
         try {
@@ -24,7 +24,7 @@ export class GraphVisualization {
             
             // 入力データの詳細ログ
             if (symbols.length === 0) {
-                this.logs.error('No symbols provided to showGraph - this may indicate a problem with data loading');
+                this.logs.error('No symbols provided to showDiagram - this may indicate a problem with data loading');
                 return;
             }
             
@@ -85,7 +85,7 @@ export class GraphVisualization {
         } catch (error) {
             const errorTime = (performance.now() - startTime) / 1000;
             this.logs.error(`${errorTime.toFixed(3)}s: Error during graph visualization: ${error instanceof Error ? error.message : error}`);
-            console.error('ShowGraph detailed error:', error);
+            console.error('showDiagram detailed error:', error);
             
             // エラーが発生した場合でもパネルが残っていたら削除
             if (this.panel) {

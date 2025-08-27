@@ -13,7 +13,64 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
-- 更新ファイルからの参照の更新が出来ていない。
+### 0.0.12 - Added
+
+- **100言語対応の汎用Language Server サポート**
+  - 主要プログラミング言語100種類に対応
+  - 言語別最適化された設定（activationDelay, retryDelay）
+  - システム言語、Web開発、関数型言語、科学計算等を包括的にサポート
+
+- **Language Server処理の分離とモジュール化**
+  - `languageServers.ts`として独立モジュール化
+  - 再利用性とメンテナンス性の向上
+  - 設定の集約管理
+
+### 0.0.12 - Fixed
+
+- **参照検索の精度向上**
+  - `selectionRange`使用による正確なシンボル位置特定
+  - C言語などでの参照検索失敗問題を解決
+  - Language Server準備完了待機機能の実装
+
+- **デバッガサポートの改善**
+  - esbuildでのソースマップ生成設定最適化
+  - `sourcesContent`を開発時に有効化
+  - ブレークポイント停止問題を解決
+
+### 0.0.12 - Enhanced
+
+- **Language Server管理機能**
+  - 自動アクティベーション機能
+  - 準備状態確認（DocumentSymbolProvider、HoverProvider、DefinitionProvider）
+  - リトライ機能付き参照取得（最大3回）
+  - バッチ処理による負荷分散
+
+- **詳細ログとデバッグ機能**
+  - Language Server操作の詳細ログ出力
+  - 参照検索プロセスの可視化
+  - エラー原因特定の支援機能
+
+### 0.0.12 - Languages Supported
+
+**新規対応言語（50→100言語）:**
+
+- **マークアップ**: TOML, INI
+- **シェル**: Bash, Zsh, Fish  
+- **データベース**: MySQL, PostgreSQL, SQLite, MongoDB
+- **関数型**: Scheme, Racket, Common Lisp
+- **システム**: Crystal, Carbon, V, Odin
+- **スクリプト**: Tcl, AWK, SED
+- **Web**: React, Astro, SolidJS, Ember, Lit, Stencil
+- **モバイル**: Xamarin, React Native, Unity
+- **設定**: Bazel, Gradle, Ant, Maven, SBT, Ninja, Meson
+- **アセンブリ**: NASM, GAS, MASM, ARM, RISC-V, WebAssembly
+- **ブロックチェーン**: Vyper, Cairo, Clarity, Cadence
+- **科学計算**: Octave, Scilab, Fortran, COBOL, Mathematica, SageMath
+- **GPU**: CUDA, OpenCL, HLSL, GLSL, Metal
+- **ゲーム**: UnrealScript, ActionScript
+- **DSL**: Regex, Graphviz, PlantUML, Mermaid, LaTeX, BibTeX, Gnuplot
+- **歴史的**: Pascal, BASIC, Logo, Smalltalk, Forth, Prolog
+- **エソテリック**: Brainfuck, Whitespace
 
 ## 0.0.9　- 2025-08-07
 
