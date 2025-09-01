@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as SYMBOL from './symbol';
+import { randomUUID } from 'crypto';
 
 export class Dictionary {
     constructor(public updated: Date, public languageId: string, public symbol: SYMBOL.SymbolModel) {}
@@ -14,13 +15,15 @@ export function extract(path: string, document: vscode.TextDocument): Promise<SY
             const foundSymbols = docSymbols ? docSymbols.filter(symbol => symbolKinds.includes(symbol.kind)) : undefined;
 
             // シンボル階層を構築
+            const id = randomUUID();
             const fileName = path.split('/').pop() || path;
-            const rootSymbol = new SYMBOL.SymbolModel(fileName, vscode.SymbolKind.File, path,
+            const rootSymbol = new SYMBOL.SymbolModel(id, fileName, vscode.SymbolKind.File, path,
                 0, 0, document.lineCount ? document.lineCount - 1 : 0, 0);
             const sumSymbol = (found: vscode.DocumentSymbol, parent: SYMBOL.SymbolModel) => {
                 // selectionRangeが利用可能な場合はそれを使用（より正確なシンボル名の位置）
+                const id = randomUUID();
                 const symbolRange = found.selectionRange || found.range;
-                const branch = new SYMBOL.SymbolModel(found.name, found.kind, path,
+                const branch = new SYMBOL.SymbolModel(id, found.name, found.kind, path,
                     symbolRange.start.line, symbolRange.start.character,
                     found.range.end.line, found.range.end.character,
                     parent.id);

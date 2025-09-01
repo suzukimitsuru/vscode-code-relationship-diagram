@@ -47,7 +47,7 @@ export class Db extends vscode.Disposable {
         return new Promise<void>((resolve, reject) => {
             // コードファイルテーブル
             this._conn.prepare(`
-                CREATE TABLE IF NOT EXISTS code_files (
+                CREATE TABLE IF NOT EXISTS table_files (
                     relative_path TEXT PRIMARY KEY,
                     updated_at TIMESTAMP
                 );
@@ -58,7 +58,7 @@ export class Db extends vscode.Disposable {
                 } else {
                     // シンボルテーブル
                     this._conn.prepare(`
-                        CREATE TABLE IF NOT EXISTS symbols (
+                        CREATE TABLE IF NOT EXISTS table_symbols (
                             id TEXT PRIMARY KEY,
                             parent_id TEXT,
                             name TEXT,
@@ -79,7 +79,7 @@ export class Db extends vscode.Disposable {
                         } else {
                             // シンボル参照関係テーブル
                             this._conn.prepare(`
-                                CREATE TABLE IF NOT EXISTS symbol_references (
+                                CREATE TABLE IF NOT EXISTS table_references (
                                     id TEXT PRIMARY KEY,
                                     from_id TEXT,
                                     from_path TEXT,
@@ -87,8 +87,8 @@ export class Db extends vscode.Disposable {
                                     to_id TEXT,
                                     to_path TEXT,
                                     to_line INTEGER,
-                                    FOREIGN KEY (from_id) REFERENCES symbols(id),
-                                    FOREIGN KEY (to_id) REFERENCES symbols(id)
+                                    FOREIGN KEY (from_id) REFERENCES table_symbols(id),
+                                    FOREIGN KEY (to_id) REFERENCES table_symbols(id)
                                 )
                             `, (err: Error | null) => {
                                 if (err) {
@@ -112,7 +112,7 @@ export class Db extends vscode.Disposable {
     public codeFile_query(relative_path: string | null): Promise<duckdb.TableData> {
         return new Promise<duckdb.TableData>((resolve, reject) => {
             if (relative_path) {
-                this._conn.prepare(`SELECT * FROM code_files WHERE relative_path = ?;`).all(
+                this._conn.prepare(`SELECT * FROM table_files WHERE relative_path = ?;`).all(
                     relative_path,
                     (err: Error | null, res: duckdb.TableData) => {
                         if (err) {
@@ -123,7 +123,7 @@ export class Db extends vscode.Disposable {
                     }
                 );
             } else {
-                this._conn.prepare(`SELECT * FROM code_files;`).all(
+                this._conn.prepare(`SELECT * FROM table_files;`).all(
                     (err: Error | null, res: duckdb.TableData) => {
                         if (err) {
                             reject(err);
@@ -145,7 +145,7 @@ export class Db extends vscode.Disposable {
         return new Promise<void>((resolve, reject) => {
 
             // コードファイルの存在確認
-            this._conn.prepare(`SELECT COUNT(*) AS count FROM code_files WHERE relative_path = ?;`).all(
+            this._conn.prepare(`SELECT COUNT(*) AS count FROM table_files WHERE relative_path = ?;`).all(
                 relative_path,
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
@@ -155,8 +155,8 @@ export class Db extends vscode.Disposable {
                         // 更新または挿入
                         this._conn.prepare(
                             (rows.length > 0) && (rows[0].count > 0)
-                                ? `UPDATE code_files SET updated_at = ? WHERE relative_path = ?;`
-                                : `INSERT INTO code_files (updated_at, relative_path) VALUES (?, ?);`
+                                ? `UPDATE table_files SET updated_at = ? WHERE relative_path = ?;`
+                                : `INSERT INTO table_files (updated_at, relative_path) VALUES (?, ?);`
                         ).run(
                             updated.toISOString(), relative_path,
                             (err: Error | null) => {
@@ -180,7 +180,7 @@ export class Db extends vscode.Disposable {
      */
     public codeFile_delete(relative_path: string): Promise<void> {
         return new Promise<void>((resolve, reject) => {
-            this._conn.prepare(`DELETE FROM code_files WHERE relative_path = ?;`).run(
+            this._conn.prepare(`DELETE FROM table_files WHERE relative_path = ?;`).run(
                 relative_path,
                 (err: Error | null) => {
                     if (err) {
@@ -201,7 +201,7 @@ export class Db extends vscode.Disposable {
     public symbol_save(symbol: SYMBOL.SymbolModel, parentId: string | null): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             this._conn.prepare(
-                `INSERT INTO symbols (id, parent_id, name, kind, path, start_line, start_character, end_line, end_character, update_id, pos_x, pos_y)
+                `INSERT INTO table_symbols (id, parent_id, name, kind, path, start_line, start_character, end_line, end_character, update_id, pos_x, pos_y)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
                     symbol.id,
                     parentId,
@@ -241,7 +241,7 @@ export class Db extends vscode.Disposable {
      */
     public symbol_load(path: string): Promise<SYMBOL.SymbolModel[]> {
         return new Promise<SYMBOL.SymbolModel[]>((resolve, reject) => {
-            this._conn.prepare(`SELECT * FROM symbols WHERE path = ? ORDER BY start_line ASC`).all(
+            this._conn.prepare(`SELECT * FROM table_symbols WHERE path = ? ORDER BY start_line ASC`).all(
                 path,
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
@@ -249,7 +249,7 @@ export class Db extends vscode.Disposable {
                     } else {
                         const map = new Map<string, SYMBOL.SymbolModel>();
                         for (const row of rows) {
-                            map.set(row.id, new SYMBOL.SymbolModel(row.name, row.kind, row.path,
+                            map.set(row.id, new SYMBOL.SymbolModel(row.id, row.name, row.kind, row.path,
                                 row.start_line, row.start_character,
                                 row.end_line, row.end_character,
                                 row.parent_id,
@@ -280,14 +280,14 @@ export class Db extends vscode.Disposable {
     public symbol_delete(symbol_path: string): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             // 既存のシンボル参照関係を先に削除（path一致のものを全削除）
-            this._conn.prepare(`DELETE FROM symbol_references WHERE from_path = ? OR to_path = ?`).run(
+            this._conn.prepare(`DELETE FROM table_references WHERE from_path = ? OR to_path = ?`).run(
                 symbol_path, symbol_path,
                 (err: Error | null) => {
                     if (err) {
                         reject(err);
                     } else {
                         // 既存のシンボルを削除（path一致のものを全削除）
-                        this._conn.prepare(`DELETE FROM symbols WHERE path = ?`).run(
+                        this._conn.prepare(`DELETE FROM table_symbols WHERE path = ?`).run(
                             symbol_path,
                             (err: Error | null) => {
                                 if (err) {
@@ -311,7 +311,7 @@ export class Db extends vscode.Disposable {
     public reference_insert(reference: codeReferences.Reference): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             this._conn.prepare(
-                `INSERT OR REPLACE INTO symbol_references 
+                `INSERT OR REPLACE INTO table_references 
                 (id, from_id, from_path, from_line, to_id, to_path, to_line) 
                 VALUES (?, ?, ?, ?, ?, ?, ?)`
             ).run(
@@ -359,7 +359,7 @@ export class Db extends vscode.Disposable {
      */
     public reference_quaryAll(): Promise<codeReferences.Reference[]> {
         return new Promise<codeReferences.Reference[]>((resolve, reject) => {
-            this._conn.prepare(`SELECT * FROM symbol_references`).all(
+            this._conn.prepare(`SELECT * FROM table_references`).all(
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
                         reject(err);
@@ -385,7 +385,7 @@ export class Db extends vscode.Disposable {
     public reference_toPath(toPath: string): Promise<codeReferences.Reference[]> {
         return new Promise<codeReferences.Reference[]>((resolve, reject) => {
             // 既存のシンボル参照関係を先に削除（path一致のものを全削除）
-            this._conn.prepare(`SELECT * FROM symbol_references WHERE to_path = ?`).all(
+            this._conn.prepare(`SELECT * FROM table_references WHERE to_path = ?`).all(
                 toPath,
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {

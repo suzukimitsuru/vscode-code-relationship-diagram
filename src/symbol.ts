@@ -27,6 +27,7 @@ export class SymbolModel {
     public position: Position | null = null;
     public children: SymbolModel[] = [];
     public constructor(
+        id: string,
         name: string,
         kind: vscode.SymbolKind,
         path: string,
@@ -38,7 +39,7 @@ export class SymbolModel {
         updateId: string = '',
         position: Position | null = null
     ) {
-        this.id = parentId ? `${parentId}:${vscode.SymbolKind[kind]}:${name}` : path;
+        this.id = id;
         this.parentId = parentId;
         this.name = name;
         this.kind = kind;
