@@ -75,7 +75,7 @@ export class GraphVisualization {
         
         // 最終的なHTMLを設定
         const htmlStartTime = performance.now();
-        this.panel.webview.html = this.generateWebviewContent(locale('window-title'), elements);
+        this.panel.webview.html = this.generateWebviewContent(locale('window-title'), this.panel.webview, elements);
         const htmlEndTime = performance.now();
         const htmlElapsed = (htmlEndTime - startTime) / 1000;
         this.logs.log(`${htmlElapsed.toFixed(3)}s  90.00%: Generated webview content (${(htmlEndTime - htmlStartTime).toFixed(3)}ms)`);
@@ -267,34 +267,13 @@ export class GraphVisualization {
         const isDarkTheme = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
         const backgroundColor = isDarkTheme ? '#1e1e1e' : '#ffffff';
         const controlsColor = isDarkTheme ? '#cccccc' : '#333333';
-        
+
         return `
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <title>${title} - Loading</title>
-    <style>
-        @font-face {
-            font-family: 'codicon';
-            src: url('data:application/font-woff2;charset=utf-8;base64,') format('woff2');
-        }
-        .codicon {
-            font-family: 'codicon';
-            font-weight: normal;
-            font-style: normal;
-            text-decoration: none;
-            text-rendering: auto;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-            user-select: none;
-            -webkit-user-select: none;
-            -ms-user-select: none;
-        }
-        .codicon-zoom-to-fit::before { content: "\\ea23"; }
-        .codicon-refresh::before { content: "\\ea24"; }
-        .codicon-save-as::before { content: "\\ea7c"; }
-    </style>
     <style>
         body {
             margin: 0;
@@ -357,7 +336,7 @@ export class GraphVisualization {
 </html>`;
     }
 
-    private generateWebviewContent(title: string, elements: { nodes: any[], edges: any[] }): string {
+    private generateWebviewContent(title: string, webview: vscode.Webview, elements: { nodes: any[], edges: any[] }): string {
         // VSCodeのテーマ色を取得
         const isDarkTheme = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
         const backgroundColor = isDarkTheme ? '#1e1e1e' : '#ffffff';
@@ -367,6 +346,11 @@ export class GraphVisualization {
         const buttonHoverBackground = isDarkTheme ? '#1177bb' : '#005A9E';
         const boxShadowColor = isDarkTheme ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.1)';
         
+        // VSCode codicon フォントのURI
+        const mediaPath = vscode.Uri.joinPath(this.context.extensionUri, 'media');
+        const codiconCssUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaPath, 'codicon.css'));
+        const codiconFontUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaPath, 'codicon.ttf'));
+
         // ローカルJSファイルのURIを生成
         const cytoscapeUri = this.panel!.webview.asWebviewUri(
             vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'cytoscape', 'dist', 'cytoscape.min.js')
@@ -381,26 +365,13 @@ export class GraphVisualization {
 <head>
     <meta charset="utf-8">
     <title>${title}</title>
+    <link href="${codiconCssUri}" rel="stylesheet">
     <style>
         @font-face {
-            font-family: 'codicon';
-            src: url('data:application/font-woff2;charset=utf-8;base64,') format('woff2');
+            font-family: "codicon";
+            font-display: block;
+            src: url("${codiconFontUri}") format("truetype");
         }
-        .codicon {
-            font-family: 'codicon';
-            font-weight: normal;
-            font-style: normal;
-            text-decoration: none;
-            text-rendering: auto;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-            user-select: none;
-            -webkit-user-select: none;
-            -ms-user-select: none;
-        }
-        .codicon-zoom-to-fit::before { content: "\\ea23"; }
-        .codicon-refresh::before { content: "\\ea24"; }
-        .codicon-save-as::before { content: "\\ea7c"; }
     </style>
     <script src="${cytoscapeUri}"></script>
     <script src="${cytoscapeDagreUri}"></script>
@@ -476,7 +447,6 @@ export class GraphVisualization {
         }
         button i.codicon {
             font-size: 16px;
-            line-height: 1;
         }
         button span {
             font-weight: normal;
@@ -490,16 +460,13 @@ export class GraphVisualization {
     <div id="progress-text">Loading...</div>
     <div class="controls">
         <button onclick="fitGraph()" title="Fit to Screen">
-            <i class="codicon codicon-zoom-to-fit"></i>
-            <span>Fit to Screen</span>
+            <i class="codicon codicon-go-to-editing-session"></i>
         </button>
         <button onclick="resetLayout()" title="Reset Layout">
             <i class="codicon codicon-refresh"></i>
-            <span>Reset Layout</span>
         </button>
         <button onclick="exportPNG()" title="Export PNG">
             <i class="codicon codicon-save-as"></i>
-            <span>Export PNG</span>
         </button>
     </div>
     <div id="cy"></div>

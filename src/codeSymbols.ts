@@ -5,11 +5,17 @@ import { randomUUID } from 'crypto';
 export class Dictionary {
     constructor(public updated: Date, public languageId: string, public symbol: SYMBOL.SymbolModel) {}
 }
+export class DocumentDictionary extends Dictionary {
+    constructor(updated: Date, languageId: string, symbol: SYMBOL.SymbolModel, public document: vscode.TextDocument) {
+        super(updated, languageId, symbol);
+    }
+}
+
 
 export function extract(path: string, document: vscode.TextDocument): Promise<SYMBOL.SymbolModel> {
     return new Promise(async (resolve, reject) => {
         try {
-            // 書類からシンボルを抽出ll
+            // 書類からシンボルを抽出
             const docSymbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', document.uri) as vscode.DocumentSymbol[];
             const symbolKinds = Object.values(vscode.SymbolKind) as vscode.SymbolKind[];
             const foundSymbols = docSymbols ? docSymbols.filter(symbol => symbolKinds.includes(symbol.kind)) : undefined;

@@ -13,16 +13,46 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## 0.0.14 - 2025-09-04
+
+### 0.0.14 - Fixed
+
+- **シンボルIDの重複問題を解決**
+  - `SymbolModel.id`をUUIDベースに戻して主キーの重複を防止
+  - データベースの整合性とパフォーマンスの向上
+  - シンボル識別の信頼性を改善
+
+### 0.0.14 - Enhanced
+
+- **UIとメディアファイルの更新**
+  - 新しいスクリーンショット画像を追加（`CRD-screen-shot.png`）
+  - Visual Studioアイコンフォント（codicon）のローカル対応
+  - README.mdの内容更新
+
+- **コア機能の最適化**
+  - コードファイル処理の改善（`codeFiles.ts`）
+  - 参照関係処理の最適化（`codeReferences.ts`）
+  - シンボル管理機能の強化（`codeSymbols.ts`）
+  - グラフ可視化の改良（`graphVisualization.ts`）
+  - 言語サーバー統合の改善（`languageServers.ts`）
+
+## 0.0.13 - 2025-08-28
+
+### 0.0.13 - Fixed
+
+- **シンボルIDの重複問題を解決**
+  - `SymbolModel.id`をUUIDに戻して主キーが重複しない様に修正
+
 ## 0.0.12 - 2025-08-27
 
 ### 0.0.12 - Added
 
-- **100言語対応の汎用Language Server サポート**
+- **100言語対応の汎用言語サーバ サポート**
   - 主要プログラミング言語100種類に対応
   - 言語別最適化された設定（activationDelay, retryDelay）
   - システム言語、Web開発、関数型言語、科学計算等を包括的にサポート
 
-- **Language Server処理の分離とモジュール化**
+- **言語サーバ処理の分離とモジュール化**
   - `languageServers.ts`として独立モジュール化
   - 再利用性とメンテナンス性の向上
   - 設定の集約管理
@@ -32,7 +62,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **参照検索の精度向上**
   - `selectionRange`使用による正確なシンボル位置特定
   - C言語などでの参照検索失敗問題を解決
-  - Language Server準備完了待機機能の実装
+  - 言語サーバ準備完了待機機能の実装
 
 - **デバッガサポートの改善**
   - esbuildでのソースマップ生成設定最適化
@@ -41,14 +71,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### 0.0.12 - Enhanced
 
-- **Language Server管理機能**
+- **言語サーバ管理機能**
   - 自動アクティベーション機能
   - 準備状態確認（DocumentSymbolProvider、HoverProvider、DefinitionProvider）
   - リトライ機能付き参照取得（最大3回）
   - バッチ処理による負荷分散
 
 - **詳細ログとデバッグ機能**
-  - Language Server操作の詳細ログ出力
+  - 言語サーバ操作の詳細ログ出力
   - 参照検索プロセスの可視化
   - エラー原因特定の支援機能
 

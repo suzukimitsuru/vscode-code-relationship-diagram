@@ -1,14 +1,15 @@
 import * as vscode from 'vscode';
 
-export interface LanguageServerConfig {
+/** 言語サーバ設定 */
+export interface Config {
     extensionId: string;
     name: string;
     activationDelay: number; // ms
     retryDelay: number; // ms
 }
 
-// 言語別設定
-const LANGUAGE_SERVERS: Record<string, LanguageServerConfig> = {
+/** 言語サーバ設定配列 */
+const LANGUAGE_SERVERS: Record<string, Config> = {
     // C/C++
     'c': { extensionId: 'ms-vscode.cpptools', name: 'C/C++', activationDelay: 2000, retryDelay: 1000 },
     'cpp': { extensionId: 'ms-vscode.cpptools', name: 'C/C++', activationDelay: 2000, retryDelay: 1000 },
@@ -42,7 +43,7 @@ const LANGUAGE_SERVERS: Record<string, LanguageServerConfig> = {
     'swift': { extensionId: 'sswg.swift-lang', name: 'Swift', activationDelay: 3000, retryDelay: 1200 },
     
     // Kotlin
-    'kotlin': { extensionId: 'fwcd.kotlin', name: 'Kotlin Language Server', activationDelay: 4000, retryDelay: 1500 },
+    'kotlin': { extensionId: 'fwcd.kotlin', name: 'Kotlin 言語サーバ', activationDelay: 4000, retryDelay: 1500 },
     
     // Scala
     'scala': { extensionId: 'scalameta.metals', name: 'Metals', activationDelay: 5000, retryDelay: 1500 },
@@ -100,7 +101,7 @@ const LANGUAGE_SERVERS: Record<string, LanguageServerConfig> = {
     'crystal': { extensionId: 'crystal-lang-tools.crystal-lang', name: 'Crystal', activationDelay: 2500, retryDelay: 1000 },
     'carbon': { extensionId: 'carbon.carbon-lang', name: 'Carbon', activationDelay: 2000, retryDelay: 800 },
     'v': { extensionId: 'vlang.vscode-vlang', name: 'V', activationDelay: 2000, retryDelay: 800 },
-    'odin': { extensionId: 'danielgavin.ols', name: 'Odin Language Server', activationDelay: 2000, retryDelay: 800 },
+    'odin': { extensionId: 'danielgavin.ols', name: 'Odin 言語サーバ', activationDelay: 2000, retryDelay: 800 },
     
     // Scripting Languages
     'lua': { extensionId: 'sumneko.lua', name: 'Lua', activationDelay: 2000, retryDelay: 800 },
@@ -165,7 +166,7 @@ const LANGUAGE_SERVERS: Record<string, LanguageServerConfig> = {
     'matlab': { extensionId: 'mathworks.language-matlab', name: 'MATLAB', activationDelay: 3000, retryDelay: 1200 },
     'octave': { extensionId: 'toasty-technologies.octave', name: 'Octave', activationDelay: 2000, retryDelay: 800 },
     'scilab': { extensionId: 'scilab.scilab-lsp', name: 'Scilab', activationDelay: 2500, retryDelay: 1000 },
-    'fortran': { extensionId: 'fortls.fortls', name: 'Fortran Language Server', activationDelay: 2000, retryDelay: 800 },
+    'fortran': { extensionId: 'fortls.fortls', name: 'Fortran 言語サーバ', activationDelay: 2000, retryDelay: 800 },
     'cobol': { extensionId: 'broadcommainfram.cobol-language-support', name: 'COBOL', activationDelay: 2500, retryDelay: 1000 },
     'mathematica': { extensionId: 'njpipeorgan.wolfram-language', name: 'Wolfram Language', activationDelay: 3000, retryDelay: 1200 },
     'sage': { extensionId: 'sagemath.sage-language-server', name: 'SageMath', activationDelay: 3000, retryDelay: 1200 },
@@ -204,122 +205,134 @@ const LANGUAGE_SERVERS: Record<string, LanguageServerConfig> = {
     'whitespace': { extensionId: 'yiufung.whitespace-language', name: 'Whitespace', activationDelay: 500, retryDelay: 300 }
 };
 
-// languageIdを元にLanguage Server設定を取得
-export function getLanguageServerConfig(languageId: string): LanguageServerConfig | null {
-    // 直接languageIdで検索
-    if (LANGUAGE_SERVERS[languageId]) {
-        return LANGUAGE_SERVERS[languageId];
-    }
-    
-    return null;
+/**
+ * 言語サーバ設定を取得する
+ * @param languageId 言語ID
+ * @returns 言語サーバ設定 or null
+ */
+export function getConfig(languageId: string): Config | null {
+    return LANGUAGE_SERVERS[languageId] ? LANGUAGE_SERVERS[languageId] : null;
 }
 
-// 汎用Language Server状態チェック
-export async function checkLanguageServerStatus(languageId: string): Promise<LanguageServerConfig | null> {
-    const config = getLanguageServerConfig(languageId);
-    
-    if (!config) {
-        console.warn(`No Language Server configuration found for ${languageId}`);
-        return null;
-    }
-    
-    const extension = vscode.extensions.getExtension(config.extensionId);
-    if (!extension) {
-        console.warn(`${config.name} extension not found (${config.extensionId})`);
-        return null;
-    }
-    
-    if (!extension.isActive) {
-        console.log(`Activating ${config.name} extension...`);
-        try {
-            await extension.activate();
-            await new Promise(resolve => setTimeout(resolve, config.activationDelay));
-        } catch (error) {
-            console.error(`Failed to activate ${config.name} extension:`, error);
-            return null;
+/**
+ * 言語サーバ拡張機能を有効化する
+ * @param config 言語サーバ設定
+ * @returns 有効フラグ
+ */
+export async function activeExtension(config: Config): Promise<boolean> {
+    let result = false;
+
+    // 言語サーバ設定が在って
+    if (config) {
+
+        // 拡張機能が在ったら
+        const extension = vscode.extensions.getExtension(config.extensionId);
+        if (extension) {
+
+            // 有効になるまで待つ
+            while (true) {
+
+                // 有効なら返す
+                if (extension.isActive) {
+                    result = true;
+                    break;
+                } else {
+
+                    // 有効化を試みる
+                    console.log(`Activating ${config.name} extension...`);
+                    try {
+                        await extension.activate();
+                    } catch (error) {
+                        console.error(`Failed to activate ${config.name} extension:`, error);
+                        break;
+                    }
+
+                    // 有効待ち時間待つ
+                    await new Promise(resolve => setTimeout(resolve, config.activationDelay));
+                }
+            }
+        } else {
+            console.warn(`${config.name} extension not found (${config.extensionId})`);
         }
-    }
-    
-    return config;
+    }    
+    return result;
 }
 
-// Language Server準備確認
-export async function ensureLanguageServerReady(uri: vscode.Uri, config: LanguageServerConfig): Promise<boolean> {
-    console.log(`${config.name}: Preparing Language Server for ${uri.path}...`);
-    
-    const doc = await vscode.workspace.openTextDocument(uri);
-    console.log(`${config.name}: Document opened, languageId: ${doc.languageId}`);
-    
+// 言語サーバ準備確認
+export async function ensureReady(doc: vscode.TextDocument, config: Config): Promise<boolean> {
+    let result = false;
+    console.log(`${config.name}: Preparing 言語サーバ for ${doc.uri.path}...`);
+        
     // エディタで開く
-    await vscode.window.showTextDocument(doc, {
-        preview: true,
-        preserveFocus: true,
-        viewColumn: vscode.ViewColumn.Beside
-    });
+    const editor = await vscode.window.showTextDocument(doc, {preview: true, preserveFocus: true, viewColumn: vscode.ViewColumn.Beside});
     console.log(`${config.name}: Document shown in editor`);
     
-    // Language Serverの準備を待つ
+    // 言語サーバの準備を待つ
     await new Promise(resolve => setTimeout(resolve, 500));
     
-    // 複数の方法でLanguage Server機能を確認
+    // 複数の方法で言語サーバ機能を確認
     const checks = [
-        { name: 'DocumentSymbolProvider', fn: () => vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', uri) },
-        { name: 'HoverProvider', fn: () => vscode.commands.executeCommand('vscode.executeHoverProvider', uri, new vscode.Position(0, 0)) },
-        { name: 'DefinitionProvider', fn: () => vscode.commands.executeCommand('vscode.executeDefinitionProvider', uri, new vscode.Position(0, 0)) }
+        // シンボル抽出
+        { name: 'DocumentSymbolProvider', execute: () => vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', doc.uri) },
+        { name: 'HoverProvider', execute: () => vscode.commands.executeCommand('vscode.executeHoverProvider', doc.uri, new vscode.Position(0, 0)) },
+        { name: 'DefinitionProvider', execute: () => vscode.commands.executeCommand('vscode.executeDefinitionProvider', doc.uri, new vscode.Position(0, 0)) }
     ];
     
     for (const check of checks) {
         try {
             console.log(`${config.name}: Checking ${check.name}...`);
-            const result = await check.fn();
-            console.log(`${config.name}: ${check.name} result:`, result);
-            if (result && (Array.isArray(result) ? result.length > 0 : true)) {
-                console.log(`${config.name} Language Server is ready for ${uri.path}`);
-                return true;
+            const command = await check.execute();
+            console.log(`${config.name}: ${check.name} result:`, command);
+            if (command && (Array.isArray(command) ? command.length > 0 : true)) {
+                console.log(`${config.name} 言語サーバ is ready for ${doc.uri.path}`);
+                result = true;
+                break;
             }
         } catch (error) {
             console.warn(`${config.name}: ${check.name} check failed:`, error);
         }
     }
-    
-    console.warn(`${config.name} Language Server may not be fully ready for ${uri.path}`);
-    return false;
+
+    editor.hide();
+
+    return result;
 }
 
-// 汎用リトライ機能付き参照取得
-export async function getReferenceWithRetry(
-    uri: vscode.Uri, 
-    position: vscode.Position, 
-    config: LanguageServerConfig,
-    maxRetries: number = 3
-): Promise<vscode.Location[]> {
-    console.log(`${config.name}: Attempting to get references for ${uri.path} at line ${position.line}, char ${position.character}`);
-    
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
+/**
+ * リトライ機能付き参照取得
+ * @param uri       ファイルURI
+ * @param start     シンボル開始位置
+ * @param config    言語サーバ設定
+ * @param retries   リトライ回数
+ * @returns 参照リスト
+ */
+export async function getReferenceWithRetry(uri: vscode.Uri, start: vscode.Position, config: Config, retries: number): Promise<vscode.Location[]> {
+    const result: vscode.Location[] = [];
+    console.log(`${config.name}: Attempting to get references for ${uri.path} at line ${start.line}, char ${start.character}`);
+
+    for (let attempt = 0; (attempt < retries) && (result.length <= 0); attempt++) {
         try {
-            console.log(`${config.name}: Attempt ${attempt + 1}/${maxRetries}...`);
-            const result = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, position) as vscode.Location[];
-            
-            console.log(`${config.name}: executeReferenceProvider returned:`, result);
-            
-            if (result && result.length > 0) {
-                console.log(`${config.name}: Found ${result.length} references on attempt ${attempt + 1}`);
-                return result;
-            }
-            
-            if (attempt < maxRetries - 1) {
-                console.log(`${config.name}: Attempt ${attempt + 1} returned empty, retrying in ${config.retryDelay}ms...`);
-                await new Promise(resolve => setTimeout(resolve, config.retryDelay));
+            console.log(`${config.name}: Attempt ${attempt + 1}/${retries}...`);
+
+            const locations = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, start) as vscode.Location[];
+            console.log(`${config.name}: executeReferenceProvider returned:`, locations);
+            if (locations && locations.length > 0) {
+                console.log(`${config.name}: Found ${locations.length} references on attempt ${attempt + 1}`);
+                result.push(...locations);
             } else {
-                console.log(`${config.name}: All ${maxRetries} attempts failed to find references`);
+                if (attempt < retries - 1) {
+                    console.log(`${config.name}: Attempt ${attempt + 1} returned empty, retrying in ${config.retryDelay}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, config.retryDelay));
+                } else {
+                    console.log(`${config.name}: All ${retries} attempts failed to find references`);
+                }
             }
         } catch (error) {
             console.warn(`${config.name}: Reference provider attempt ${attempt + 1} failed:`, error);
-            if (attempt < maxRetries - 1) {
+            if (attempt < retries - 1) {
                 await new Promise(resolve => setTimeout(resolve, config.retryDelay));
             }
         }
     }
-    
-    return [];
+    return result;
 }

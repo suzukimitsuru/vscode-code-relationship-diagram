@@ -55,7 +55,7 @@ export function activate(context: vscode.ExtensionContext) {
 					const patterns = codeFiles.list(root_folder.uri.fsPath, associations, (file: codeFiles.File) => {
 						files.push(file);
 						logs.log(`Listed file: ${file.relative_path}`);
-						updateProgress(progressed++, progress_total++);
+						updateProgress(progressed, progress_total++);
 					});
 
 					// コードファイルをパスでソートする
@@ -64,23 +64,25 @@ export function activate(context: vscode.ExtensionContext) {
 					// コードファイルテーブルの変更を抽出する
 					const rows = await db.codeFile_query(null);
 					const [upserts, nochanges, removes] = codeFiles.updates(sorted, rows);
+					progress_total += upserts.length + nochanges.length + removes.length;
 
 					// コードファイルのシンボルを抽出する
 					const symbol_dic: Record<string,codeSymbols.Dictionary> = {};
-					const upsert_dic: Record<string,codeSymbols.Dictionary> = {};
+					const upsert_dic: Record<string,codeSymbols.DocumentDictionary> = {};
 					for (const upsert of upserts) {
 						try {
 							const fullname = path.join(root_folder.uri.fsPath, upsert.relative_path);
-							const document = await vscode.workspace.openTextDocument(vscode.Uri.file(fullname));
-							const symbol = await codeSymbols.extract(upsert.relative_path, document);
-							upsert_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, upsert.language_id, symbol);
+							const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fullname));
+							const symbol = await codeSymbols.extract(upsert.relative_path, doc);
+							upsert_dic[upsert.relative_path] = new codeSymbols.DocumentDictionary(upsert.updated, upsert.language_id, symbol, doc);
 							symbol_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, upsert.language_id, symbol);
 							logs.log(`Extructed symbol: ${upsert.relative_path}`);
-							updateProgress(progressed++, progress_total++);
+							updateProgress(progressed++, progress_total);
 						} catch (error) {
 							logs.error(`Failed to open document ${upsert.relative_path}: `, error);
 						}
 					}
+					progress_total += Object.keys(upsert_dic).length;
 					logs.log(`Extructed symbols: ${Object.keys(upsert_dic).length} files`);
 
 					// 変更のないファイルを追加する
@@ -90,7 +92,7 @@ export function activate(context: vscode.ExtensionContext) {
 							for (const symbol of symbols) {
 								symbol_dic[symbol.path] = new codeSymbols.Dictionary(nochange.updated, nochange.language_id, symbol);
 								logs.log(`Not changed: ${symbol.path}`);
-								updateProgress(progressed++, progress_total++);
+								updateProgress(progressed++, progress_total);
 							}
 						} catch (error) {
 							logs.error(`Failed to load symbols for ${nochange.relative_path}: `, error);
@@ -99,8 +101,6 @@ export function activate(context: vscode.ExtensionContext) {
 					logs.log(`Symbols ${Object.keys(symbol_dic).length} files`);
 
 					const save_promises: Promise<void>[] = [];
-					//progress_total = upserts.length + nochanges.length + removes.length;
-					//updateProgress(progressed, progress_total);
 
 					// ファイル削除を追加する
 					for (const remove of removes) {
@@ -120,7 +120,7 @@ export function activate(context: vscode.ExtensionContext) {
 					}
 
 					// ファイル更新を追加する
-					Object.values(upsert_dic).forEach(({updated, languageId, symbol: root}) => {
+					Object.values(upsert_dic).forEach(({updated, languageId, symbol: root, document: doc}) => {
 						save_promises.push(new Promise<void>((resolve, reject) => {
 
 							// 参照先を検索
@@ -134,7 +134,7 @@ export function activate(context: vscode.ExtensionContext) {
 										logs.log(`Saved symbol: ${root.path}`);
 
 										// 参照関係を抽出
-										codeReferences.extract(root_folder.uri.fsPath, languageId, root, symbol_dic).then(from_refs => {
+										codeReferences.extract(root_folder.uri.fsPath, languageId, doc, root, symbol_dic).then(from_refs => {
 											const inserts: Promise<void>[] = [];
 											logs.log(`Extract reference: ${root.path} ${from_refs.length} counts`);
 

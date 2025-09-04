@@ -5,7 +5,7 @@
 良い設計のソフトウェアは、美しく見えると思います。  
 `Visual Studio Code`の拡張機能として動作します。
 
-![Screen shot](media/screen-shot.png)
+![Screen shot](media/CRD-screen-shot.png)
 
 ## Operation
 
