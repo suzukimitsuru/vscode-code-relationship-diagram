@@ -42,6 +42,9 @@ export async function extract(wsPath: string, languageId: string, doc: vscode.Te
     const config = ls.getConfig(languageId);
     if (config) {
 
+        // エディタで開く
+        const editor = await vscode.window.showTextDocument(doc, {preview: true, preserveFocus: true, viewColumn: vscode.ViewColumn.Beside});
+
         // 言語サーバが有効なら
         if (await ls.activeExtension(config)) {
             for (const symbol of symbols) {
@@ -59,6 +62,8 @@ export async function extract(wsPath: string, languageId: string, doc: vscode.Te
         } else {
             console.warn(`Skipping reference extraction for ${languageId} (no 言語サーバ)`);
         }
+        
+        editor.hide();
     } else {
         console.warn(`No 言語サーバ configuration for ${languageId}, skipping reference extraction.`);
     }

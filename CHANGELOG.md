@@ -13,6 +13,37 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## 0.0.15 - 2025-09-09
+
+### 0.0.15 - Added
+
+- **C言語テストワークスペースを追加**
+  - `exsample-workspace/`にC言語の参照関係テスト用プロジェクト作成
+  - ヘッダーファイル（math_utils.h, string_utils.h）とソースファイル（.c）の相互参照構造
+  - VSCode設定ファイル（launch.json, tasks.json, c_cpp_properties.json）完備
+  - Makefile、README.mdによる完全なビルド環境
+
+- **言語サーバー機能の信頼性向上**
+  - 参照取得の信頼性を高める関数群を追加（`languageServers.ts`）
+  - インデックス完了状態の検出機能
+  - 言語サーバー完全初期化待機機能
+  - 複数情報源による参照完全性チェック
+
+### 0.0.15 - Enhanced
+
+- **デバッグ環境の改善**
+  - `launch.json`にテストワークスペース指定のデバッグ設定追加
+  - 拡張機能開発時の特定ワークスペース自動オープン機能
+  - `.vscodeignore`の最適化
+
+- **ビルド・パッケージプロセス改善**
+  - `package.json`のビルドスクリプトにexsample-workspace.zip自動作成を追加
+  - 拡張機能配布時にテスト環境も含める仕組み
+
+- **コード参照処理の最適化**
+  - `codeReferences.ts`でのエディタ表示・非表示処理改善
+  - 言語サーバー負荷軽減のための待機処理追加
+
 ## 0.0.14 - 2025-09-04
 
 ### 0.0.14 - Fixed

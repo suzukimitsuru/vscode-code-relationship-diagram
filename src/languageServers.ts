@@ -262,10 +262,6 @@ export async function activeExtension(config: Config): Promise<boolean> {
 export async function ensureReady(doc: vscode.TextDocument, config: Config): Promise<boolean> {
     let result = false;
     console.log(`${config.name}: Preparing 言語サーバ for ${doc.uri.path}...`);
-        
-    // エディタで開く
-    const editor = await vscode.window.showTextDocument(doc, {preview: true, preserveFocus: true, viewColumn: vscode.ViewColumn.Beside});
-    console.log(`${config.name}: Document shown in editor`);
     
     // 言語サーバの準備を待つ
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -292,8 +288,6 @@ export async function ensureReady(doc: vscode.TextDocument, config: Config): Pro
             console.warn(`${config.name}: ${check.name} check failed:`, error);
         }
     }
-
-    editor.hide();
 
     return result;
 }
@@ -336,3 +330,138 @@ export async function getReferenceWithRetry(uri: vscode.Uri, start: vscode.Posit
     }
     return result;
 }
+
+/* ⏺ 型付き言語でも100%の保証はありませんが、信頼性を高める方法とインデックス状態の検出方法があります。
+  重要な注意:
+  - 型付き言語でも動的な要素（リフレクション、動的ロード等）は検出困難
+  - 大規模プロジェクトでは完全なインデックス化に時間がかかる
+  - 外部依存関係の参照は言語サーバーの設定に依存
+
+  最も実用的なのは、複数の情報源を組み合わせて信頼性を判定し、不完全な可能性をログに記録することです。
+
+//  参照取得の信頼性を高める方法
+
+// 1. 言語サーバーの完全初期化待機
+async function waitForLanguageServerReady(document: vscode.TextDocument): Promise<boolean> {
+    const uri = document.uri;
+    const maxWait = 30000; // 30秒
+    const checkInterval = 1000; // 1秒
+    for (let elapsed = 0; elapsed < maxWait; elapsed += checkInterval) {
+        try {
+            // 複数のプロバイダーが利用可能かチェック
+            const [symbols, hover, definition] = await Promise.all([
+                vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', uri),
+                vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', uri, new vscode.Position(0, 0)),
+                vscode.commands.executeCommand<vscode.Location[]>('vscode.executeDefinitionProvider', uri, new vscode.Position(0, 0))
+            ]);
+
+            // すべてのプロバイダーが応答する（エラーなし）
+            if (symbols !== undefined && hover !== undefined && definition !== undefined) {
+                return true;
+            }
+        } catch (error) {
+            // まだ準備中
+        }
+        await new Promise(resolve => setTimeout(resolve, checkInterval));
+    }
+    return false;
+}
+
+// 2. インデックス完了状態の検出
+async function checkIndexingStatus(): Promise<{isComplete: boolean, progress?: number}> {
+    // TypeScript言語サーバーの場合
+    const tsExtension = vscode.extensions.getExtension('vscode.typescript-language-features');
+    if (tsExtension?.isActive) {
+        // TypeScript言語サーバーのステータス確認
+        const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+
+        // プロジェクト全体のシンボル検索で完了度をテスト
+        try {
+            const workspaceSymbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
+                'vscode.executeWorkspaceSymbolProvider',
+                '' // 空文字で全シンボル取得試行
+            );
+            return {
+                isComplete: workspaceSymbols !== undefined,
+                progress: workspaceSymbols?.length
+            };
+        } catch {
+            return { isComplete: false };
+        }
+    }
+    return { isComplete: false };
+}
+
+// 3. 言語固有の完全性チェック
+async function verifyReferenceCompleteness(uri: vscode.Uri, position: vscode.Position): Promise<{references: vscode.Location[], isReliable: boolean}> {
+    // 1. 基本的な参照取得
+    const references = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeReferenceProvider', uri, position
+    );
+    // 2. 定義情報で存在確認
+    const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+        'vscode.executeDefinitionProvider', uri, position
+    );
+    // 3. ホバー情報で型情報確認
+    const hover = await vscode.commands.executeCommand<vscode.Hover[]>(
+        'vscode.executeHoverProvider', uri, position
+    );
+    // 4. シンボル情報確認
+    const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+        'vscode.executeDocumentSymbolProvider', uri
+    );
+    // 信頼性判定
+    const isReliable = !!(
+        definitions && definitions.length > 0 &&  // 定義が見つかる
+        hover && hover.length > 0 &&             // 型情報がある
+        symbols && symbols.length > 0            // シンボルが解析済み
+    );
+    return {
+        references: references || [],
+        isReliable
+    };
+}
+// 4. プロジェクトレベルのインデックス完了待機
+async function waitForProjectIndexing(): Promise<boolean> {
+    const workspace = vscode.workspace;
+    if (!workspace.workspaceFolders) {
+        return false;
+    } else {
+        // 主要ファイルでのシンボル解析完了を確認
+        const testFiles = await vscode.workspace.findFiles('*⭐️*⭐️/*.{ts,js,py,java,cs}', null, 10);
+        for (const file of testFiles) {
+            const document = await vscode.workspace.openTextDocument(file);
+            const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+                'vscode.executeDocumentSymbolProvider', file
+            );
+
+            if (!symbols || symbols.length === 0) {
+                // まだインデックス中の可能性
+                return false;
+            }
+        }
+        return true;
+    }
+}
+// 5. 実用的な組み合わせ
+async function getReferencesReliably(uri: vscode.Uri, position: vscode.Position) {
+    // 1. 言語サーバー準備待機
+    const document = await vscode.workspace.openTextDocument(uri);
+    const isReady = await waitForLanguageServerReady(document);
+    if (!isReady) {
+        console.warn('Language server not ready');
+        return [];
+    }
+    // 2. インデックス状態確認
+    const indexStatus = await checkIndexingStatus();
+    if (!indexStatus.isComplete) {
+        console.warn('Project indexing incomplete');
+    }
+    // 3. 完全性チェック付き参照取得
+    const result = await verifyReferenceCompleteness(uri, position);
+    if (!result.isReliable) {
+        console.warn('Reference result may be incomplete');
+    }
+    return result.references;
+}
+*/
