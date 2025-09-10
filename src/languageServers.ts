@@ -261,7 +261,7 @@ export async function activeExtension(config: Config): Promise<boolean> {
 // 言語サーバ準備確認
 export async function ensureReady(doc: vscode.TextDocument, config: Config): Promise<boolean> {
     let result = false;
-    console.log(`${config.name}: Preparing 言語サーバ for ${doc.uri.path}...`);
+    console.log(`${config.name}: Preparing 言語サーバ for ${doc.uri.fsPath}...`);
     
     // 言語サーバの準備を待つ
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -280,7 +280,7 @@ export async function ensureReady(doc: vscode.TextDocument, config: Config): Pro
             const command = await check.execute();
             console.log(`${config.name}: ${check.name} result:`, command);
             if (command && (Array.isArray(command) ? command.length > 0 : true)) {
-                console.log(`${config.name} 言語サーバ is ready for ${doc.uri.path}`);
+                console.log(`${config.name} 言語サーバ is ready for ${doc.uri.fsPath}`);
                 result = true;
                 break;
             }
@@ -302,7 +302,7 @@ export async function ensureReady(doc: vscode.TextDocument, config: Config): Pro
  */
 export async function getReferenceWithRetry(uri: vscode.Uri, start: vscode.Position, config: Config, retries: number): Promise<vscode.Location[]> {
     const result: vscode.Location[] = [];
-    console.log(`${config.name}: Attempting to get references for ${uri.path} at line ${start.line}, char ${start.character}`);
+    console.log(`${config.name}: Attempting to get references for ${uri.fsPath} at line ${start.line}, char ${start.character}`);
 
     for (let attempt = 0; (attempt < retries) && (result.length <= 0); attempt++) {
         try {

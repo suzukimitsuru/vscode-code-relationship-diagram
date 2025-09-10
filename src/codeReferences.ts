@@ -42,7 +42,7 @@ export async function extract(wsPath: string, languageId: string, doc: vscode.Te
     const config = ls.getConfig(languageId);
     if (config) {
 
-        // エディタで開く
+        // 言語サーバーに優先して解析させるため、エディタで開く
         const editor = await vscode.window.showTextDocument(doc, {preview: true, preserveFocus: true, viewColumn: vscode.ViewColumn.Beside});
 
         // 言語サーバが有効なら
@@ -62,7 +62,7 @@ export async function extract(wsPath: string, languageId: string, doc: vscode.Te
         } else {
             console.warn(`Skipping reference extraction for ${languageId} (no 言語サーバ)`);
         }
-        
+
         editor.hide();
     } else {
         console.warn(`No 言語サーバ configuration for ${languageId}, skipping reference extraction.`);
@@ -98,7 +98,7 @@ async function extractReferences(wsPath: string, doc: vscode.TextDocument,
             for (const location of locations) {
 
                 // 参照先パスが別のファイルで
-                const to_path = location.uri.path.substring(wsPath.length + 1);
+                const to_path = location.uri.fsPath.substring(wsPath.length + 1);
                 console.log(`${config.name}: Processing reference at ${to_path}:${location.range.start.line}`);
                 if (to_path !== target.path) {
                     console.log(`${config.name}: Cross-file reference to ${to_path}`);
