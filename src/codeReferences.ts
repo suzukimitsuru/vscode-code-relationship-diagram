@@ -3,7 +3,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import * as SYMBOL from './symbol';
 import * as codeSymbols from './codeSymbols';
-import * as ls from './languageServers';
+import * as lc from './languageCongig';
 
 interface Symbol {
     id: string;
@@ -20,13 +20,13 @@ export interface Reference {
 /**
  * 関係を抽出する
  * @param wsPath        ワークスペースのパス
- * @param languageId    言語ID
- * @param doc           ドキュメント
+ * @param config        言語サーバ設定
+ * @param uri           ファイルURI
  * @param root          ルートシンボル
  * @param symbol_dic    シンボル辞書
  * @returns 参照リスト
  */
-export async function extract(wsPath: string, languageId: string, doc: vscode.TextDocument,
+export async function extract(wsPath: string, config: lc.Config, uri: vscode.Uri,
     root: SYMBOL.SymbolModel, symbol_dic: Record<string,codeSymbols.Dictionary>
 ): Promise<Reference[]> {
     const result: Reference[] = [];
@@ -35,64 +35,13 @@ export async function extract(wsPath: string, languageId: string, doc: vscode.Te
     codeSymbols.each(root, (symbol) => {
         symbols.push(symbol);
     });
-    
-    console.log(`Processing ${symbols.length} symbols for ${languageId}...`);
-    
-    // 言語サーバ設定が在ったら
-    const config = ls.getConfig(languageId);
-    if (config) {
+    for (const symbol of symbols) {
 
-        // 言語サーバーに優先して解析させるため、エディタで開く
-        const editor = await vscode.window.showTextDocument(doc, {preview: true, preserveFocus: true, viewColumn: vscode.ViewColumn.Beside});
-
-        // 言語サーバが有効なら
-        if (await ls.activeExtension(config)) {
-            for (const symbol of symbols) {
-
-                // 関係を抽出する
-                const file_path = path.join(wsPath, symbol.path);
-                const file_uri = vscode.Uri.file(file_path);
-                const reference = await extractReferences(wsPath, doc, symbol, symbol_dic, config);
-                result.push(...reference);
-                
-                // 言語サーバ負荷軽減のため少し待つ
-                await new Promise(resolve => setTimeout(resolve, 50));
-            }
-            console.log(`${languageId}: successful, ${result.length} references found`);
-        } else {
-            console.warn(`Skipping reference extraction for ${languageId} (no 言語サーバ)`);
-        }
-
-        editor.hide();
-    } else {
-        console.warn(`No 言語サーバ configuration for ${languageId}, skipping reference extraction.`);
-    }
-    return result;
-}
-
-/**
- * 関係を抽出する
- * @param wsPath        ワークスペースのパス
- * @param doc           ドキュメント
- * @param target        対象シンボル
- * @param symbol_dic    シンボル辞書
- * @param config        言語サーバ設定
- * @returns 参照リスト
- */
-async function extractReferences(wsPath: string, doc: vscode.TextDocument,
-    target: SYMBOL.SymbolModel, symbol_dic: Record<string, codeSymbols.Dictionary>,
-    config: ls.Config
-): Promise<Reference[]> {
-    const result: Reference[] = [];
-    console.log(`${config.name}: Symbol details - ${target.kind} ${target.name} is ${target.path}:${target.startLine},${target.startCharacter}-${target.endLine},${target.endCharacter}`);
-    try {
-        // 言語サーバの準備確認
-        const isReady = await ls.ensureReady(doc, config);
-        if (isReady) {
-        
+        // 関係を抽出する
+        try {
             // リトライ付きで参照取得
-            const pos = new vscode.Position(target.startLine, target.startCharacter);
-            const locations = await ls.getReferenceWithRetry(doc.uri, pos, config, Infinity);
+            const pos = new vscode.Position(symbol.startLine, symbol.startCharacter);
+            const locations = await extractWithRetry(uri, pos, config, Infinity);
             const references: Reference[] = [];
             console.log(`${config.name}: Processing ${locations.length} found references`);
             for (const location of locations) {
@@ -100,7 +49,7 @@ async function extractReferences(wsPath: string, doc: vscode.TextDocument,
                 // 参照先パスが別のファイルで
                 const to_path = location.uri.fsPath.substring(wsPath.length + 1);
                 console.log(`${config.name}: Processing reference at ${to_path}:${location.range.start.line}`);
-                if (to_path !== target.path) {
+                if (to_path !== symbol.path) {
                     console.log(`${config.name}: Cross-file reference to ${to_path}`);
 
                     // 参照先シンボルが在れば
@@ -113,7 +62,7 @@ async function extractReferences(wsPath: string, doc: vscode.TextDocument,
                             // 参照を追加
                             references.push({
                                 id: randomUUID(),
-                                from: { id: target.id,    path: target.path, startLine: target.startLine},
+                                from: { id: symbol.id,    path: symbol.path, startLine: symbol.startLine},
                                 to:   { id: to_symbol.id, path: to_path,     startLine: location.range.start.line}
                             });
                         } else {
@@ -127,20 +76,62 @@ async function extractReferences(wsPath: string, doc: vscode.TextDocument,
                 }
             }
             
-            console.log(`${config.name}: Extracted ${references.length} references for symbol ${target.id}`);
+            console.log(`${config.name}: Extracted ${references.length} references for symbol ${symbol.id}`);
             result.push(...references);
-        } else {
-            // 準備が完了していなくても処理を続行（ベストエフォート）
-            console.warn(`${config.name}: Proceeding with potentially unready 言語サーバ for ${target.path}`);
+        } catch (error) {
+            console.error(`${config.name}: Failed to extract references for ${symbol.path}:${symbol.startLine}`, error);
         }
-    } catch (error) {
-        console.error(`${config.name}: Failed to extract references for ${target.path}:${target.startLine}`, error);
+        
+        // 言語サーバ負荷軽減のため少し待つ
+        await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    console.log(`${root.path}: successful, ${result.length} references found`);
+
+    return result;
+}
+
+/**
+ * リトライ機能付き参照抽出
+ * @param uri       ファイルURI
+ * @param start     シンボル開始位置
+ * @param config    言語サーバ設定
+ * @param retries   リトライ回数
+ * @returns 参照リスト
+ */
+async function extractWithRetry(uri: vscode.Uri, start: vscode.Position, config: lc.Config, retries: number): Promise<vscode.Location[]> {
+    const result: vscode.Location[] = [];
+    console.log(`${config.name}: Attempting to get references for ${uri.fsPath} at line ${start.line}, char ${start.character}`);
+
+    for (let attempt = 0; (attempt < retries) && (result.length <= 0); attempt++) {
+        try {
+            console.log(`${config.name}: Attempt ${attempt + 1}/${retries}...`);
+
+            const locations = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, start) as vscode.Location[];
+            console.log(`${config.name}: executeReferenceProvider returned:`, locations);
+            if (locations && locations.length > 0) {
+                console.log(`${config.name}: Found ${locations.length} references on attempt ${attempt + 1}`);
+                result.push(...locations);
+            } else {
+                if (attempt < retries - 1) {
+                    console.log(`${config.name}: Attempt ${attempt + 1} returned empty, retrying in ${config.retryDelay}ms...`);
+                    await new Promise(resolve => setTimeout(resolve, config.retryDelay));
+                } else {
+                    console.log(`${config.name}: All ${retries} attempts failed to find references`);
+                }
+            }
+        } catch (error) {
+            console.warn(`${config.name}: Reference provider attempt ${attempt + 1} failed:`, error);
+            if (attempt < retries - 1) {
+                await new Promise(resolve => setTimeout(resolve, config.retryDelay));
+            }
+        }
     }
     return result;
 }
 
 function findSymbol(root: SYMBOL.SymbolModel, position: vscode.Position): SYMBOL.SymbolModel | null {
     let found: SYMBOL.SymbolModel | null = null;
+
     codeSymbols.each(root, (symbol) => {
         const range: vscode.Range = new vscode.Range(
             new vscode.Position(symbol.startLine, symbol.startCharacter),
@@ -150,5 +141,6 @@ function findSymbol(root: SYMBOL.SymbolModel, position: vscode.Position): SYMBOL
             found = symbol;
         }
     });
+
     return found;
 }

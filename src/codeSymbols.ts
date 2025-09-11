@@ -16,7 +16,7 @@ export function extract(path: string, document: vscode.TextDocument): Promise<SY
     return new Promise(async (resolve, reject) => {
         try {
             // 書類からシンボルを抽出
-            const docSymbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', document.uri) as vscode.DocumentSymbol[];
+            const docSymbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', document.uri);
             const symbolKinds = Object.values(vscode.SymbolKind) as vscode.SymbolKind[];
             const foundSymbols = docSymbols ? docSymbols.filter(symbol => symbolKinds.includes(symbol.kind)) : undefined;
 

@@ -8,6 +8,8 @@ import * as codeDb from './codeDb';
 import * as codeFiles from './codeFiles';
 import * as codeSymbols from './codeSymbols';
 import * as codeReferences from './codeReferences';
+import * as lc from './languageCongig';
+import * as ls from './languageServer';
 import { GraphVisualization } from './graphVisualization';
 
 let _logs: Logs | null = null;
@@ -71,7 +73,7 @@ export function activate(context: vscode.ExtensionContext) {
 					const upsert_dic: Record<string,codeSymbols.DocumentDictionary> = {};
 					for (const upsert of upserts) {
 						try {
-							const fullname = path.join(root_folder.uri.fsPath, upsert.relative_path);
+							const fullname = path.resolve(path.normalize(root_folder.uri.fsPath), upsert.relative_path.replace(/\//g, path.sep));	// パス正規化を強化
 							const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fullname));
 							const symbol = await codeSymbols.extract(upsert.relative_path, doc);
 							upsert_dic[upsert.relative_path] = new codeSymbols.DocumentDictionary(upsert.updated, upsert.language_id, symbol, doc);
@@ -122,72 +124,83 @@ export function activate(context: vscode.ExtensionContext) {
 					// ファイル更新を追加する
 					Object.values(upsert_dic).forEach(({updated, languageId, symbol: root, document: doc}) => {
 						save_promises.push(new Promise<void>((resolve, reject) => {
+							const config = lc.getConfig(languageId);
+							if (config) {
+								const ls_wait = new ls.LanguageCompleteWaiter();
+								ls_wait.waitComplete(doc, config).then(async (uri) => {
 
-							// 参照先を検索
-							db.reference_toPath(root.path).then(to_refs => {
+									// 参照先を検索
+									db.reference_toPath(root.path).then(to_refs => {
 
-								// シンボルを削除する
-								db.symbol_delete(root.path).then(() => {
+										// シンボルを削除する
+										db.symbol_delete(root.path).then(() => {
 
-									// シンボルをDBにアップサートする
-									db.symbol_save(root, null).then(() => {
-										logs.log(`Saved symbol: ${root.path}`);
+											// シンボルをDBにアップサートする
+											db.symbol_save(root, null).then(() => {
+												logs.log(`Saved symbol: ${root.path}`);
 
-										// 参照関係を抽出
-										codeReferences.extract(root_folder.uri.fsPath, languageId, doc, root, symbol_dic).then(from_refs => {
-											const inserts: Promise<void>[] = [];
-											logs.log(`Extract reference: ${root.path} ${from_refs.length} counts`);
+												// 参照関係を抽出
+												codeReferences.extract(root_folder.uri.fsPath, config, doc.uri, root, symbol_dic).then(from_refs => {
+													const inserts: Promise<void>[] = [];
+													logs.log(`Extract reference: ${root.path} ${from_refs.length} counts`);
 
-											// 参照関係を保存する
-											for (const ref of from_refs) {
-												inserts.push( db.reference_insert(ref) );
-											}
-											// 参照先を更新する
-											for (const ref of to_refs) {
-
-												// シンボルが見つかったら
-												codeSymbols.each(root, (symbol) => {
-													if (symbol.id === ref.to.id) {
-
-														// 参照先を更新する
-														ref.to.path = symbol.path;
-														ref.to.startLine = symbol.startLine;
+													// 参照関係を保存する
+													for (const ref of from_refs) {
+														inserts.push( db.reference_insert(ref) );
 													}
-												});
+													// 参照先を更新する
+													for (const ref of to_refs) {
 
-												// 参照先を保存する
-												inserts.push( db.reference_insert(ref) );
-											}
-											Promise.all(inserts).then(() => {
+														// シンボルが見つかったら
+														codeSymbols.each(root, (symbol) => {
+															if (symbol.id === ref.to.id) {
 
-												// コードファイルを更新または挿入する
-												db.codeFile_upsert(root.path, updated).then(() => {
-													logs.log(`Upserted file: ${root.path}`);
-													updateProgress(progressed++, progress_total);
-													resolve();
+																// 参照先を更新する
+																ref.to.path = symbol.path;
+																ref.to.startLine = symbol.startLine;
+															}
+														});
+
+														// 参照先を保存する
+														inserts.push( db.reference_insert(ref) );
+													}
+													Promise.all(inserts).then(() => {
+
+														// コードファイルを更新または挿入する
+														db.codeFile_upsert(root.path, updated).then(() => {
+															logs.log(`Upserted file: ${root.path}`);
+															updateProgress(progressed++, progress_total);
+															resolve();
+														}).catch(error => {
+															reject(`db.codeFile_upsert(${root.path}): ${error instanceof Error ? error.message : error}`);
+														});
+													}).catch(error => {
+														logs.error(`Failed to insert references for ${root.path}: ${error instanceof Error ? error.message : error}`);
+													});
 												}).catch(error => {
-													reject(`db.codeFile_upsert(${root.path}): ${error instanceof Error ? error.message : error}`);
+													logs.error(`Failed to extract references from ${root.path}: ${error instanceof Error ? error.message : error}`);
 												});
 											}).catch(error => {
-												logs.error(`Failed to insert references for ${root.path}: ${error instanceof Error ? error.message : error}`);
-											});
+												reject(`db.symbol_save(${root.path}): ${error instanceof Error ? error.message : error}`);
+											});											
 										}).catch(error => {
-											logs.error(`Failed to extract references from ${root.path}: ${error instanceof Error ? error.message : error}`);
+											reject(`db.symbol_delete(${root.path}): ${error instanceof Error ? error.message : error}`);
 										});
 									}).catch(error => {
-										reject(`db.symbol_save(${root.path}): ${error instanceof Error ? error.message : error}`);
-									});											
-								}).catch(error => {
-									reject(`db.symbol_delete(${root.path}): ${error instanceof Error ? error.message : error}`);
+										logs.error(`Failed to query references for ${root.path}: ${error instanceof Error ? error.message : error}`);
+									});
+
+									ls_wait.dispose();
+								}).catch((error) => {
+									logs.error(`Language server wait failed for ${root.path}:`, error);
 								});
-							}).catch(error => {
-								logs.error(`Failed to query references for ${root.path}: ${error instanceof Error ? error.message : error}`);
-							});
+							} else {
+								logs.log(`Extract reference: ${root.path} No language server configuration for ${languageId}`);
+							}
 						}));
 					});
 
 					// 保存処理を実行する
-					/*
 					for (const save_promise of save_promises) {
 						try {
 							await save_promise;
@@ -195,12 +208,13 @@ export function activate(context: vscode.ExtensionContext) {
 							logs.trace('save_promises(): ', error);
 						}
 					}
-					*/
+					/*
 					try {
 						await Promise.all(save_promises);
 					} catch (error) {
 						logs.trace('save_promises(): ', error);
 					}
+					*/
 					logs.log(`Upserted ${upserts.length} files, no changed ${nochanges.length} files, removed ${removes.length} files`);
 
 					// DBを破棄する
