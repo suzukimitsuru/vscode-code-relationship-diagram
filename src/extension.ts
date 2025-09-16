@@ -25,15 +25,19 @@ export function activate(context: vscode.ExtensionContext) {
 	const arch = process.arch;          // 'x64' / 'arm64'
 	logs.log(`extension is now active! Node.js:${process.version}, VSCode:${vscode.version}, Platform:${platform}-${arch}`);
 	const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
+	statusBarItem.show();
+	statusBarItem.text = short_name;
+	statusBarItem.command = 'vscode-code-relationship-diagram.showDiagram';
+	statusBarItem.tooltip = 'Show diagram';
 
 	// 初期化するコマンドの登録
 	const initializeDisposable = vscode.commands.registerCommand('vscode-code-relationship-diagram.initialize', async () => {
 
 		// 経過の初期表示
 		statusBarItem.show();
-		const updateProgress = (processed: number, total: number) => {
+		const updateProgress = (processed: number, total: number, message: string = '') => {
 			const percentage = total > 0 ? ((processed / total) * 100).toFixed(2) : "0.00";
-			statusBarItem.text = `$(sync~spin) ${short_name}: ${processed}/${total} ${percentage}%`;
+			statusBarItem.text = `$(sync~spin) ${short_name}: ${processed}/${total} ${percentage}% ${message}`;
 		};
 
 		// ワークスペースが在り、ファイルの関連付けのパターンが在ったら
@@ -51,14 +55,16 @@ export function activate(context: vscode.ExtensionContext) {
 					let progress_total = 0;
 					let progressed = 0;
 					updateProgress(progressed, progress_total);
+					const last_phase = 7;
 
 					// コードファイルを列挙する
 					const files: codeFiles.File[] = [];
 					const patterns = codeFiles.list(root_folder.uri.fsPath, associations, (file: codeFiles.File) => {
 						files.push(file);
-						logs.log(`Listed file: ${file.relative_path}`);
+						logs.log(`1/${last_phase} Listed file: ${file.relative_path}`);
 						updateProgress(progressed, progress_total++);
 					});
+					logs.log(`Listed file: ${files.length} files`);
 
 					// コードファイルをパスでソートする
 					const sorted = files.sort((a, b) => a.relative_path.localeCompare(b.relative_path));
@@ -73,34 +79,33 @@ export function activate(context: vscode.ExtensionContext) {
 					const upsert_dic: Record<string,codeSymbols.DocumentDictionary> = {};
 					for (const upsert of upserts) {
 						try {
-							const fullname = path.resolve(path.normalize(root_folder.uri.fsPath), upsert.relative_path.replace(/\//g, path.sep));	// パス正規化を強化
-							const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fullname));
+							const doc = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(root_folder.uri, upsert.relative_path));
 							const symbol = await codeSymbols.extract(upsert.relative_path, doc);
 							upsert_dic[upsert.relative_path] = new codeSymbols.DocumentDictionary(upsert.updated, upsert.language_id, symbol, doc);
 							symbol_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, upsert.language_id, symbol);
-							logs.log(`Extructed symbol: ${upsert.relative_path}`);
+							logs.log(`2/${last_phase} Extructed symbol: ${upsert.relative_path}`);
 							updateProgress(progressed++, progress_total);
 						} catch (error) {
-							logs.error(`Failed to open document ${upsert.relative_path}: `, error);
+							logs.error(`2/${last_phase} Failed to open document ${upsert.relative_path}: `, error);
 						}
 					}
 					progress_total += Object.keys(upsert_dic).length;
 					logs.log(`Extructed symbols: ${Object.keys(upsert_dic).length} files`);
 
-					// 変更のないファイルを追加する
+					// 変更のないファイルのシンボルを読み込む
 					for (const nochange of nochanges) {
 						try {
 							const symbols = await db.symbol_load(nochange.relative_path);
 							for (const symbol of symbols) {
 								symbol_dic[symbol.path] = new codeSymbols.Dictionary(nochange.updated, nochange.language_id, symbol);
-								logs.log(`Not changed: ${symbol.path}`);
+								logs.log(`3/${last_phase} Not changed: ${symbol.path}`);
 								updateProgress(progressed++, progress_total);
 							}
 						} catch (error) {
-							logs.error(`Failed to load symbols for ${nochange.relative_path}: `, error);
+							logs.error(`3/${last_phase} Failed to load symbols for ${nochange.relative_path}: `, error);
 						}
 					}										
-					logs.log(`Symbols ${Object.keys(symbol_dic).length} files`);
+					logs.log(`Not changed symbols ${nochanges.length} files`);
 
 					const save_promises: Promise<void>[] = [];
 
@@ -109,24 +114,28 @@ export function activate(context: vscode.ExtensionContext) {
 						save_promises.push(new Promise<void>((resolve, reject) => {
 							db.symbol_delete(remove).then(() => {
 								db.codeFile_delete(remove).then(() => {
-									logs.log(`Removed file: ${remove}`);
+									logs.log(`4/${last_phase} Removed file: ${remove}`);
 									updateProgress(progressed++, progress_total);
 									resolve();
 								}).catch(error => {
-									reject(`db.codeFile_delete(${remove}): ${error instanceof Error ? error.message : error}`);
+									reject(`4/${last_phase} db.codeFile_delete(${remove}): ${error instanceof Error ? error.message : error}`);
 								});
 							}).catch(error => {
-								reject(`db.symbol_delete(${remove}): ${error instanceof Error ? error.message : error}`);
+								reject(`4/${last_phase} db.symbol_delete(${remove}): ${error instanceof Error ? error.message : error}`);
 							});
 						}));
 					}
 
 					// ファイル更新を追加する
 					Object.values(upsert_dic).forEach(({updated, languageId, symbol: root, document: doc}) => {
+						let ls_wait: ls.LanguageCompleteWaiter | null = null;
 						save_promises.push(new Promise<void>((resolve, reject) => {
+
+							// 言語サーバーの補完が完了するまで待つ
 							const config = lc.getConfig(languageId);
 							if (config) {
-								const ls_wait = new ls.LanguageCompleteWaiter();
+								updateProgress(progressed, progress_total, `Waiting language server: ${root.path}`);
+								ls_wait = new ls.LanguageCompleteWaiter();
 								ls_wait.waitComplete(doc, config).then(async (uri) => {
 
 									// 参照先を検索
@@ -137,12 +146,13 @@ export function activate(context: vscode.ExtensionContext) {
 
 											// シンボルをDBにアップサートする
 											db.symbol_save(root, null).then(() => {
-												logs.log(`Saved symbol: ${root.path}`);
+												logs.log(`5/${last_phase} Saved symbol: ${root.path}`);
 
 												// 参照関係を抽出
-												codeReferences.extract(root_folder.uri.fsPath, config, doc.uri, root, symbol_dic).then(from_refs => {
+												updateProgress(progressed, progress_total, `Extracting references: ${root.path}`);
+												codeReferences.extract(root_folder.uri.fsPath, config, doc.uri, root, symbol_dic, 60).then(from_refs => {
 													const inserts: Promise<void>[] = [];
-													logs.log(`Extract reference: ${root.path} ${from_refs.length} counts`);
+													logs.log(`6/${last_phase} Extract reference: ${root.path} ${from_refs.length} counts`);
 
 													// 参照関係を保存する
 													for (const ref of from_refs) {
@@ -151,13 +161,10 @@ export function activate(context: vscode.ExtensionContext) {
 													// 参照先を更新する
 													for (const ref of to_refs) {
 
-														// シンボルが見つかったら
+														// シンボルが見つかったら、参照先を更新する
 														codeSymbols.each(root, (symbol) => {
 															if (symbol.id === ref.to.id) {
-
-																// 参照先を更新する
-																ref.to.path = symbol.path;
-																ref.to.startLine = symbol.startLine;
+																ref.to.update(symbol.path, symbol.startLine);
 															}
 														});
 
@@ -168,34 +175,37 @@ export function activate(context: vscode.ExtensionContext) {
 
 														// コードファイルを更新または挿入する
 														db.codeFile_upsert(root.path, updated).then(() => {
-															logs.log(`Upserted file: ${root.path}`);
+															logs.log(`7/${last_phase} Upserted file: ${root.path}`);
 															updateProgress(progressed++, progress_total);
 															resolve();
 														}).catch(error => {
-															reject(`db.codeFile_upsert(${root.path}): ${error instanceof Error ? error.message : error}`);
+															reject(`7/${last_phase} db.codeFile_upsert(${root.path}): ${error instanceof Error ? error.message : error}`);
 														});
 													}).catch(error => {
-														logs.error(`Failed to insert references for ${root.path}: ${error instanceof Error ? error.message : error}`);
+														reject(`7/${last_phase} Failed to insert references for ${root.path}: ${error instanceof Error ? error.message : error}`);
 													});
 												}).catch(error => {
-													logs.error(`Failed to extract references from ${root.path}: ${error instanceof Error ? error.message : error}`);
+													reject(`6/${last_phase} Failed to extract references from ${root.path}: ${error instanceof Error ? error.message : error}`);
 												});
 											}).catch(error => {
-												reject(`db.symbol_save(${root.path}): ${error instanceof Error ? error.message : error}`);
+												reject(`5/${last_phase} db.symbol_save(${root.path}): ${error instanceof Error ? error.message : error}`);
 											});											
 										}).catch(error => {
-											reject(`db.symbol_delete(${root.path}): ${error instanceof Error ? error.message : error}`);
+											reject(`5/${last_phase} db.symbol_delete(${root.path}): ${error instanceof Error ? error.message : error}`);
 										});
 									}).catch(error => {
-										logs.error(`Failed to query references for ${root.path}: ${error instanceof Error ? error.message : error}`);
+										reject(`5/${last_phase} Failed to query references for ${root.path}: ${error instanceof Error ? error.message : error}`);
 									});
-
-									ls_wait.dispose();
 								}).catch((error) => {
-									logs.error(`Language server wait failed for ${root.path}:`, error);
+									reject(`5/${last_phase} Language server wait failed for ${root.path}: ${error instanceof Error ? error.message : error}`);
 								});
 							} else {
-								logs.log(`Extract reference: ${root.path} No language server configuration for ${languageId}`);
+								reject(`5/${last_phase} Extract reference: ${root.path} No language server configuration for ${languageId}`);
+							}
+						}).finally(() => {
+							// リソースのクリーンアップを保証
+							if (ls_wait) {
+								ls_wait.dispose();
 							}
 						}));
 					});
@@ -205,14 +215,14 @@ export function activate(context: vscode.ExtensionContext) {
 						try {
 							await save_promise;
 						} catch (error) {
-							logs.trace('save_promises(): ', error);
+							logs.error('', error);
 						}
 					}
 					/*
 					try {
 						await Promise.all(save_promises);
 					} catch (error) {
-						logs.trace('save_promises(): ', error);
+						logs.error('', error);
 					}
 					*/
 					logs.log(`Upserted ${upserts.length} files, no changed ${nochanges.length} files, removed ${removes.length} files`);
@@ -233,12 +243,12 @@ export function activate(context: vscode.ExtensionContext) {
 				} catch (error) {
 					statusBarItem.text = `$(error) ${short_name}`;
 					setTimeout(() => statusBarItem.dispose(), 3000);
-					logs.trace(`codeFile.list(${root_folder.uri.fsPath}): `, error);
+					logs.error(`codeFile.list(${root_folder.uri.fsPath}): `, error);
 				}
 			} catch (error) {
 				statusBarItem.text = `$(error) ${short_name}`;
 				setTimeout(() => statusBarItem.dispose(), 3000);
-				logs.trace(`db.table_create(${db_file}): `, error);
+				logs.error(`db.table_create(${db_file}): `, error);
 			}
 		} else {
 			statusBarItem.text = `$(error) ${short_name}`;
@@ -287,10 +297,15 @@ export function activate(context: vscode.ExtensionContext) {
 					
 					logs.log(`Found ${files.length} code files in database`);
 					
+					// 全てのシンボルを読み込み
 					for (const fileRow of files) {
-						const symbols = await db.symbol_load(fileRow.relative_path);
-						allSymbols.push(...symbols);
-						logs.log(`Loaded ${symbols.length} symbols from ${fileRow.relative_path}`);
+						const roots = await db.symbol_load(fileRow.relative_path);
+						for (const root of roots) {
+							codeSymbols.each(root, (symbol) => {
+								allSymbols.push(symbol);
+							}, true);
+						}
+						logs.log(`Loaded ${roots.length} symbols from ${fileRow.relative_path}`);
 					}
 					logs.log(`Total symbols loaded: ${allSymbols.length}`);
 					
@@ -307,7 +322,7 @@ export function activate(context: vscode.ExtensionContext) {
 					logs.log(`Loaded ${references.length} symbol references`);
 					
 					// グラフを表示
-					const graphViz = new GraphVisualization(context, logs);
+					const graphViz = new GraphVisualization(context, root_folder, logs);
 					logs.log('GraphVisualization instance created');
 					
 					await graphViz.showDiagram(allSymbols, references);

@@ -45,62 +45,77 @@ export class Db extends vscode.Disposable {
      */
     public table_create(): Promise<void> {
         return new Promise<void>((resolve, reject) => {
-            // コードファイルテーブル
-            this._conn.prepare(`
-                CREATE TABLE IF NOT EXISTS table_files (
+            const sqls = [
+                // コードファイル
+                `CREATE TABLE IF NOT EXISTS table_files (
                     relative_path TEXT PRIMARY KEY,
                     updated_at TIMESTAMP
-                );
-            `,  // PostgreSQL, MySQL: 'id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY'
-            (err: Error | null) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    // シンボルテーブル
-                    this._conn.prepare(`
-                        CREATE TABLE IF NOT EXISTS table_symbols (
-                            id TEXT PRIMARY KEY,
-                            parent_id TEXT,
-                            name TEXT,
-                            kind INTEGER,
-                            path TEXT,
-                            start_line INTEGER,
-                            start_character INTEGER,
-                            end_line INTEGER,
-                            end_character INTEGER,
-                            update_id TEXT,
-                            pos_x REAL,
-                            pos_y REAL
-                        )
-                    `,  // PostgreSQL, MySQL: 'id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY'
-                    (err: Error | null) => {
-                        if (err) {
-                            reject(err);
-                        } else {
-                            // シンボル参照関係テーブル
-                            this._conn.prepare(`
-                                CREATE TABLE IF NOT EXISTS table_references (
-                                    id TEXT PRIMARY KEY,
-                                    from_id TEXT,
-                                    from_path TEXT,
-                                    from_line INTEGER,
-                                    to_id TEXT,
-                                    to_path TEXT,
-                                    to_line INTEGER,
-                                    FOREIGN KEY (from_id) REFERENCES table_symbols(id),
-                                    FOREIGN KEY (to_id) REFERENCES table_symbols(id)
-                                )
-                            `, (err: Error | null) => {
-                                if (err) {
-                                    reject(err);
-                                } else {
-                                    resolve();
-                                }
-                            }).run();
+                );`,
+                'CREATE INDEX IF NOT EXISTS idx_files_updated_at ON table_files(updated_at);',
+
+                // シンボル
+                `CREATE TABLE IF NOT EXISTS table_symbols (
+                    id TEXT PRIMARY KEY,
+                    parent_id TEXT,
+                    name TEXT,
+                    kind INTEGER,
+                    path TEXT,
+                    start_line INTEGER,
+                    start_character INTEGER,
+                    end_line INTEGER,
+                    end_character INTEGER,
+                    update_id TEXT,
+                    pos_x REAL,
+                    pos_y REAL
+                );`,
+                'CREATE INDEX IF NOT EXISTS idx_symbols_parent_id ON table_symbols(parent_id);',
+                'CREATE INDEX IF NOT EXISTS idx_symbols_path ON table_symbols(path);',
+                'CREATE INDEX IF NOT EXISTS idx_symbols_path_line ON table_symbols(path, start_line);',
+
+                // 参照関係
+                `CREATE TABLE IF NOT EXISTS table_references (
+                    id TEXT PRIMARY KEY,
+                    from_id TEXT,
+                    from_path TEXT,
+                    from_line INTEGER,
+                    to_id TEXT,
+                    to_path TEXT,
+                    to_line INTEGER
+                );`,
+                'CREATE INDEX IF NOT EXISTS idx_references_from_id ON table_references(from_id);',
+                'CREATE INDEX IF NOT EXISTS idx_references_to_id ON table_references(to_id);',
+                'CREATE INDEX IF NOT EXISTS idx_references_paths ON table_references(from_path, to_path);',
+
+                // パス検索用（WHERE path = ?）
+                'CREATE INDEX IF NOT EXISTS idx_symbols_path_search ON table_symbols(path)',
+
+                // 範囲検索用（WHERE start_line BETWEEN ? AND ?）
+                'CREATE INDEX IF NOT EXISTS idx_symbols_line_range ON table_symbols(start_line, end_line)',
+
+                // 結合用（JOIN ON from_id = id）
+                'CREATE INDEX IF NOT EXISTS idx_references_join_from ON table_references(from_id)',
+                'CREATE INDEX IF NOT EXISTS idx_references_join_to ON table_references(to_id)',
+
+                // ソート用（ORDER BY updated_at）
+                'CREATE INDEX IF NOT EXISTS idx_files_sort_updated ON table_files(updated_at DESC)',
+
+                // 複合条件用
+                'CREATE INDEX IF NOT EXISTS idx_symbols_kind_path ON table_symbols(kind, path)',
+
+                // 統計情報を更新
+                'ANALYZE'
+            ];
+            for (let index = 0; index < sqls.length; index++) {
+                this._conn.prepare(sqls[index], (err: Error | null) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        if (index === sqls.length - 1) {
+                            resolve();
                         }
-                    }).run();
-                }
-            }).run();
+                    }
+                }).run();
+            }
         });
     }
  
@@ -135,6 +150,7 @@ export class Db extends vscode.Disposable {
             }
         });
     }
+
     /**
      * @description コードファイルを更新または挿入
      * @param relative_path 更新または挿入するコードファイルの相対パス
@@ -311,9 +327,16 @@ export class Db extends vscode.Disposable {
     public reference_insert(reference: codeReferences.Reference): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             this._conn.prepare(
-                `INSERT OR REPLACE INTO table_references 
-                (id, from_id, from_path, from_line, to_id, to_path, to_line) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)`
+                `INSERT INTO table_references
+                (id, from_id, from_path, from_line, to_id, to_path, to_line)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    from_id = excluded.from_id,
+                    from_path = excluded.from_path,
+                    from_line = excluded.from_line,
+                    to_id = excluded.to_id,
+                    to_path = excluded.to_path,
+                    to_line = excluded.to_line`
             ).run(
                 reference.id,
                 reference.from.id,
@@ -333,26 +356,6 @@ export class Db extends vscode.Disposable {
         });
     }
 
-    private _reference_new(
-        id: string,
-        fromId: string, fromPath: string, fromLine: number,
-        toId: string, toPath: string, toLine: number
-    ): codeReferences.Reference {
-        return {
-            id: id,
-            from: {
-                id: fromId,
-                path: fromPath,
-                startLine: fromLine
-            },
-            to: {
-                id: toId,
-                path: toPath,
-                startLine: toLine
-            },
-        };
-    }
-
     /**
      * @description 参照の全てを読み込み
      * @returns 参照の配列
@@ -365,10 +368,9 @@ export class Db extends vscode.Disposable {
                         reject(err);
                     } else {
                         const references: codeReferences.Reference[] = rows.map(row => 
-                            this._reference_new(
-                                row.id,
-                                row.from_id, row.from_path, row.from_line,
-                                row.to_id, row.to_path, row.to_line
+                            new codeReferences.Reference(row.id,
+                                new codeReferences.Symbol(row.from_id, row.from_path, row.from_line),
+                                new codeReferences.Symbol(row.to_id, row.to_path, row.to_line)
                         ));
                         resolve(references);
                     }
@@ -392,10 +394,9 @@ export class Db extends vscode.Disposable {
                         reject(err);
                     } else {
                         const references: codeReferences.Reference[] = rows.map(row => 
-                            this._reference_new(
-                                row.id,
-                                row.from_id, row.from_path, row.from_line,
-                                row.to_id, row.to_path, row.to_line
+                            new codeReferences.Reference(row.id,
+                                new codeReferences.Symbol(row.from_id, row.from_path, row.from_line),
+                                new codeReferences.Symbol(row.to_id, row.to_path, row.to_line)
                         ));
                         resolve(references);
                     }

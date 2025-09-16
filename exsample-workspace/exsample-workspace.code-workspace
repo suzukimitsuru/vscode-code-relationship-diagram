@@ -15,7 +15,9 @@
     "C_Cpp.loggingLevel": "Debug",
     "C_Cpp.workspaceParsingPriority": "highest",
     "files.associations": {
-      "src/**/*.(c|h)": "c"
+      "src/**/*.(c|h)": "c",
+      "string": "c",
+      "deque": "c"
     }
   },
   "extensions": {

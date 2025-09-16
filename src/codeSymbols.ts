@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import * as SYMBOL from './symbol';
 import { randomUUID } from 'crypto';
 
@@ -12,7 +13,7 @@ export class DocumentDictionary extends Dictionary {
 }
 
 
-export function extract(path: string, document: vscode.TextDocument): Promise<SYMBOL.SymbolModel> {
+export function extract(filepath: string, document: vscode.TextDocument): Promise<SYMBOL.SymbolModel> {
     return new Promise(async (resolve, reject) => {
         try {
             // 書類からシンボルを抽出
@@ -22,14 +23,13 @@ export function extract(path: string, document: vscode.TextDocument): Promise<SY
 
             // シンボル階層を構築
             const id = randomUUID();
-            const fileName = path.split('/').pop() || path;
-            const rootSymbol = new SYMBOL.SymbolModel(id, fileName, vscode.SymbolKind.File, path,
+            const rootSymbol = new SYMBOL.SymbolModel(id, path.basename(filepath), vscode.SymbolKind.File, filepath,
                 0, 0, document.lineCount ? document.lineCount - 1 : 0, 0);
             const sumSymbol = (found: vscode.DocumentSymbol, parent: SYMBOL.SymbolModel) => {
                 // selectionRangeが利用可能な場合はそれを使用（より正確なシンボル名の位置）
                 const id = randomUUID();
                 const symbolRange = found.selectionRange || found.range;
-                const branch = new SYMBOL.SymbolModel(id, found.name, found.kind, path,
+                const branch = new SYMBOL.SymbolModel(id, found.name, found.kind, filepath,
                     symbolRange.start.line, symbolRange.start.character,
                     found.range.end.line, found.range.end.character,
                     parent.id);
@@ -44,11 +44,11 @@ export function extract(path: string, document: vscode.TextDocument): Promise<SY
     });
 }
 
-export function each(symbol: SYMBOL.SymbolModel, callback: (symbol: SYMBOL.SymbolModel) => void): void {
-    if (symbol.kind !== vscode.SymbolKind.File) {
+export function each(symbol: SYMBOL.SymbolModel, callback: (symbol: SYMBOL.SymbolModel) => void, inFile: boolean = false): void {
+     if ((symbol.kind !== vscode.SymbolKind.File) || inFile) {
         callback(symbol);
     }
     for (const child of symbol.children) {
-        each(child, callback);
+        each(child, callback, inFile);
     }
 }

@@ -15,7 +15,7 @@ export class LanguageCompleteWaiter {
 
         // 言語サーバが準備完了なら
         if (
-            await waitReady(doc.uri)             &&  // 言語サーバ準備完了
+            await waitReady(doc.uri, 30 * 1000)  &&  // 言語サーバ準備完了
             await waitExtensionIsActive(config)  &&  // 言語サーバ拡張機能が有効
             await indexingIsComplete()               //　インデックス完了
         ) {
@@ -41,10 +41,9 @@ export class LanguageCompleteWaiter {
  * @param uri       ファイルURI
  * @returns 準備完了フラグ
  */
-export async function waitReady(uri: vscode.Uri): Promise<boolean> {
+async function waitReady(uri: vscode.Uri, maxWait: number): Promise<boolean> {
     let result = false;
     
-    const maxWait = 30000; // 30秒
     const checkInterval = 1000; // 1秒
     for (let elapsed = 0; (elapsed < maxWait) && !result; elapsed += checkInterval) {
         try {
@@ -73,7 +72,7 @@ export async function waitReady(uri: vscode.Uri): Promise<boolean> {
  * @param config 言語サーバ設定
  * @returns 有効フラグ
  */
-export async function waitExtensionIsActive(config: lc.Config): Promise<boolean> {
+async function waitExtensionIsActive(config: lc.Config): Promise<boolean> {
     let result = false;
 
     // 拡張機能が在ったら
@@ -112,7 +111,7 @@ export async function waitExtensionIsActive(config: lc.Config): Promise<boolean>
  * インデックス完了の検出
  * @returns 完了フラグ
  */
-export async function indexingIsComplete(): Promise<boolean> {
+async function indexingIsComplete(): Promise<boolean> {
     // プロジェクト全体のシンボル検索で完了度をテスト
     try {
         const workspaceSymbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(

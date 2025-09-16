@@ -7,7 +7,7 @@ suite('codeFiles Test Suite', () => {
 
 	test('list test', async () => {
 		const files: codeFiles.File[] = [];
-		codeFiles.list(path.join(__dirname, '../../src/test/codeFiles.test',), 
+		codeFiles.list(path.join(__dirname, '..', '..', 'src', 'test', 'codeFiles.test',), 
 			{ "**/*.rs": "rust", "**/*.go": "golang" }, (file: codeFiles.File) => { files.push(file);});
 		
 		assert.strictEqual(files.length, 2, 'files.length should be 2');
