@@ -22,30 +22,35 @@ export class Symbol {
     }
 }
 
-export class Reference {
+/** 関係(参照->定義) */
+export class Relationship {
+    /** 識別 */
     public readonly id: string;
-    public readonly from: Symbol;
-    public readonly to: Symbol;
-    public constructor(id: string, from: Symbol, to: Symbol) {
+    /** 参照 */
+    public readonly reference: Symbol;
+    /** 定義 */
+    public readonly define: Symbol;
+    /** コンストラクタ */
+    public constructor(id: string, reference: Symbol, define: Symbol) {
         this.id = id;
-        this.from = from;
-        this.to = to;
+        this.reference = reference;
+        this.define = define;
     }
 }
 
 /**
  * 関係を抽出する
- * @param wsPath        ワークスペースのパス
+ * @param wsFolder      ワークスペースフォルダ
  * @param config        言語サーバ設定
  * @param uri           ファイルURI
  * @param root          ルートシンボル
  * @param symbol_dic    シンボル辞書
- * @returns 参照リスト
+ * @returns 関係配列
  */
-export async function extract(wsPath: string, config: lc.Config, uri: vscode.Uri,
+export async function extract(wsFolder: string, config: lc.Config, uri: vscode.Uri,
     root: SYMBOL.SymbolModel, symbol_dic: Record<string,codeSymbols.Dictionary>, retries: number
-): Promise<Reference[]> {
-    const result: Reference[] = [];
+): Promise<Relationship[]> {
+    const result: Relationship[] = [];
     
     const symbols: SYMBOL.SymbolModel[] = [];
     codeSymbols.each(root, (symbol) => {
@@ -55,67 +60,67 @@ export async function extract(wsPath: string, config: lc.Config, uri: vscode.Uri
 
         // 関係を抽出する
         try {
-            // リトライ付きで参照取得
+            // リトライ付きで関係取得
             const pos = new vscode.Position(symbol.startLine, symbol.startCharacter);
             const locations = await extractWithRetry(uri, pos, config, retries, symbol.name);
-            const references: Reference[] = [];
-            console.log(`${config.name} ${symbol.name}: Processing ${locations.length} found references`);
+            const relationships: Relationship[] = [];
+            console.log(`${config.name} ${symbol.name}: Processing ${locations.length} found relationships`);
             for (const location of locations) {
 
-                // 参照先パスが別のファイルで
-                const to_path = location.uri.fsPath.substring(wsPath.length + 1);
-                console.log(`${config.name} ${symbol.name}: Processing reference at ${to_path}:${location.range.start.line}`);
-                if (to_path !== symbol.path) {
-                    console.log(`${config.name} ${symbol.name}: Cross-file reference to ${to_path}`);
+                // 参照パスが別のファイルで
+                const reference_path = location.uri.fsPath.substring(wsFolder.length + 1);
+                console.log(`${config.name} ${symbol.name}: Processing relationship at ${reference_path}:${location.range.start.line}`);
+                if (reference_path !== symbol.path) {
+                    console.log(`${config.name} ${symbol.name}: Cross-file relationship referrence ${reference_path}`);
 
-                    // 参照先シンボルが在れば
-                    const to_root = symbol_dic[to_path]?.symbol;
-                    if (to_root) {
-                        const to_symbol = findSymbol(to_root, location.range.start);
-                        if (to_symbol) {
-                            console.log(`${config.name} ${symbol.name}: Found target symbol ${to_symbol.id}`);
+                    // 参照シンボルが在れば
+                    const reference_root = symbol_dic[reference_path]?.symbol;
+                    if (reference_root) {
+                        const reference_symbol = findSymbol(reference_root, location.range.start);
+                        if (reference_symbol) {
+                            console.log(`${config.name} ${symbol.name}: Found source symbol ${reference_symbol.id}`);
 
-                            // 参照を追加
-                            references.push(new Reference(randomUUID(),
-                                new Symbol(symbol.id, symbol.path, symbol.startLine),
-                                new Symbol(to_symbol.id, to_path, location.range.start.line)
+                            // 関係を追加
+                            relationships.push(new Relationship(randomUUID(),
+                                new Symbol(reference_symbol.id, reference_path, location.range.start.line),
+                                new Symbol(symbol.id, symbol.path, symbol.startLine)
                             ));
                         } else {
-                            console.warn(`${config.name} ${symbol.name}: Could not find target symbol at ${to_path}:${location.range.start.line}`);
+                            console.warn(`${config.name} ${symbol.name}: Could not find target symbol at ${reference_path}:${location.range.start.line}`);
                         }
                     } else {
-                        console.warn(`${config.name} ${symbol.name}: No symbol dictionary entry for ${to_path}`);
+                        console.warn(`${config.name} ${symbol.name}: No symbol dictionary entry for ${reference_path}`);
                     }
                 } else {
-                    console.log(`${config.name} ${symbol.name}: Skipping same-file reference`);
+                    console.log(`${config.name} ${symbol.name}: Skipping same-file relationship`);
                 }
             }
             
-            console.log(`${config.name} ${symbol.name}: Extracted ${references.length} references for symbol ${symbol.id}`);
-            result.push(...references);
+            console.log(`${config.name} ${symbol.name}: Extracted ${relationships.length} relationships for symbol ${symbol.id}`);
+            result.push(...relationships);
         } catch (error) {
-            console.error(`${config.name} ${symbol.name}: Failed to extract references for ${symbol.path}:${symbol.startLine}`, error);
+            console.error(`${config.name} ${symbol.name}: Failed to extract relationships for ${symbol.path}:${symbol.startLine}`, error);
         }
         
         // 言語サーバ負荷軽減のため少し待つ
         await new Promise(resolve => setTimeout(resolve, 50));
     }
-    console.log(`${root.path}: successful, ${result.length} references found`);
+    console.log(`${root.path}: successful, ${result.length} relationships found`);
 
     return result;
 }
 
 /**
- * リトライ機能付き参照抽出
+ * リトライ機能付き関係抽出
  * @param uri       ファイルURI
  * @param start     シンボル開始位置
  * @param config    言語サーバ設定
  * @param retries   リトライ回数
- * @returns 参照リスト
+ * @returns 関係リスト
  */
 async function extractWithRetry(uri: vscode.Uri, start: vscode.Position, config: lc.Config, retries: number, symbolName: string): Promise<vscode.Location[]> {
     const result: vscode.Location[] = [];
-    console.log(`${config.name}: Attempting to get references for ${path.basename(uri.fsPath)} at line ${start.line}, char ${start.character}`);
+    console.log(`${config.name}: Attempting to get relationships for ${path.basename(uri.fsPath)} at line ${start.line}, char ${start.character}`);
 
     for (let attempt = 0; (attempt < retries) && (result.length <= 0); attempt++) {
         try {
@@ -124,18 +129,18 @@ async function extractWithRetry(uri: vscode.Uri, start: vscode.Position, config:
             const locations = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, start) as vscode.Location[];
             console.log(`${config.name} ${symbolName}: executeReferenceProvider returned:`, locations);
             if (locations && locations.length > 0) {
-                console.log(`${config.name} ${symbolName}: Found ${locations.length} references on attempt ${attempt + 1}`);
+                console.log(`${config.name} ${symbolName}: Found ${locations.length} relationships on attempt ${attempt + 1}`);
                 result.push(...locations);
             } else {
                 if (attempt < retries - 1) {
                     console.log(`${config.name} ${symbolName}: Attempt ${attempt + 1} returned empty, retrying in ${config.retryDelay}ms...`);
                     await new Promise(resolve => setTimeout(resolve, config.retryDelay));
                 } else {
-                    console.log(`${config.name} ${symbolName}: All ${retries} attempts failed to find references`);
+                    console.log(`${config.name} ${symbolName}: All ${retries} attempts failed to find relationships`);
                 }
             }
         } catch (error) {
-            console.warn(`${config.name} ${symbolName}: Reference provider attempt ${attempt + 1} failed:`, error);
+            console.warn(`${config.name} ${symbolName}: Relationship provider attempt ${attempt + 1} failed:`, error);
             if (attempt < retries - 1) {
                 await new Promise(resolve => setTimeout(resolve, config.retryDelay));
             }

@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 int main() {
-    printf("=== C Language Reference Test ===\n\n");
+    printf("=== C Language Relationship Test ===\n\n");
     
     // 数学関数のテスト
     printf("Math Operations:\n");

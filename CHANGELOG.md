@@ -13,6 +13,39 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## 0.1.20 - 2025-09-18
+
+### 0.1.20 - Comprehensive API Terminology Refactoring
+
+- **[Changed] API命名規則の大幅改善**: 「参照関係」から「関係」への用語統一とデータモデルの最適化
+  - `codeReferences.ts` → `codeRelationships.ts` にファイル名変更
+  - `Reference` クラス → `Relationship` クラスに変更
+  - データベーステーブル `table_references` → `table_relationships` に変更
+  - Relationship クラスのプロパティ名を意味に応じて最適化:
+    - `from` → `reference` (参照元)
+    - `to` → `define` (定義先)
+  - データベースカラムも対応して変更:
+    - `from_id, from_path, from_line` → `reference_id, reference_path, reference_line`
+    - `to_id, to_path, to_line` → `define_id, define_path, define_line`
+  - 全メソッド名を統一: `reference_insert()` → `relationship_insert()`, `reference_toPath()` → `relationship_definePath()` など
+  - 変数名も一貫して更新: `from_refs` → `reference_refs`, `to_refs` → `define_refs` など
+
+- **[Enhanced] READMEの使用方法説明を強化**: ワークスペースファイルの設定例を追加
+
+- **[Enhanced] デバッグ出力とログメッセージの改善**: 新しい用語に合わせて統一
+
+- **[Enhanced] コード可読性の向上**: 意味が明確な変数名・メソッド名への統一により開発・保守性が大幅向上
+
+- **[Technical] バージョン管理の改善**
+  - バージョン番号を 0.1.19 → 0.1.20 に更新
+  - 拡張機能初期化ログにバージョン情報を追加
+  - サンプルワークスペースの更新とテストファイルの改善
+  - スクリーンショットの更新
+
+- **[Migration] データベースマイグレーション**
+  - 既存のデータベースは自動的に新しいスキーマに移行されます
+  - APIの変更により、この拡張機能に依存する外部コードがある場合は更新が必要です
+
 ## 0.1.19 - 2025-09-16
 
 ### 0.1.19 - Major UI Enhancement and Export Features

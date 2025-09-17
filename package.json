@@ -3,7 +3,7 @@
   "displayName": "CRD: Code Relationship Diagram",
   "shortName": "CRD",
   "description": "コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "preview": true,
   "publisher": "suzukimitsuru",
   "keywords": [

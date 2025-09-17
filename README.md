@@ -9,6 +9,21 @@
 
 ## Operation
 
+- 0.準備
+  - ワークスペースファイルに`files.associations`を定義し、ワークスペースで開く。
+
+    ``` json
+    {
+
+      "settings": {
+            
+        "files.associations": {
+          "src/**/*.(c|h)": "c"
+        }
+      }
+    }
+    ```
+
 - 1.定義(シンボル)をデータベースに保存する。
   - a) `Ctrl(⌘)+Shift(⇧)+P`キーを押し、コマンドパレットを出力する。
   - b) `CRD: Initialize Code Relationship Diagram`コマンドを選ぶ。

@@ -20,7 +20,7 @@ export class LanguageCompleteWaiter {
             await indexingIsComplete()               //　インデックス完了
         ) {
         } else {
-            console.warn(`Skipping reference extraction for ${config.name} (no 言語サーバ)`);
+            console.warn(`Skipping relationship extraction for ${config.name} (no 言語サーバ)`);
         }
 
         return true;

@@ -7,7 +7,7 @@ import { Logs } from './logs';
 import * as codeDb from './codeDb';
 import * as codeFiles from './codeFiles';
 import * as codeSymbols from './codeSymbols';
-import * as codeReferences from './codeReferences';
+import * as codeRelationships from './codeRelationships';
 import * as lc from './languageCongig';
 import * as ls from './languageServer';
 import { GraphVisualization } from './graphVisualization';
@@ -20,10 +20,11 @@ let _logs: Logs | null = null;
  */
 export function activate(context: vscode.ExtensionContext) {
 	const short_name = context.extension.packageJSON?.shortName || '';
+	const version = context.extension.packageJSON?.version || '';
 	const logs = _logs = new Logs(context.extension.packageJSON?.displayName);
 	const platform = process.platform;  // 'darwin' / 'win32' / 'linux'
 	const arch = process.arch;          // 'x64' / 'arm64'
-	logs.log(`extension is now active! Node.js:${process.version}, VSCode:${vscode.version}, Platform:${platform}-${arch}`);
+	logs.log(`extension is now active! ${version} Node.js:${process.version}, VSCode:${vscode.version}, Platform:${platform}-${arch}`);
 	const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
 	statusBarItem.show();
 	statusBarItem.text = short_name;
@@ -41,11 +42,11 @@ export function activate(context: vscode.ExtensionContext) {
 		};
 
 		// ワークスペースが在り、ファイルの関連付けのパターンが在ったら
-		const workspace_folders = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders : [];
-		const root_folder = selectRootFolder(workspace_folders);
+		const workspace_file = vscode.workspace.workspaceFile;
 		const associations = readConfiguration(vscode.workspace.getConfiguration("files").get<object>("associations"));
-		if (root_folder && (Object.keys(associations).length > 0)) {
-			const db_file = path.join(root_folder.uri.fsPath, '.vscode', 'crd.duckdb');
+		if (workspace_file && (Object.keys(associations).length > 0)) {
+			const workspace_folder = path.dirname(workspace_file.fsPath);
+			const db_file = path.join(workspace_folder, '.vscode', 'crd.duckdb');
 			try {
 				// コード関係図DBを作成する
 				const db = new codeDb.Db(db_file);
@@ -59,7 +60,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 					// コードファイルを列挙する
 					const files: codeFiles.File[] = [];
-					const patterns = codeFiles.list(root_folder.uri.fsPath, associations, (file: codeFiles.File) => {
+					const patterns = codeFiles.list(workspace_folder, associations, (file: codeFiles.File) => {
 						files.push(file);
 						logs.log(`1/${last_phase} Listed file: ${file.relative_path}`);
 						updateProgress(progressed, progress_total++);
@@ -79,7 +80,7 @@ export function activate(context: vscode.ExtensionContext) {
 					const upsert_dic: Record<string,codeSymbols.DocumentDictionary> = {};
 					for (const upsert of upserts) {
 						try {
-							const doc = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(root_folder.uri, upsert.relative_path));
+							const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(workspace_folder, upsert.relative_path)));
 							const symbol = await codeSymbols.extract(upsert.relative_path, doc);
 							upsert_dic[upsert.relative_path] = new codeSymbols.DocumentDictionary(upsert.updated, upsert.language_id, symbol, doc);
 							symbol_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, upsert.language_id, symbol);
@@ -138,38 +139,38 @@ export function activate(context: vscode.ExtensionContext) {
 								ls_wait = new ls.LanguageCompleteWaiter();
 								ls_wait.waitComplete(doc, config).then(async (uri) => {
 
-									// 参照先を検索
-									db.reference_toPath(root.path).then(to_refs => {
+									// 定義を検索
+									db.relationship_definePath(root.path).then(define_rels => {
 
 										// シンボルを削除する
 										db.symbol_delete(root.path).then(() => {
 
-											// シンボルをDBにアップサートする
+											// シンボルをDBに保存する
 											db.symbol_save(root, null).then(() => {
 												logs.log(`5/${last_phase} Saved symbol: ${root.path}`);
 
-												// 参照関係を抽出
-												updateProgress(progressed, progress_total, `Extracting references: ${root.path}`);
-												codeReferences.extract(root_folder.uri.fsPath, config, doc.uri, root, symbol_dic, 60).then(from_refs => {
+												// 関係を抽出
+												updateProgress(progressed, progress_total, `Extracting relationships: ${root.path}`);
+												codeRelationships.extract(workspace_folder, config, doc.uri, root, symbol_dic, 60).then(reference_rels => {
 													const inserts: Promise<void>[] = [];
-													logs.log(`6/${last_phase} Extract reference: ${root.path} ${from_refs.length} counts`);
+													logs.log(`6/${last_phase} Extract relationship: ${root.path} ${reference_rels.length} counts`);
 
-													// 参照関係を保存する
-													for (const ref of from_refs) {
-														inserts.push( db.reference_insert(ref) );
+													// 関係を追加する
+													for (const reference_rel of reference_rels) {
+														inserts.push( db.relationship_insert(reference_rel) );
 													}
-													// 参照先を更新する
-													for (const ref of to_refs) {
+													// 関係の定義を更新する
+													for (const define_rel of define_rels) {
 
-														// シンボルが見つかったら、参照先を更新する
+														// シンボルが見つかったら、定義を更新する
 														codeSymbols.each(root, (symbol) => {
-															if (symbol.id === ref.to.id) {
-																ref.to.update(symbol.path, symbol.startLine);
+															if (symbol.id === define_rel.define.id) {
+																define_rel.define.update(symbol.path, symbol.startLine);
 															}
 														});
 
-														// 参照先を保存する
-														inserts.push( db.reference_insert(ref) );
+														// 関係を追加する
+														inserts.push( db.relationship_insert(define_rel) );
 													}
 													Promise.all(inserts).then(() => {
 
@@ -182,10 +183,10 @@ export function activate(context: vscode.ExtensionContext) {
 															reject(`7/${last_phase} db.codeFile_upsert(${root.path}): ${error instanceof Error ? error.message : error}`);
 														});
 													}).catch(error => {
-														reject(`7/${last_phase} Failed to insert references for ${root.path}: ${error instanceof Error ? error.message : error}`);
+														reject(`7/${last_phase} Failed to insert relationships for ${root.path}: ${error instanceof Error ? error.message : error}`);
 													});
 												}).catch(error => {
-													reject(`6/${last_phase} Failed to extract references from ${root.path}: ${error instanceof Error ? error.message : error}`);
+													reject(`6/${last_phase} Failed to extract relationships from ${root.path}: ${error instanceof Error ? error.message : error}`);
 												});
 											}).catch(error => {
 												reject(`5/${last_phase} db.symbol_save(${root.path}): ${error instanceof Error ? error.message : error}`);
@@ -194,13 +195,13 @@ export function activate(context: vscode.ExtensionContext) {
 											reject(`5/${last_phase} db.symbol_delete(${root.path}): ${error instanceof Error ? error.message : error}`);
 										});
 									}).catch(error => {
-										reject(`5/${last_phase} Failed to query references for ${root.path}: ${error instanceof Error ? error.message : error}`);
+										reject(`5/${last_phase} Failed to query relationships for ${root.path}: ${error instanceof Error ? error.message : error}`);
 									});
 								}).catch((error) => {
 									reject(`5/${last_phase} Language server wait failed for ${root.path}: ${error instanceof Error ? error.message : error}`);
 								});
 							} else {
-								reject(`5/${last_phase} Extract reference: ${root.path} No language server configuration for ${languageId}`);
+								reject(`5/${last_phase} Extract relationship: ${root.path} No language server configuration for ${languageId}`);
 							}
 						}).finally(() => {
 							// リソースのクリーンアップを保証
@@ -241,17 +242,14 @@ export function activate(context: vscode.ExtensionContext) {
 					}, 3000);
 					logs.info(locale('initialize-message'));
 				} catch (error) {
-					statusBarItem.text = `$(error) ${short_name}`;
 					setTimeout(() => statusBarItem.dispose(), 3000);
-					logs.error(`codeFile.list(${root_folder.uri.fsPath}): `, error);
+					logs.error(`codeFile.list(${workspace_folder}): `, error);
 				}
 			} catch (error) {
-				statusBarItem.text = `$(error) ${short_name}`;
 				setTimeout(() => statusBarItem.dispose(), 3000);
 				logs.error(`db.table_create(${db_file}): `, error);
 			}
 		} else {
-			statusBarItem.text = `$(error) ${short_name}`;
 			setTimeout(() => statusBarItem.dispose(), 3000);
 			logs.error(locale('error-no-associations'));
 		}
@@ -261,12 +259,11 @@ export function activate(context: vscode.ExtensionContext) {
 	const showDiagramDisposable = vscode.commands.registerCommand('vscode-code-relationship-diagram.showDiagram', async () => {
 		logs.log('=== SHOWDIAGRAM COMMAND STARTED ===');
 		
-		const workspace_folders = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders : [];
-		const root_folder = selectRootFolder(workspace_folders);
-		logs.log('Root folder selected:', root_folder?.uri.fsPath);
-		
-		if (root_folder) {
-			const db_file = path.join(root_folder.uri.fsPath, '.vscode', 'crd.duckdb');
+		const workspace_file = vscode.workspace.workspaceFile;
+		if (workspace_file) {
+			const workspace_folder = path.dirname(workspace_file.fsPath);
+			const workspace_basename = path.basename(workspace_file.fsPath, path.extname(workspace_file.fsPath));
+			const db_file = path.join(workspace_folder, '.vscode', 'crd.duckdb');
 			logs.log(`Attempting to open database: ${db_file}`);
 			
 			// DBファイルの存在確認
@@ -309,23 +306,23 @@ export function activate(context: vscode.ExtensionContext) {
 					}
 					logs.log(`Total symbols loaded: ${allSymbols.length}`);
 					
-					// シンボル参照関係を読み込み
-					logs.log('Loading symbol references...');
+					// シンボル関係を読み込み
+					logs.log('Loading symbol relationships...');
 					
-					const references = await Promise.race([
-						db.reference_quaryAll(),
+					const relationships = await Promise.race([
+						db.relationship_quaryAll(),
 						new Promise((_, reject) => 
-							setTimeout(() => reject(new Error('References load timeout (10s)')), 10000)
+							setTimeout(() => reject(new Error('Relationships load timeout (10s)')), 10000)
 						)
 					]) as any[];
 					
-					logs.log(`Loaded ${references.length} symbol references`);
+					logs.log(`Loaded ${relationships.length} symbol relationships`);
 					
 					// グラフを表示
-					const graphViz = new GraphVisualization(context, root_folder, logs);
+					const graphViz = new GraphVisualization(context, workspace_folder, workspace_basename + '.crd.html', logs);
 					logs.log('GraphVisualization instance created');
 					
-					await graphViz.showDiagram(allSymbols, references);
+					await graphViz.showDiagram(allSymbols, relationships);
 					logs.log('GraphVisualization.showDiagram completed');
 					
 					db.dispose();
@@ -346,14 +343,6 @@ export function activate(context: vscode.ExtensionContext) {
 // This method is called when your extension is deactivated
 export function deactivate() {
 	_logs?.info('extension is now deactivate!');
-}
-
-function selectRootFolder(folders: readonly vscode.WorkspaceFolder[]): vscode.WorkspaceFolder | null {
-	// フォルダが1つ以上在って
-	return (folders.length > 0)
-		// パスの長さが最小のフォルダのパス名を返す
-		? folders.reduce((min, current) => current.uri.fsPath.length < min.uri.fsPath.length ? current : min)
-		: null;
 }
 
 function readConfiguration(config: object | undefined): object {

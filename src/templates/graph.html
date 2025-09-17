@@ -213,21 +213,21 @@
                     style: {
                         'width': function( ele ) {
                             // 関係の多さに応じて線の太さを調整 (1-10の範囲)
-                            const relationCount = ele.data('relationCount') || 1;
-                            return Math.min(Math.max(relationCount * 0.8, 1), 10);
+                            const relationshipCount = ele.data('relationshipCount') || 1;
+                            return Math.min(Math.max(relationshipCount * 0.8, 1), 10);
                         },
                         'line-color': function( ele ) {
                             // 関係の多さに応じて色の濃さを調整
-                            const relationCount = ele.data('relationCount') || 1;
-                            const intensity = Math.min(relationCount / 10, 1);
+                            const relationshipCount = ele.data('relationshipCount') || 1;
+                            const intensity = Math.min(relationshipCount / 10, 1);
                             const red = Math.floor(71 + (231 - 71) * intensity);
                             const green = Math.floor(144 + (76 - 144) * intensity);
                             const blue = Math.floor(226 + (60 - 226) * intensity);
                             return `rgb(${red}, ${green}, ${blue})`;
                         },
                         'target-arrow-color': function( ele ) {
-                            const relationCount = ele.data('relationCount') || 1;
-                            const intensity = Math.min(relationCount / 10, 1);
+                            const relationshipCount = ele.data('relationshipCount') || 1;
+                            const intensity = Math.min(relationshipCount / 10, 1);
                             const red = Math.floor(71 + (231 - 71) * intensity);
                             const green = Math.floor(144 + (76 - 144) * intensity);
                             const blue = Math.floor(226 + (60 - 226) * intensity);
@@ -236,8 +236,8 @@
                         'target-arrow-shape': 'triangle',
                         'curve-style': 'bezier',
                         'opacity': function( ele ) {
-                            const relationCount = ele.data('relationCount') || 1;
-                            return Math.min(0.6 + relationCount * 0.04, 1.0);
+                            const relationshipCount = ele.data('relationshipCount') || 1;
+                            return Math.min(0.6 + relationshipCount * 0.04, 1.0);
                         }
                     }
                 }
@@ -256,13 +256,13 @@
                 nodeOverlap: 100,
                 idealEdgeLength: function( edge ) {
                     // 関係の多さに応じてエッジ長を調整（最小値を大きく）
-                    const relationCount = edge.data('relationCount') || 1;
-                    return Math.max(250, 450 - relationCount * 15);
+                    const relationshipCount = edge.data('relationshipCount') || 1;
+                    return Math.max(250, 450 - relationshipCount * 15);
                 },
                 edgeElasticity: function( edge ) {
                     // 関係が多いほど強い結合力
-                    const relationCount = edge.data('relationCount') || 1;
-                    return 80 + relationCount * 15;
+                    const relationshipCount = edge.data('relationshipCount') || 1;
+                    return 80 + relationshipCount * 15;
                 },
                 gravity: 25,
                 numIter: 2000,
@@ -320,12 +320,12 @@
                 },
                 nodeOverlap: 100,
                 idealEdgeLength: function( edge ) {
-                    const relationCount = edge.data('relationCount') || 1;
-                    return Math.max(250, 450 - relationCount * 15);
+                    const relationshipCount = edge.data('relationshipCount') || 1;
+                    return Math.max(250, 450 - relationshipCount * 15);
                 },
                 edgeElasticity: function( edge ) {
-                    const relationCount = edge.data('relationCount') || 1;
-                    return 80 + relationCount * 15;
+                    const relationshipCount = edge.data('relationshipCount') || 1;
+                    return 80 + relationshipCount * 15;
                 },
                 gravity: 25,
                 numIter: 2000,
@@ -382,20 +382,20 @@
         // エッジのマウスホバー処理
         cy.on('mouseover', 'edge', function(evt) {
             const edge = evt.target;
-            const relationCount = edge.data('relationCount') || 1;
-            const referenceType = edge.data('referenceType') || 'unknown';
-            const relationDetails = edge.data('relationDetails') || [];
+            const relationshipCount = edge.data('relationshipCount') || 1;
+            const relationshipType = edge.data('relationshipType') || 'unknown';
+            const relationshipDetails = edge.data('relationshipDetails') || [];
             const sourceLabel = cy.getElementById(edge.data('source')).data('label');
             const targetLabel = cy.getElementById(edge.data('target')).data('label');
 
             let tooltipText = ``;
 
             // 詳細情報がある場合は表示 - toSymbolNameでグルーピング
-            if (relationDetails.length > 0) {
+            if (relationshipDetails.length > 0) {
 
                 // toSymbolNameでグルーピング
                 const groupedByTarget = new Map();
-                relationDetails.forEach(detail => {
+                relationshipDetails.forEach(detail => {
                     const targetSymbol = detail.toSymbolName;
                     if (!groupedByTarget.has(targetSymbol)) {
                         groupedByTarget.set(targetSymbol, []);

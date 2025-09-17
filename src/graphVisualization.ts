@@ -3,27 +3,29 @@ import * as path from 'path';
 import * as fs from 'fs';
 import locale from './locale';
 import * as SYMBOL from './symbol';
-import * as codeReferences from './codeReferences';
+import * as codeRelationships from './codeRelationships';
 import { Logs } from './logs';
 
 export class GraphVisualization {
     private panel: vscode.WebviewPanel | null = null;
-    private context: vscode.ExtensionContext;
-    private rootFolder: vscode.WorkspaceFolder;
-    private logs: Logs;
+    private readonly context: vscode.ExtensionContext;
+    private readonly wsFolder: string;
+    private readonly htmlFilename: string;
+    private readonly logs: Logs;
 
-    constructor(context: vscode.ExtensionContext, rootFolder: vscode.WorkspaceFolder, logs: Logs) {
+    constructor(context: vscode.ExtensionContext, wsFolder: string, htmlFilename: string, logs: Logs) {
         this.context = context;
-        this.rootFolder = rootFolder;
+        this.wsFolder = wsFolder;
+        this.htmlFilename = htmlFilename;
         this.logs = logs;
     }
 
-    public async showDiagram(symbols: SYMBOL.SymbolModel[], references: codeReferences.Reference[]) {
+    public async showDiagram(symbols: SYMBOL.SymbolModel[], relationships: codeRelationships.Relationship[]) {
         const startTime = performance.now();
         
         try {
             this.logs.log('[0.000s][  0.00%] Starting code relationship diagram generation...');
-            this.logs.log(`[0.000s][  0.00%] Input: ${symbols.length} symbols, ${references.length} references`);
+            this.logs.log(`[0.000s][  0.00%] Input: ${symbols.length} symbols, ${relationships.length} relationships`);
             
             // 入力データの詳細ログ
             if (symbols.length === 0) {
@@ -59,11 +61,9 @@ export class GraphVisualization {
                     switch (message.type) {
                         case 'openFile':
                             try {
-                                // 相対パスを絶対パスに変換
-                                const absolutePath = vscode.Uri.joinPath(this.rootFolder.uri, message.path);
-
                                 // ファイルを開く
-                                const document = await vscode.workspace.openTextDocument(absolutePath);
+                                const absolute_uri = vscode.Uri.file(path.join(this.wsFolder, message.path));
+                                const document = await vscode.workspace.openTextDocument(absolute_uri);
                                 await vscode.window.showTextDocument(document);
 
                                 this.logs.log(`Opened file: ${message.path}`);
@@ -73,7 +73,7 @@ export class GraphVisualization {
                             break;
                         case 'exportHTML':
                             try {
-                                await this.exportStandaloneHTML(message.data);
+                                await this.exportStandaloneHTML(path.join(this.wsFolder, this.htmlFilename), message.data);
                                 this.logs.log('HTML exported successfully');
                             } catch (error) {
                                 this.logs.error(`Failed to export HTML: ${error instanceof Error ? error.message : error}`);
@@ -102,7 +102,7 @@ export class GraphVisualization {
         await this.updateProgress(20, 'Processing symbols...');
         
         const elementsStartTime = performance.now();
-        const elements = this.createGraphElements(symbols, references, startTime);
+        const elements = this.createGraphElements(symbols, relationships, startTime);
         const elementsEndTime = performance.now();
         const elementsElapsed = (elementsEndTime - startTime) / 1000;
         this.logs.log(`${elementsElapsed.toFixed(3)}s  60.00%: Created graph elements: ${elements.nodes.length} nodes, ${elements.edges.length} edges (${(elementsEndTime - elementsStartTime).toFixed(3)}ms)`);
@@ -155,20 +155,20 @@ export class GraphVisualization {
         }
     }
 
-    private createGraphElements(symbols: SYMBOL.SymbolModel[], references: codeReferences.Reference[], startTime: number) {
+    private createGraphElements(symbols: SYMBOL.SymbolModel[], relationships: codeRelationships.Relationship[], startTime: number) {
         const currentElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`${currentElapsed.toFixed(3)}s  20.00%: Creating graph elements from symbols and references...`);
+        this.logs.log(`${currentElapsed.toFixed(3)}s  20.00%: Creating graph elements from symbols and relationships...`);
         const nodes: any[] = [];
         const edges: any[] = [];
         const fileNodes = new Map<string, any>();
         const fileRelations = new Map<string, number>();
         const fileRelationDetails = new Map<string, Array<{
-            fromSymbolName: string;
-            toSymbolName: string;
-            fromLine: number;
-            toLine: number;
-            fromPath: string;
-            toPath: string;
+            referenceSymbolName: string;
+            defineSymbolName: string;
+            referenceLine: number;
+            defineLine: number;
+            referencePath: string;
+            definePath: string;
         }>>();
 
         // ファイルノードのみを作成
@@ -205,53 +205,53 @@ export class GraphVisualization {
         this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 34.50%] Created symbol index with ${symbolIndex.size} entries`);
 
         // ファイル間の関係を集約
-        let processedReferences = 0;
-        this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 35.00%] Starting to process ${references.length} references...`);
+        let processedRelationships = 0;
+        this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 35.00%] Starting to process ${relationships.length} relationships...`);
 
-        references.forEach((ref, index) => {
+        relationships.forEach((rel, index) => {
             if (index < 5) {
-                this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 35.${String(index + 1).padStart(2, '0')}%] Reference ${index + 1}: ${ref.from.path} -> ${ref.to.path}`);
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 35.${String(index + 1).padStart(2, '0')}%] Relationship ${index + 1}: ${rel.reference.path} -> ${rel.define.path}`);
             }
 
-            const relationKey = `${ref.from.path}|||${ref.to.path}`;
-            const reverseKey = `${ref.to.path}|||${ref.from.path}`;
+            const relationshipKey = `${rel.reference.path}|||${rel.define.path}`;
+            const reverseKey = `${rel.define.path}|||${rel.reference.path}`;
 
             // 詳細情報を作成 - インデックスを使用して高速検索
-            const fromSymbol = symbolIndex.get(ref.from.id);
-            const toSymbol = symbolIndex.get(ref.to.id);
+            const referenceSymbol = symbolIndex.get(rel.reference.id);
+            const defineSymbol = symbolIndex.get(rel.define.id);
 
             // デバッグ用のログ出力（最初の数個のみ）
             if (index < 3) {
-                console.log(`Debug ref ${index}: from.id=${ref.from.id}, to.id=${ref.to.id}`);
+                console.log(`Debug relationship ${index}: from.id=${rel.reference.id}, to.id=${rel.define.id}`);
                 console.log(`Debug symbols sample:`, symbols.slice(0, 2).map(s => ({id: s.id, name: s.name})));
-                console.log(`Found fromSymbol: ${fromSymbol ? fromSymbol.name : 'NOT FOUND'}`);
-                console.log(`Found toSymbol: ${toSymbol ? toSymbol.name : 'NOT FOUND'}`);
+                console.log(`Found referenceSymbol: ${referenceSymbol ? referenceSymbol.name : 'NOT FOUND'}`);
+                console.log(`Found defineSymbol: ${defineSymbol ? defineSymbol.name : 'NOT FOUND'}`);
 
                 // さらに詳細なデバッグ
-                this.logs.log(`Debug ref ${index}: from.id=${ref.from.id}, to.id=${ref.to.id}`);
+                this.logs.log(`Debug ref ${index}: from.id=${rel.reference.id}, to.id=${rel.define.id}`);
                 this.logs.log(`Debug symbols total count: ${symbols.length}`);
-                this.logs.log(`Found fromSymbol: ${fromSymbol ? fromSymbol.name : 'NOT FOUND'}`);
-                this.logs.log(`Found toSymbol: ${toSymbol ? toSymbol.name : 'NOT FOUND'}`);
+                this.logs.log(`Found referenceSymbol: ${referenceSymbol ? referenceSymbol.name : 'NOT FOUND'}`);
+                this.logs.log(`Found defineSymbol: ${defineSymbol ? defineSymbol.name : 'NOT FOUND'}`);
             }
 
             const detailInfo = {
-                fromSymbolName: fromSymbol?.name || 'Unknown',
-                toSymbolName: toSymbol?.name || 'Unknown',
-                fromLine: ref.from.startLine,
-                toLine: ref.to.startLine,
-                fromPath: ref.from.path,
-                toPath: ref.to.path
+                referenceSymbolName: referenceSymbol?.name || 'Unknown',
+                defineSymbolName: defineSymbol?.name || 'Unknown',
+                referenceLine: rel.reference.startLine,
+                defineLine: rel.define.startLine,
+                referencePath: rel.reference.path,
+                definePath: rel.define.path
             };
 
             // 双方向の関係を考慮して集約
-            let actualKey = relationKey;
-            if (fileRelations.has(relationKey)) {
-                fileRelations.set(relationKey, fileRelations.get(relationKey)! + 1);
+            let actualKey = relationshipKey;
+            if (fileRelations.has(relationshipKey)) {
+                fileRelations.set(relationshipKey, fileRelations.get(relationshipKey)! + 1);
             } else if (fileRelations.has(reverseKey)) {
                 fileRelations.set(reverseKey, fileRelations.get(reverseKey)! + 1);
                 actualKey = reverseKey;
             } else {
-                fileRelations.set(relationKey, 1);
+                fileRelations.set(relationshipKey, 1);
             }
 
             // 詳細情報を追加
@@ -260,10 +260,10 @@ export class GraphVisualization {
             }
             fileRelationDetails.get(actualKey)!.push(detailInfo);
 
-            processedReferences++;
+            processedRelationships++;
         });
         const relationsElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`${relationsElapsed.toFixed(3)}s  40.00%: Processed ${processedReferences} references into ${fileRelations.size} file relations`);
+        this.logs.log(`${relationsElapsed.toFixed(3)}s  40.00%: Processed ${processedRelationships} relationships into ${fileRelations.size} file relations`);
 
         // ノードを配列に追加
         nodes.push(...Array.from(fileNodes.values()));
@@ -273,41 +273,41 @@ export class GraphVisualization {
         const edgeDetails: Array<{from: string, to: string, count: number}> = [];
         this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 45.00%] Starting to generate edges from ${fileRelations.size} file relations...`);
         
-        fileRelations.forEach((count, relationKey) => {
-            const [fromPath, toPath] = relationKey.split('|||');
+        fileRelations.forEach((count, relationshipKey) => {
+            const [referencePath, definePath] = relationshipKey.split('|||');
             if (edgeCount < 3) {
-                this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 45.${String(edgeCount + 1).padStart(2, '0')}%] Processing relation: ${path.basename(fromPath)} -> ${path.basename(toPath)} (count: ${count})`);
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 45.${String(edgeCount + 1).padStart(2, '0')}%] Processing relation: ${path.basename(referencePath)} -> ${path.basename(definePath)} (count: ${count})`);
             }
             
-            const fromNode = Array.from(fileNodes.values()).find(node => node.data.path === fromPath);
-            const toNode = Array.from(fileNodes.values()).find(node => node.data.path === toPath);
+            const referenceNode = Array.from(fileNodes.values()).find(node => node.data.path === referencePath);
+            const toNode = Array.from(fileNodes.values()).find(node => node.data.path === definePath);
             
-            if (fromNode && toNode) {
-                const relationDetails = fileRelationDetails.get(relationKey) || [];
+            if (referenceNode && toNode) {
+                const relationshipDetails = fileRelationDetails.get(relationshipKey) || [];
                 edges.push({
                     data: {
-                        id: `file-relation-${fromNode.data.id}-${toNode.data.id}`,
-                        source: fromNode.data.id,
+                        id: `file-relation-${referenceNode.data.id}-${toNode.data.id}`,
+                        source: referenceNode.data.id,
                         target: toNode.data.id,
-                        referenceType: 'file-reference',
-                        relationCount: count,
-                        relationDetails: relationDetails
+                        relationshipType: 'file-relationship',
+                        relationshipCount: count,
+                        relationshipDetails: relationshipDetails
                     }
                 });
                 edgeCount++;
                 edgeDetails.push({
-                    from: fromNode.data.label,
+                    from: referenceNode.data.label,
                     to: toNode.data.label,
                     count: count
                 });
                 const edgeElapsed = (performance.now() - startTime) / 1000;
                 if (edgeCount <= 3) {
-                    this.logs.log(`${edgeElapsed.toFixed(3)}s  47.${String(edgeCount).padStart(2, '0')}%: Created edge: ${fromNode.data.label} → ${toNode.data.label} (${count} relations)`);
+                    this.logs.log(`${edgeElapsed.toFixed(3)}s  47.${String(edgeCount).padStart(2, '0')}%: Created edge: ${referenceNode.data.label} → ${toNode.data.label} (${count} relations)`);
                 }
             } else {
                 const skipElapsed = (performance.now() - startTime) / 1000;
-                this.logs.log(`${skipElapsed.toFixed(3)}s  47.XX%: Skipped edge: ${path.basename(fromPath)} → ${path.basename(toPath)} (nodes not found)`);
-                this.logs.log(`${skipElapsed.toFixed(3)}s  47.XX%: fromNode: ${fromNode ? 'found' : 'NOT FOUND'}, toNode: ${toNode ? 'found' : 'NOT FOUND'}`);
+                this.logs.log(`${skipElapsed.toFixed(3)}s  47.XX%: Skipped edge: ${path.basename(referencePath)} → ${path.basename(definePath)} (nodes not found)`);
+                this.logs.log(`${skipElapsed.toFixed(3)}s  47.XX%: referenceNode: ${referenceNode ? 'found' : 'NOT FOUND'}, toNode: ${toNode ? 'found' : 'NOT FOUND'}`);
             }
         });
         const edgesElapsed = (performance.now() - startTime) / 1000;
@@ -321,7 +321,7 @@ export class GraphVisualization {
             const sortedEdges = edgeDetails.sort((a, b) => b.count - a.count);
             sortedEdges.forEach((edge, index) => {
                 const detailElapsed = (performance.now() - startTime) / 1000;
-                this.logs.log(`${detailElapsed.toFixed(3)}s  52.${((index + 1) / sortedEdges.length * 100).toFixed(0).padStart(2, '0')}%:   ${edge.from} → ${edge.to}: ${edge.count} references`);
+                this.logs.log(`${detailElapsed.toFixed(3)}s  52.${((index + 1) / sortedEdges.length * 100).toFixed(0).padStart(2, '0')}%:   ${edge.from} → ${edge.to}: ${edge.count} relationships`);
             });
             
             // 統計情報も出力
@@ -781,31 +781,31 @@ export class GraphVisualization {
                     style: {
                         'width': function( ele ) {
                             // 関係の多さに応じて線の太さを調整 (1-10の範囲)
-                            const relationCount = ele.data('relationCount') || 1;
-                            return Math.min(Math.max(relationCount * 0.8, 1), 10);
+                            const relationshipCount = ele.data('relationshipCount') || 1;
+                            return Math.min(Math.max(relationshipCount * 0.8, 1), 10);
                         },
                         'line-color': function( ele ) {
                             // 関係の多さに応じて色の濃さを調整
-                            const relationCount = ele.data('relationCount') || 1;
-                            const intensity = Math.min(relationCount / 10, 1);
+                            const relationshipCount = ele.data('relationshipCount') || 1;
+                            const intensity = Math.min(relationshipCount / 10, 1);
                             const red = Math.floor(71 + (231 - 71) * intensity);
                             const green = Math.floor(144 + (76 - 144) * intensity);
                             const blue = Math.floor(226 + (60 - 226) * intensity);
                             return \`rgb(\${red}, \${green}, \${blue})\`;
                         },
-                        'source-arrow-color': function( ele ) {
-                            const relationCount = ele.data('relationCount') || 1;
-                            const intensity = Math.min(relationCount / 10, 1);
+                        'target-arrow-color': function( ele ) {
+                            const relationshipCount = ele.data('relationshipCount') || 1;
+                            const intensity = Math.min(relationshipCount / 10, 1);
                             const red = Math.floor(71 + (231 - 71) * intensity);
                             const green = Math.floor(144 + (76 - 144) * intensity);
                             const blue = Math.floor(226 + (60 - 226) * intensity);
                             return \`rgb(\${red}, \${green}, \${blue})\`;
                         },
-                        'source-arrow-shape': 'triangle',
+                        'target-arrow-shape': 'triangle',
                         'curve-style': 'bezier',
                         'opacity': function( ele ) {
-                            const relationCount = ele.data('relationCount') || 1;
-                            return Math.min(0.6 + relationCount * 0.04, 1.0);
+                            const relationshipCount = ele.data('relationshipCount') || 1;
+                            return Math.min(0.6 + relationshipCount * 0.04, 1.0);
                         }
                     }
                 }
@@ -824,13 +824,13 @@ export class GraphVisualization {
                 nodeOverlap: 100,
                 idealEdgeLength: function( edge ) {
                     // 関係の多さに応じてエッジ長を調整（最小値を大きく）
-                    const relationCount = edge.data('relationCount') || 1;
-                    return Math.max(250, 450 - relationCount * 15);
+                    const relationshipCount = edge.data('relationshipCount') || 1;
+                    return Math.max(250, 450 - relationshipCount * 15);
                 },
                 edgeElasticity: function( edge ) {
                     // 関係が多いほど強い結合力
-                    const relationCount = edge.data('relationCount') || 1;
-                    return 80 + relationCount * 15;
+                    const relationshipCount = edge.data('relationshipCount') || 1;
+                    return 80 + relationshipCount * 15;
                 },
                 gravity: 25,
                 numIter: 2000,
@@ -883,12 +883,12 @@ export class GraphVisualization {
                 },
                 nodeOverlap: 100,
                 idealEdgeLength: function( edge ) {
-                    const relationCount = edge.data('relationCount') || 1;
-                    return Math.max(250, 450 - relationCount * 15);
+                    const relationshipCount = edge.data('relationshipCount') || 1;
+                    return Math.max(250, 450 - relationshipCount * 15);
                 },
                 edgeElasticity: function( edge ) {
-                    const relationCount = edge.data('relationCount') || 1;
-                    return 80 + relationCount * 15;
+                    const relationshipCount = edge.data('relationshipCount') || 1;
+                    return 80 + relationshipCount * 15;
                 },
                 gravity: 25,
                 numIter: 2000,
@@ -998,36 +998,36 @@ export class GraphVisualization {
         // エッジのマウスホバー処理
         cy.on('mouseover', 'edge', function(evt) {
             const edge = evt.target;
-            const relationCount = edge.data('relationCount') || 1;
-            const referenceType = edge.data('referenceType') || 'unknown';
-            const relationDetails = edge.data('relationDetails') || [];
+            const relationshipCount = edge.data('relationshipCount') || 1;
+            const relationshipType = edge.data('relationshipType') || 'unknown';
+            const relationshipDetails = edge.data('relationshipDetails') || [];
             const sourceLabel = cy.getElementById(edge.data('source')).data('label');
             const targetLabel = cy.getElementById(edge.data('target')).data('label');
 
             let tooltipText = \`\`;
 
-            // 詳細情報がある場合は表示 - toSymbolNameでグルーピング
-            if (relationDetails.length > 0) {
+            // 詳細情報がある場合は表示 - referenceSymbolNameでグルーピング
+            if (relationshipDetails.length > 0) {
 
-                // toSymbolNameでグルーピング
+                // referenceSymbolNameでグルーピング
                 const groupedByTarget = new Map();
-                relationDetails.forEach(detail => {
-                    const targetSymbol = detail.toSymbolName;
+                relationshipDetails.forEach(detail => {
+                    const targetSymbol = detail.referenceSymbolName;
                     if (!groupedByTarget.has(targetSymbol)) {
                         groupedByTarget.set(targetSymbol, []);
                     }
-                    groupedByTarget.get(targetSymbol).push(detail.fromSymbolName);
+                    groupedByTarget.get(targetSymbol).push(detail.defineSymbolName);
                 });
 
                 // グルーピングした結果を表示（最大10個の対象シンボル）
                 let displayCount = 0;
-                for (const [targetSymbol, fromSymbols] of groupedByTarget) {
+                for (const [targetSymbol, defineSymbols] of groupedByTarget) {
                     if (displayCount >= 10) break;
 
-                    const uniqueFromSymbols = [...new Set(fromSymbols)]; // 重複を除去
+                    const uniqueFromSymbols = [...new Set(defineSymbols)]; // 重複を除去
                     tooltipText += \`\${targetSymbol}\\n\`;
-                    for (const fromSymbol of uniqueFromSymbols) {
-                        tooltipText += \`  \${fromSymbol}\\n\`;
+                    for (const defineSymbol of uniqueFromSymbols) {
+                        tooltipText += \`  \${defineSymbol}\\n\`;
                     }
                     displayCount++;
                 }
@@ -1116,12 +1116,12 @@ export class GraphVisualization {
 </html>`;
     }
 
-    private async exportStandaloneHTML(data: { nodes: any[], edges: any[] }) {
+    private async exportStandaloneHTML(filename: string, data: { nodes: any[], edges: any[] }) {
         const htmlContent = this.generateWebviewContent('Code Relationship Diagram - Standalone', null, data, true);
 
         // ファイル保存ダイアログを表示
         const saveUri = await vscode.window.showSaveDialog({
-            defaultUri: vscode.Uri.joinPath(this.rootFolder.uri, 'code-relationship-diagram.html'),
+            defaultUri: vscode.Uri.file(filename),
             filters: {
                 'HTML Files': ['html'],
                 'All Files': ['*']

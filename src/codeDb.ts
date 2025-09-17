@@ -2,7 +2,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as SYMBOL from './symbol';
-import * as codeReferences from './codeReferences';
+import * as codeRelationships from './codeRelationships';
 
 import * as duckdb from 'duckdb';
 const dynDuckdb = require(path.join(__dirname, '..', 'bindings', `duckdb-${process.platform}-${process.arch}.node`)) as typeof duckdb;
@@ -72,19 +72,19 @@ export class Db extends vscode.Disposable {
                 'CREATE INDEX IF NOT EXISTS idx_symbols_path ON table_symbols(path);',
                 'CREATE INDEX IF NOT EXISTS idx_symbols_path_line ON table_symbols(path, start_line);',
 
-                // 参照関係
-                `CREATE TABLE IF NOT EXISTS table_references (
+                // 関係
+                `CREATE TABLE IF NOT EXISTS table_relationships (
                     id TEXT PRIMARY KEY,
-                    from_id TEXT,
-                    from_path TEXT,
-                    from_line INTEGER,
-                    to_id TEXT,
-                    to_path TEXT,
-                    to_line INTEGER
+                    reference_id TEXT,
+                    reference_path TEXT,
+                    reference_line INTEGER,
+                    define_id TEXT,
+                    define_path TEXT,
+                    define_line INTEGER
                 );`,
-                'CREATE INDEX IF NOT EXISTS idx_references_from_id ON table_references(from_id);',
-                'CREATE INDEX IF NOT EXISTS idx_references_to_id ON table_references(to_id);',
-                'CREATE INDEX IF NOT EXISTS idx_references_paths ON table_references(from_path, to_path);',
+                'CREATE INDEX IF NOT EXISTS idx_relationships_reference_id ON table_relationships(reference_id);',
+                'CREATE INDEX IF NOT EXISTS idx_relationships_define_id ON table_relationships(define_id);',
+                'CREATE INDEX IF NOT EXISTS idx_relationships_paths ON table_relationships(reference_path, define_path);',
 
                 // パス検索用（WHERE path = ?）
                 'CREATE INDEX IF NOT EXISTS idx_symbols_path_search ON table_symbols(path)',
@@ -92,9 +92,9 @@ export class Db extends vscode.Disposable {
                 // 範囲検索用（WHERE start_line BETWEEN ? AND ?）
                 'CREATE INDEX IF NOT EXISTS idx_symbols_line_range ON table_symbols(start_line, end_line)',
 
-                // 結合用（JOIN ON from_id = id）
-                'CREATE INDEX IF NOT EXISTS idx_references_join_from ON table_references(from_id)',
-                'CREATE INDEX IF NOT EXISTS idx_references_join_to ON table_references(to_id)',
+                // 結合用（JOIN ON reference_id = id）
+                'CREATE INDEX IF NOT EXISTS idx_relationships_join_reference ON table_relationships(reference_id)',
+                'CREATE INDEX IF NOT EXISTS idx_relationships_join_define ON table_relationships(define_id)',
 
                 // ソート用（ORDER BY updated_at）
                 'CREATE INDEX IF NOT EXISTS idx_files_sort_updated ON table_files(updated_at DESC)',
@@ -295,8 +295,8 @@ export class Db extends vscode.Disposable {
      */
     public symbol_delete(symbol_path: string): Promise<void> {
         return new Promise<void>((resolve, reject) => {
-            // 既存のシンボル参照関係を先に削除（path一致のものを全削除）
-            this._conn.prepare(`DELETE FROM table_references WHERE from_path = ? OR to_path = ?`).run(
+            // 既存のシンボルの関係を先に削除（path一致のものを全削除）
+            this._conn.prepare(`DELETE FROM table_relationships WHERE reference_path = ? OR define_path = ?`).run(
                 symbol_path, symbol_path,
                 (err: Error | null) => {
                     if (err) {
@@ -320,31 +320,31 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description 参照を保存
-     * @param reference 参照情報
+     * @description 関係を追加
+     * @param rel 関係
      * @returns 保存の完了を示すPromise
      */
-    public reference_insert(reference: codeReferences.Reference): Promise<void> {
+    public relationship_insert(rel: codeRelationships.Relationship): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             this._conn.prepare(
-                `INSERT INTO table_references
-                (id, from_id, from_path, from_line, to_id, to_path, to_line)
+                `INSERT INTO table_relationships
+                (id, reference_id, reference_path, reference_line, define_id, define_path, define_line)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (id) DO UPDATE SET
-                    from_id = excluded.from_id,
-                    from_path = excluded.from_path,
-                    from_line = excluded.from_line,
-                    to_id = excluded.to_id,
-                    to_path = excluded.to_path,
-                    to_line = excluded.to_line`
+                    reference_id = excluded.reference_id,
+                    reference_path = excluded.reference_path,
+                    reference_line = excluded.reference_line,
+                    define_id = excluded.define_id,
+                    define_path = excluded.define_path,
+                    define_line = excluded.define_line`
             ).run(
-                reference.id,
-                reference.from.id,
-                reference.from.path,
-                reference.from.startLine,
-                reference.to.id,
-                reference.to.path,
-                reference.to.startLine,
+                rel.id,
+                rel.reference.id,
+                rel.reference.path,
+                rel.reference.startLine,
+                rel.define.id,
+                rel.define.path,
+                rel.define.startLine,
                 (err: Error | null) => {
                     if (err) {
                         reject(err);
@@ -357,22 +357,22 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description 参照の全てを読み込み
-     * @returns 参照の配列
+     * @description 関係の全てを読み込み
+     * @returns 関係の配列
      */
-    public reference_quaryAll(): Promise<codeReferences.Reference[]> {
-        return new Promise<codeReferences.Reference[]>((resolve, reject) => {
-            this._conn.prepare(`SELECT * FROM table_references`).all(
+    public relationship_quaryAll(): Promise<codeRelationships.Relationship[]> {
+        return new Promise<codeRelationships.Relationship[]>((resolve, reject) => {
+            this._conn.prepare(`SELECT * FROM table_relationships`).all(
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
                         reject(err);
                     } else {
-                        const references: codeReferences.Reference[] = rows.map(row => 
-                            new codeReferences.Reference(row.id,
-                                new codeReferences.Symbol(row.from_id, row.from_path, row.from_line),
-                                new codeReferences.Symbol(row.to_id, row.to_path, row.to_line)
+                        const relationships: codeRelationships.Relationship[] = rows.map(row =>
+                            new codeRelationships.Relationship(row.id,
+                                new codeRelationships.Symbol(row.reference_id, row.reference_path, row.reference_line),
+                                new codeRelationships.Symbol(row.define_id, row.define_path, row.define_line)
                         ));
-                        resolve(references);
+                        resolve(relationships);
                     }
                 }
             );
@@ -380,25 +380,24 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description 参照先を検索
-     * @param toPath 参照先ファイルパス
-     * @returns 参照の配列
+     * @description 定義を検索
+     * @param definePath 定義ファイルパス
+     * @returns 定義の配列
      */
-    public reference_toPath(toPath: string): Promise<codeReferences.Reference[]> {
-        return new Promise<codeReferences.Reference[]>((resolve, reject) => {
-            // 既存のシンボル参照関係を先に削除（path一致のものを全削除）
-            this._conn.prepare(`SELECT * FROM table_references WHERE to_path = ?`).all(
-                toPath,
+    public relationship_definePath(definePath: string): Promise<codeRelationships.Relationship[]> {
+        return new Promise<codeRelationships.Relationship[]>((resolve, reject) => {
+            this._conn.prepare(`SELECT * FROM table_relationships WHERE define_path = ?`).all(
+                definePath,
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
                         reject(err);
                     } else {
-                        const references: codeReferences.Reference[] = rows.map(row => 
-                            new codeReferences.Reference(row.id,
-                                new codeReferences.Symbol(row.from_id, row.from_path, row.from_line),
-                                new codeReferences.Symbol(row.to_id, row.to_path, row.to_line)
+                        const relationships: codeRelationships.Relationship[] = rows.map(row =>
+                            new codeRelationships.Relationship(row.id,
+                                new codeRelationships.Symbol(row.reference_id, row.reference_path, row.reference_line),
+                                new codeRelationships.Symbol(row.define_id, row.define_path, row.define_line)
                         ));
-                        resolve(references);
+                        resolve(relationships);
                     }
                 }
             );
