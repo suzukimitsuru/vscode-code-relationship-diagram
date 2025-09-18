@@ -469,6 +469,11 @@
     "@typescript-eslint/types" "8.34.1"
     eslint-visitor-keys "^4.2.1"
 
+"@vscode/codicons@^0.0.40":
+  version "0.0.40"
+  resolved "https://registry.yarnpkg.com/@vscode/codicons/-/codicons-0.0.40.tgz#dd351851ba024f1b86373d5a99e9b43c28fdb660"
+  integrity sha512-R8sEDXthD86JHsk3xERrMcTN6sMovbk1AXYB5/tGoEYCE8DWwya6al5VLrAmQYXC1bQhUHIfHALj8ijQUs11cQ==
+
 "@vscode/test-cli@^0.0.10":
   version "0.0.10"
   resolved "https://registry.yarnpkg.com/@vscode/test-cli/-/test-cli-0.0.10.tgz#35f0e81c2e0ff8daceb223e99d1b65306c15822c"

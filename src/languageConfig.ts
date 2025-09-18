@@ -4,44 +4,45 @@ export interface Config {
     name: string;
     activationDelay: number; // ms
     retryDelay: number; // ms
+    rescanCommand?: string; // 再構築コマンド
 }
 
 /** 言語サーバ設定配列 */
 const LANGUAGE_SERVERS: Record<string, Config> = {
     // C/C++
-    'c': { extensionId: 'ms-vscode.cpptools', name: 'C/C++', activationDelay: 2000, retryDelay: 1000 },
-    'cpp': { extensionId: 'ms-vscode.cpptools', name: 'C/C++', activationDelay: 2000, retryDelay: 1000 },
+    'c': { extensionId: 'ms-vscode.cpptools', name: 'C/C++', activationDelay: 2000, retryDelay: 1000, rescanCommand: 'C_Cpp.RescanWorkspace' },
+    'cpp': { extensionId: 'ms-vscode.cpptools', name: 'C/C++', activationDelay: 2000, retryDelay: 1000, rescanCommand: 'C_Cpp.RescanWorkspace' },
     
     // Python
-    'python': { extensionId: 'ms-python.python', name: 'Python', activationDelay: 3000, retryDelay: 800 },
+    'python': { extensionId: 'ms-python.python', name: 'Python', activationDelay: 3000, retryDelay: 800, rescanCommand: 'python.refreshIntelliSense' },
     
     // Java
-    'java': { extensionId: 'redhat.java', name: 'Java', activationDelay: 5000, retryDelay: 1500 },
+    'java': { extensionId: 'redhat.java', name: 'Java', activationDelay: 5000, retryDelay: 1500, rescanCommand: 'java.clean.workspace' },
     
     // JavaScript/TypeScript
-    'javascript': { extensionId: 'vscode.typescript-language-features', name: 'JavaScript', activationDelay: 1000, retryDelay: 500 },
-    'typescript': { extensionId: 'vscode.typescript-language-features', name: 'TypeScript', activationDelay: 1000, retryDelay: 500 },
+    'javascript': { extensionId: 'vscode.typescript-language-features', name: 'JavaScript', activationDelay: 1000, retryDelay: 500, rescanCommand: 'typescript.reloadProjects' },
+    'typescript': { extensionId: 'vscode.typescript-language-features', name: 'TypeScript', activationDelay: 1000, retryDelay: 500, rescanCommand: 'typescript.reloadProjects' },
     
     // C#
-    'csharp': { extensionId: 'ms-dotnettools.csharp', name: 'C#', activationDelay: 3000, retryDelay: 1000 },
+    'csharp': { extensionId: 'ms-dotnettools.csharp', name: 'C#', activationDelay: 3000, retryDelay: 1000, rescanCommand: 'dotnet.restoreAll' },
     
     // Go
-    'go': { extensionId: 'golang.go', name: 'Go', activationDelay: 2000, retryDelay: 1000 },
+    'go': { extensionId: 'golang.go', name: 'Go', activationDelay: 2000, retryDelay: 1000, rescanCommand: 'go.tools.install' },
     
     // Rust
-    'rust': { extensionId: 'rust-lang.rust-analyzer', name: 'Rust Analyzer', activationDelay: 3000, retryDelay: 1200 },
+    'rust': { extensionId: 'rust-lang.rust-analyzer', name: 'Rust Analyzer', activationDelay: 3000, retryDelay: 1200, rescanCommand: 'rust-analyzer.reload' },
     
     // PHP
-    'php': { extensionId: 'bmewburn.vscode-intelephense-client', name: 'PHP Intelephense', activationDelay: 2000, retryDelay: 1000 },
+    'php': { extensionId: 'bmewburn.vscode-intelephense-client', name: 'PHP Intelephense', activationDelay: 2000, retryDelay: 1000, rescanCommand: 'intelephense.index.workspace' },
     
     // Ruby
-    'ruby': { extensionId: 'shopify.ruby-lsp', name: 'Ruby LSP', activationDelay: 2500, retryDelay: 1000 },
+    'ruby': { extensionId: 'shopify.ruby-lsp', name: 'Ruby LSP', activationDelay: 2500, retryDelay: 1000, rescanCommand: 'rubyLsp.restart' },
     
     // Swift
     'swift': { extensionId: 'sswg.swift-lang', name: 'Swift', activationDelay: 3000, retryDelay: 1200 },
     
     // Kotlin
-    'kotlin': { extensionId: 'fwcd.kotlin', name: 'Kotlin 言語サーバ', activationDelay: 4000, retryDelay: 1500 },
+    'kotlin': { extensionId: 'fwcd.kotlin', name: 'Kotlin 言語サーバ', activationDelay: 4000, retryDelay: 1500, rescanCommand: 'kotlin.restartLanguageServer' },
     
     // Scala
     'scala': { extensionId: 'scalameta.metals', name: 'Metals', activationDelay: 5000, retryDelay: 1500 },

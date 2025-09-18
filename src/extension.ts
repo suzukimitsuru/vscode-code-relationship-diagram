@@ -8,7 +8,7 @@ import * as codeDb from './codeDb';
 import * as codeFiles from './codeFiles';
 import * as codeSymbols from './codeSymbols';
 import * as codeRelationships from './codeRelationships';
-import * as lc from './languageCongig';
+import * as lc from './languageConfig';
 import * as ls from './languageServer';
 import { GraphVisualization } from './graphVisualization';
 
@@ -127,6 +127,12 @@ export function activate(context: vscode.ExtensionContext) {
 						}));
 					}
 
+					/* 言語サーバーを再構築する
+					if (config.rescanCommand) {
+						await vscode.commands.executeCommand(config.rescanCommand);
+					}
+					*/
+
 					// ファイル更新を追加する
 					Object.values(upsert_dic).forEach(({updated, languageId, symbol: root, document: doc}) => {
 						let ls_wait: ls.LanguageCompleteWaiter | null = null;
@@ -137,7 +143,7 @@ export function activate(context: vscode.ExtensionContext) {
 							if (config) {
 								updateProgress(progressed, progress_total, `Waiting language server: ${root.path}`);
 								ls_wait = new ls.LanguageCompleteWaiter();
-								ls_wait.waitComplete(doc, config).then(async (uri) => {
+								ls_wait.waitComplete(doc, config).then((uri) => {
 
 									// 定義を検索
 									db.relationship_definePath(root.path).then(define_rels => {

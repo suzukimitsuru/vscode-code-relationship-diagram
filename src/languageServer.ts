@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import * as lc from './languageCongig';
+import * as lc from './languageConfig';
+import { cp } from 'fs';
 
 export class LanguageCompleteWaiter {
     private _editor: vscode.TextEditor | null = null;
@@ -8,7 +9,8 @@ export class LanguageCompleteWaiter {
 
         // 言語サーバーに優先して解析させるため、出来たらエディタで開く
         try {
-            this._editor = await vscode.window.showTextDocument(doc, {preview: true, preserveFocus: true, viewColumn: vscode.ViewColumn.Beside});
+            this._editor = await vscode.window.showTextDocument(doc, {preview: false, preserveFocus: false, viewColumn: vscode.ViewColumn.Active} );
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 待機
         } catch (error) {
             this._editor = null;
         }
@@ -19,11 +21,10 @@ export class LanguageCompleteWaiter {
             await waitExtensionIsActive(config)  &&  // 言語サーバ拡張機能が有効
             await indexingIsComplete()               //　インデックス完了
         ) {
+            return true;
         } else {
-            console.warn(`Skipping relationship extraction for ${config.name} (no 言語サーバ)`);
+            return false;
         }
-
-        return true;
     }
 
     public dispose() {

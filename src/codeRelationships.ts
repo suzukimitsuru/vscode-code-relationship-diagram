@@ -3,7 +3,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import * as SYMBOL from './symbol';
 import * as codeSymbols from './codeSymbols';
-import * as lc from './languageCongig';
+import * as lc from './languageConfig';
 
 export class Symbol {
     public readonly id: string;

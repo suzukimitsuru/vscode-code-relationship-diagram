@@ -24,3 +24,5 @@ exsample-workspace/**
 !node_modules/detect-libc/**
 !node_modules/cytoscape/dist/cytoscape.min.js
 !node_modules/cytoscape-dagre/cytoscape-dagre.js
+!node_modules/@vscode/codicons/dist/codicon.css
+!node_modules/@vscode/codicons/dist/codicon.ttf
