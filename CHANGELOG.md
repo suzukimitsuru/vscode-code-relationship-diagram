@@ -13,6 +13,61 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## 0.1.23 - 2025-01-18
+
+### 0.1.23 - Gitignore Integration and Layout Optimization
+
+### [0.1.23] 主要な改善点
+
+- **ファイル除外機能**: .gitignoreファイル対応による不要ファイルの自動除外
+- **パフォーマンス向上**: ファイル検索対象の最適化と重複処理の削除
+- **コード品質向上**: API設計の改善とテストの更新
+
+### [Added] Gitignore統合機能
+
+- **.gitignoreファイル自動読み込み**
+  - ワークスペースの`.gitignore`ファイルを自動検出・読み込み
+  - 空行とコメント行（`#`で始まる行）を適切に除外
+  - エラー処理付きで安全に動作
+
+- **デフォルト除外パターン**
+  - `.git/**`, `.vscode/**`, `.DS_Store`を標準で除外
+  - 開発時の不要ファイルを自動除外
+
+- **fast-glob統合**
+  - `ignore`オプションによる効率的なファイル除外
+  - 検索対象ファイル数の大幅削減
+
+### [Enhanced] ファイル検索システムの改善
+
+- **API設計の最適化**
+  - `list()`関数に`ignores`パラメータを追加
+  - `loadGitignorePatterns()`関数をエクスポートして再利用可能に
+  - 関数間の役割分担を明確化
+
+- **テストの更新**
+  - `codeFiles.test.ts`を新しいAPI仕様に対応
+  - 除外パターンパラメータの追加
+
+### [Fixed] レイアウト処理の最適化
+
+- **重複イベントハンドラの削除**
+  - `resetLayout()`関数内の重複する`layoutstop`イベントハンドラを削除
+  - Reset Layoutボタン押下時のノード移動重複実行を解消
+  - パフォーマンスとユーザーエクスペリエンスの改善
+
+### [Technical] 実装詳細
+
+- **ファイル除外の流れ**
+  1. 初期化時に`.gitignore`ファイルを読み込み
+  2. `files.associations`パターン検索時に除外パターンを適用
+  3. 検索結果から不要ファイルを自動除外
+
+- **パフォーマンス効果**
+  - `node_modules/`, `.git/`, `dist/`等の大量ファイルを除外
+  - 関係図生成時間の短縮
+  - メモリ使用量の削減
+
 ## 0.1.22 - 2025-01-18
 
 ### 0.1.22 - Template System Implementation and Architecture Refactoring

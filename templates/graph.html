@@ -428,16 +428,6 @@
                 boundingBox: undefined
             });
             layout.run();
-
-            // レイアウト完了後にG1再配置とfitを実行
-            layout.on('layoutstop', function() {
-                setTimeout(() => {
-                    repositionNodesByReferenceCount();
-                    setTimeout(() => {
-                        fitGraph();
-                    }, 1100); // アニメーション完了後にfit
-                }, 100);
-            });
         }
 
         // ドロップダウンメニュー制御関数

@@ -60,7 +60,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 					// コードファイルを列挙する
 					const files: codeFiles.File[] = [];
-					const patterns = codeFiles.list(workspace_folder, associations, (file: codeFiles.File) => {
+					const ignores = codeFiles.loadGitignorePatterns(workspace_folder);
+					const patterns = codeFiles.list(workspace_folder, associations, ignores, (file: codeFiles.File) => {
 						files.push(file);
 						logs.log(`1/${last_phase} Listed file: ${file.relative_path}`);
 						updateProgress(progressed, progress_total++);
