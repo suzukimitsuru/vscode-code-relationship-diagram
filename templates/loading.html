@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>TITLE_PLACEHOLDER - Loading</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: BACKGROUND_COLOR_PLACEHOLDER;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        #progress-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background-color: PROGRESS_BG_COLOR_PLACEHOLDER;
+            z-index: 2000;
+        }
+        #progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #007ACC, #4A90E2);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 0 2px 2px 0;
+        }
+        #progress-text {
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            font-size: 16px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="progress-container">
+        <div id="progress-bar"></div>
+    </div>
+    <div id="progress-text">Initializing...</div>
+    
+    <script>
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        
+        function updateProgress(percent, message) {
+            progressBar.style.width = percent + '%';
+            progressText.textContent = message;
+        }
+        
+        window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.type === 'progress') {
+                updateProgress(message.percent, message.message);
+            }
+        });
+        
+        updateProgress(5, 'Starting...');
+    </script>
+</body>
+</html>

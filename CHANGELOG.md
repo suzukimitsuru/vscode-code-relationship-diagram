@@ -13,11 +13,78 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## 0.1.22 - 2025-01-18
+
+### 0.1.22 - Template System Implementation and Architecture Refactoring
+
+### [0.1.22] 主要な改善点
+
+- **アーキテクチャ改善**: HTMLテンプレートシステムの導入
+- **アイコンシステム変更**: VSCode Codiconsから Font Awesome 4.7.0への移行
+- **UIコンポーネント統一**: プレースホルダーシステムによる設定値集約化
+- **コード保守性向上**: 1000行以上のインラインHTMLコードを削除
+
+### [Changed] HTMLテンプレートシステムの導入
+
+- **外部テンプレートファイル対応**
+  - HTMLコンテンツ生成をテンプレートファイルベースに変更
+  - `loadHtmlTemplate()` メソッドで外部テンプレートファイルを読み込み
+  - ローディング画面とメイン画面の両方でテンプレートシステムを採用
+
+- **統一プレースホルダーシステム**
+  - `replacePlaceholders()` メソッドでプレースホルダー置き換えを統一化
+  - テーマ色、URI、ボタンスタイルなど全設定値を集約管理
+  - スタンドアロン版とVSCode版の条件分岐を明確化
+
+### [Changed] アイコンシステムの変更
+
+- **Font Awesome 4.7.0への移行**
+  - `@vscode/codicons` の依存関係を削除
+  - `font-awesome@4.7.0` を新たに追加
+  - エクスポートボタンやUI要素のアイコンをFont Awesomeに統一
+
+- **Webview URIシステムの改善**
+  - `webview.asWebviewUri()` による適切なリソース参照
+  - スタンドアロン版はCDN、VSCode版はローカルファイルの使い分け
+
+### [Enhanced] UIコンポーネントの改善
+
+- **エクスポート機能の統一**
+  - ドロップダウンメニューのアイコンをFont Awesomeに更新
+  - HTMLエクスポートとPNGエクスポートの統一インターフェース
+  - テーマ対応の強化とボタンスタイルの統一化
+
+- **プラットフォーム対応**
+  - `.vscodeignore` の更新（Codicons削除、Font Awesome追加）
+  - スタンドアロン版とVSCode版の適切な機能分離
+
+### [Removed] コード削減と最適化
+
+- **大幅なコード削減**
+  - `generateLoadingContent()` と `generateWebviewContent()` メソッドを削除
+  - インラインHTML生成コード（1000行以上）を削除
+  - VSCode Codicons関連のコードと設定を削除
+
+- **依存関係の最適化**
+  - 未使用の`@vscode/codicons`パッケージを削除
+  - より軽量なFont Awesome 4.7.0に変更
+
+### [Technical] 保守性とパフォーマンス向上
+
+- **テンプレートファイルシステム**
+  - HTMLの外部化により保守性を大幅向上
+  - プレースホルダーによる設定値の集約化
+  - 条件分岐ロジックの明確化
+
+- **ビルドプロセス改善**
+  - パッケージサイズの最適化
+  - 依存関係の整理と軽量化
+
 ## 0.1.21 - 2025-09-19
 
 ### 0.1.21 - Advanced Node Selection and Graph Interaction Features
 
-### 主要な改善点
+### [0.1.21] 主要な改善点
 
 - **直感的操作**: 範囲選択とドラッグ移動による効率的なノード整理
 - **精密ナビゲーション**: エッジから直接ソースコードの該当行にジャンプ

@@ -1,19 +1,9 @@
 import * as vscode from 'vscode';
 import * as lc from './languageConfig';
-import { cp } from 'fs';
 
 export class LanguageCompleteWaiter {
-    private _editor: vscode.TextEditor | null = null;
 
     public async waitComplete(doc: vscode.TextDocument, config: lc.Config): Promise<boolean> {
-
-        // 言語サーバーに優先して解析させるため、出来たらエディタで開く
-        try {
-            this._editor = await vscode.window.showTextDocument(doc, {preview: false, preserveFocus: false, viewColumn: vscode.ViewColumn.Active} );
-            await new Promise(resolve => setTimeout(resolve, 1000)); // 待機
-        } catch (error) {
-            this._editor = null;
-        }
 
         // 言語サーバが準備完了なら
         if (
@@ -28,12 +18,6 @@ export class LanguageCompleteWaiter {
     }
 
     public dispose() {
-
-        // エディタで開けたら、閉じる
-        if (this._editor) {
-            this._editor.hide();
-        }
-        this._editor = null;
     }
 }
 
