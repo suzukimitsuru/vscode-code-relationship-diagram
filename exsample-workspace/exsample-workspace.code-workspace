@@ -15,7 +15,14 @@
     "C_Cpp.loggingLevel": "Debug",
     "C_Cpp.workspaceParsingPriority": "highest",
     "files.associations": {
-      "src/**/*.(c|h)": "c"
+      "src/**/*.(c|h)": "c",
+      "string": "c",
+      "__split_buffer": "c",
+      "deque": "c",
+      "iterator": "c",
+      "locale": "c",
+      "unordered_map": "c",
+      "vector": "c"
     }
   },
   "extensions": {

@@ -49,7 +49,8 @@ export class Relationship {
  */
 export async function extract(wsFolder: string, config: lc.Config, uri: vscode.Uri,
     root: SYMBOL.SymbolModel, symbol_dic: Record<string,codeSymbols.Dictionary>, retries: number
-): Promise<Relationship[]> {
+): Promise<[number, Relationship[]]> {
+    let retry = 0;
     const result: Relationship[] = [];
     
     const symbols: SYMBOL.SymbolModel[] = [];
@@ -62,7 +63,7 @@ export async function extract(wsFolder: string, config: lc.Config, uri: vscode.U
         try {
             // リトライ付きで関係取得
             const pos = new vscode.Position(symbol.startLine, symbol.startCharacter);
-            const locations = await extractWithRetry(uri, pos, config, retries, symbol.name);
+            const [ retry, locations ] = await extractWithRetry(uri, pos, config, retries, symbol.name);
             const relationships: Relationship[] = [];
             console.log(`${config.name} ${symbol.name}: Processing ${locations.length} found relationships`);
             for (const location of locations) {
@@ -107,7 +108,7 @@ export async function extract(wsFolder: string, config: lc.Config, uri: vscode.U
     }
     console.log(`${root.path}: successful, ${result.length} relationships found`);
 
-    return result;
+    return [ retry, result ];
 }
 
 /**
@@ -118,11 +119,11 @@ export async function extract(wsFolder: string, config: lc.Config, uri: vscode.U
  * @param retries   リトライ回数
  * @returns 関係リスト
  */
-async function extractWithRetry(uri: vscode.Uri, start: vscode.Position, config: lc.Config, retries: number, symbolName: string): Promise<vscode.Location[]> {
+async function extractWithRetry(uri: vscode.Uri, start: vscode.Position, config: lc.Config, retries: number, symbolName: string): Promise<[number, vscode.Location[]]> {
     const result: vscode.Location[] = [];
     console.log(`${config.name}: Attempting to get relationships for ${path.basename(uri.fsPath)} at line ${start.line}, char ${start.character}`);
-
-    for (let attempt = 0; (attempt < retries) && (result.length <= 0); attempt++) {
+    let attempt = 0;
+    for (; (attempt < retries) && (result.length <= 0); attempt++) {
         try {
             console.log(`${config.name} ${symbolName}: Attempt ${attempt + 1}/${retries}...`);
 
@@ -134,7 +135,7 @@ async function extractWithRetry(uri: vscode.Uri, start: vscode.Position, config:
             } else {
                 if (attempt < retries - 1) {
                     console.log(`${config.name} ${symbolName}: Attempt ${attempt + 1} returned empty, retrying in ${config.retryDelay}ms...`);
-                    await new Promise(resolve => setTimeout(resolve, config.retryDelay));
+                    await new Promise(resolve => setTimeout(resolve, 1000));//config.retryDelay));
                 } else {
                     console.log(`${config.name} ${symbolName}: All ${retries} attempts failed to find relationships`);
                 }
@@ -142,11 +143,11 @@ async function extractWithRetry(uri: vscode.Uri, start: vscode.Position, config:
         } catch (error) {
             console.warn(`${config.name} ${symbolName}: Relationship provider attempt ${attempt + 1} failed:`, error);
             if (attempt < retries - 1) {
-                await new Promise(resolve => setTimeout(resolve, config.retryDelay));
+                await new Promise(resolve => setTimeout(resolve, 1000));//config.retryDelay));
             }
         }
     }
-    return result;
+    return [ attempt, result ];
 }
 
 function findSymbol(root: SYMBOL.SymbolModel, position: vscode.Position): SYMBOL.SymbolModel | null {

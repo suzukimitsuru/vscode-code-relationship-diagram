@@ -1,13 +1,11 @@
-
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Code Relationship Diagram - Standalone</title>
-    
-    
+    <title>コード関係図 - Standalone</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
-    
+    <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
     <style>
         body {
             margin: 0;
@@ -128,7 +126,7 @@
             border: none;
         }
         .export-menu button:hover {
-            background: #2a2d2e;
+            background: #1177bb;
         }
         .export-menu button i {
             margin-right: 8px;
@@ -142,15 +140,15 @@
     <div id="progress-text">Loading...</div>
     <div class="controls">
         <button onclick="fitGraph()" title="Fit to Screen">
-            Fit Graph
+            <i class="icon fa fa-expand" aria-hidden="true"></i>
         </button>
         <button onclick="resetLayout()" title="Reset Layout">
-            Reset
+            <i class="fa fa-refresh" aria-hidden="true"></i>
         </button>
         
-        <div class="export-dropdown">
-            <button onclick="exportPNG()" title="Export PNG">Export PNG</button>
-        </div>
+                <div class="export-dropdown">
+                    <button onclick="exportPNG()" title="Export PNG">Export PNG</button>
+                </div>
     </div>
     <div id="cy"></div>
     
@@ -190,12 +188,8 @@
         
         const cy = cytoscape({
             container: document.getElementById('cy'),
-            elements: [{"data":{"id":"6114bd07-7c21-4de3-86ab-2c32a267fce0","label":"main.c","path":"src/main.c","symbolCount":1,"kind":0}},{"data":{"id":"cfa6ad7f-d243-481d-bb52-6a94ec722522","label":"string_utils.c","path":"src/string_utils.c","symbolCount":5,"kind":0}},{"data":{"id":"02a6f6df-7b11-448b-80a9-54399d1ab0b2","label":"math_utils.c","path":"src/math_utils.c","symbolCount":6,"kind":0}},{"data":{"id":"file-relation-6114bd07-7c21-4de3-86ab-2c32a267fce0-cfa6ad7f-d243-481d-bb52-6a94ec722522","source":"6114bd07-7c21-4de3-86ab-2c32a267fce0","target":"cfa6ad7f-d243-481d-bb52-6a94ec722522","relationshipType":"file-relationship","relationshipCount":2,"relationshipDetails":[{"referenceSymbolName":"main()","defineSymbolName":"string_compare(const char *, const char *)","referenceLine":53,"defineLine":18,"referencePath":"src/main.c","definePath":"src/string_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_string_info(const char *)","referenceLine":37,"defineLine":24,"referencePath":"src/main.c","definePath":"src/string_utils.c"}]}},{"data":{"id":"file-relation-6114bd07-7c21-4de3-86ab-2c32a267fce0-02a6f6df-7b11-448b-80a9-54399d1ab0b2","source":"6114bd07-7c21-4de3-86ab-2c32a267fce0","target":"02a6f6df-7b11-448b-80a9-54399d1ab0b2","relationshipType":"file-relationship","relationshipCount":9,"relationshipDetails":[{"referenceSymbolName":"main()","defineSymbolName":"add(int, int)","referenceLine":11,"defineLine":5,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"multiply(int, int)","referenceLine":12,"defineLine":10,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"calculate_area(double)","referenceLine":20,"defineLine":15,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_result(const char *, double)","referenceLine":15,"defineLine":20,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_result(const char *, double)","referenceLine":16,"defineLine":20,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_result(const char *, double)","referenceLine":21,"defineLine":20,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_result(const char *, double)","referenceLine":27,"defineLine":20,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_result(const char *, double)","referenceLine":31,"defineLine":20,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"distance(Point, Point)","referenceLine":26,"defineLine":25,"referencePath":"src/main.c","definePath":"src/math_utils.c"}]}},{"data":{"id":"file-relation-cfa6ad7f-d243-481d-bb52-6a94ec722522-02a6f6df-7b11-448b-80a9-54399d1ab0b2","source":"cfa6ad7f-d243-481d-bb52-6a94ec722522","target":"02a6f6df-7b11-448b-80a9-54399d1ab0b2","relationshipType":"file-relationship","relationshipCount":5,"relationshipDetails":[{"referenceSymbolName":"string_statistics(const char * [], int)","defineSymbolName":"add(int, int)","referenceLine":46,"defineLine":5,"referencePath":"src/string_utils.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"print_string_info(const char *)","defineSymbolName":"multiply(int, int)","referenceLine":35,"defineLine":10,"referencePath":"src/string_utils.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"print_string_info(const char *)","defineSymbolName":"print_result(const char *, double)","referenceLine":36,"defineLine":20,"referencePath":"src/string_utils.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"string_statistics(const char * [], int)","defineSymbolName":"print_result(const char *, double)","referenceLine":50,"defineLine":20,"referencePath":"src/string_utils.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"string_statistics(const char * [], int)","defineSymbolName":"print_result(const char *, double)","referenceLine":54,"defineLine":20,"referencePath":"src/string_utils.c","definePath":"src/math_utils.c"}]}}],
+            elements: [{"data":{"id":"c18b34f7-8ed9-41a2-baa2-d6333ff69904","label":"main.c","path":"src/main.c","symbolCount":1,"kind":0}},{"data":{"id":"b7e81947-4e42-450d-a9fc-7fc884a595fd","label":"string_utils.c","path":"src/string_utils.c","symbolCount":5,"kind":0}},{"data":{"id":"487cf07a-7cfb-4b94-abcf-c9ab13fd591c","label":"math_utils.c","path":"src/math_utils.c","symbolCount":6,"kind":0}},{"data":{"id":"file-relation-c18b34f7-8ed9-41a2-baa2-d6333ff69904-b7e81947-4e42-450d-a9fc-7fc884a595fd","source":"c18b34f7-8ed9-41a2-baa2-d6333ff69904","target":"b7e81947-4e42-450d-a9fc-7fc884a595fd","relationshipType":"file-relationship","relationshipCount":2,"relationshipDetails":[{"referenceSymbolName":"main()","defineSymbolName":"string_compare(const char *, const char *)","referenceLine":53,"defineLine":18,"referencePath":"src/main.c","definePath":"src/string_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_string_info(const char *)","referenceLine":37,"defineLine":24,"referencePath":"src/main.c","definePath":"src/string_utils.c"}]}},{"data":{"id":"file-relation-c18b34f7-8ed9-41a2-baa2-d6333ff69904-487cf07a-7cfb-4b94-abcf-c9ab13fd591c","source":"c18b34f7-8ed9-41a2-baa2-d6333ff69904","target":"487cf07a-7cfb-4b94-abcf-c9ab13fd591c","relationshipType":"file-relationship","relationshipCount":9,"relationshipDetails":[{"referenceSymbolName":"main()","defineSymbolName":"add(int, int)","referenceLine":11,"defineLine":5,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"multiply(int, int)","referenceLine":12,"defineLine":10,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"calculate_area(double)","referenceLine":20,"defineLine":15,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_result(const char *, double)","referenceLine":15,"defineLine":20,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_result(const char *, double)","referenceLine":16,"defineLine":20,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_result(const char *, double)","referenceLine":21,"defineLine":20,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_result(const char *, double)","referenceLine":27,"defineLine":20,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"print_result(const char *, double)","referenceLine":31,"defineLine":20,"referencePath":"src/main.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"main()","defineSymbolName":"distance(Point, Point)","referenceLine":26,"defineLine":25,"referencePath":"src/main.c","definePath":"src/math_utils.c"}]}},{"data":{"id":"file-relation-b7e81947-4e42-450d-a9fc-7fc884a595fd-487cf07a-7cfb-4b94-abcf-c9ab13fd591c","source":"b7e81947-4e42-450d-a9fc-7fc884a595fd","target":"487cf07a-7cfb-4b94-abcf-c9ab13fd591c","relationshipType":"file-relationship","relationshipCount":5,"relationshipDetails":[{"referenceSymbolName":"string_statistics(const char * [], int)","defineSymbolName":"add(int, int)","referenceLine":46,"defineLine":5,"referencePath":"src/string_utils.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"print_string_info(const char *)","defineSymbolName":"multiply(int, int)","referenceLine":35,"defineLine":10,"referencePath":"src/string_utils.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"print_string_info(const char *)","defineSymbolName":"print_result(const char *, double)","referenceLine":36,"defineLine":20,"referencePath":"src/string_utils.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"string_statistics(const char * [], int)","defineSymbolName":"print_result(const char *, double)","referenceLine":50,"defineLine":20,"referencePath":"src/string_utils.c","definePath":"src/math_utils.c"},{"referenceSymbolName":"string_statistics(const char * [], int)","defineSymbolName":"print_result(const char *, double)","referenceLine":54,"defineLine":20,"referencePath":"src/string_utils.c","definePath":"src/math_utils.c"}]}}],
             
-            // ズーム制限を設定
-            //minZoom: 0.1,
-            //maxZoom: 3.0,
-            wheelSensitivity: 1.0,
             
             // Compound graphsを有効にする
             // これにより親子関係のあるノードがグループ化される
@@ -237,11 +231,6 @@
                         'border-color': '#FF6B35',
                         'border-width': '4px',
                         'background-color': '#1177bb',
-                        'box-shadow-blur': '10px',
-                        'box-shadow-color': 'rgba(0, 122, 204, 0.5)',
-                        'box-shadow-offset-x': '0px',
-                        'box-shadow-offset-y': '0px',
-                        'box-shadow-opacity': '1',
                         'z-index': '999'
                     }
                 },
@@ -251,11 +240,6 @@
                         'border-color': '#FF6B35',
                         'border-width': '4px',
                         'background-color': '#1177bb',
-                        'box-shadow-blur': '10px',
-                        'box-shadow-color': 'rgba(0, 122, 204, 0.5)',
-                        'box-shadow-offset-x': '0px',
-                        'box-shadow-offset-y': '0px',
-                        'box-shadow-opacity': '1',
                         'z-index': '999'
                     }
                 },
@@ -414,9 +398,6 @@
 
         function fitGraph() {
             cy.fit();
-            // Fit後のズームレベルを取得して、それを最小ズームとして設定
-            const fitZoom = cy.zoom();
-            cy.minZoom(Math.max(fitZoom * 0.8, 0.1)); // Fitレベルの80%まで縮小を許可
         }
 
         function resetLayout() {
@@ -450,16 +431,6 @@
                 boundingBox: undefined
             });
             layout.run();
-
-            // レイアウト完了後にG1再配置とfitを実行
-            layout.on('layoutstop', function() {
-                setTimeout(() => {
-                    repositionNodesByReferenceCount();
-                    setTimeout(() => {
-                        fitGraph();
-                    }, 1100); // アニメーション完了後にfit
-                }, 100);
-            });
         }
 
         // ドロップダウンメニュー制御関数
@@ -512,13 +483,20 @@
             // 現在のグラフデータを取得
             const nodes = cy.nodes().map(node => ({ data: node.data() }));
             const edges = cy.edges().map(edge => ({ data: edge.data() }));
-
-            // VSCodeエクステンションにエクスポート要求を送信
-            // スタンドアロン版ではエクスポート機能なし
+            if (!true) {
+                // VSCodeエクステンションにエクスポート要求を送信
+                vscode.postMessage({
+                    type: 'exportHTML',
+                    data: {
+                        nodes: nodes,
+                        edges: edges
+                    }
+                });
+            }
         }
 
         // VSCode API インスタンスを一度だけ取得（スタンドアロン版では条件分岐）
-        let vscode = null;
+        let vscode = true ? null : acquireVsCodeApi();
 
         // ツールチップ要素の作成
         const tooltip = document.createElement('div');
@@ -619,12 +597,22 @@
                         const charWidth = rect.width / relationDiv.textContent.length;
                         const arrowPixelPos = arrowPos * charWidth;
 
-                        if (clickX < arrowPixelPos) {
-                            // 参照シンボル部分をクリック - 参照箇所に移動
-                            alert('参照: ' + relation.detail.referencePath + ':' + relation.detail.referenceLine + '\\n(Standalone版 - ファイル移動不可)');
-                        } else {
-                            // 定義シンボル部分をクリック - 定義箇所に移動
-                            alert('定義: ' + relation.detail.definePath + ':' + relation.detail.defineLine + '\\n(Standalone版 - ファイル移動不可)');
+                        if (!true) {
+                            if (clickX < arrowPixelPos) {
+                                // 参照シンボル部分をクリック - 参照箇所に移動
+                                vscode.postMessage({
+                                    type: 'openFile',
+                                    path: relation.detail.referencePath,
+                                    line: relation.detail.referenceLine
+                                });
+                            } else {
+                                // 定義シンボル部分をクリック - 定義箇所に移動
+                                vscode.postMessage({
+                                    type: 'openFile',
+                                    path: relation.detail.definePath,
+                                    line: relation.detail.defineLine
+                                });
+                            }
                         }
                         tooltip.style.opacity = '0';
                     });
@@ -819,9 +807,12 @@
                 } else if (clickCount >= 2) {
                     // ダブルクリック処理
                     const filePath = node.data('path');
-                    if (filePath) {
+                    if (filePath && !true) {
                         console.log('Node double-clicked (timer), opening file:', filePath);
-                        alert('File: ' + node.data('label') + '\\nPath: ' + filePath + '\\nSymbols: ' + (node.data('symbolCount') || 0) + '\\n\\n(Standalone version - file opening not available)');
+                        vscode.postMessage({
+                            type: 'openFile',
+                            path: filePath
+                        });
                     }
                 }
                 clickCount = 0;
@@ -898,9 +889,12 @@
         cy.on('cxttap', 'node', function(evt) {
             const node = evt.target;
             const filePath = node.data('path');
-            if (filePath) {
+            if (filePath && !true) {
                 console.log('Node right-clicked, opening file:', filePath);
-                alert('File: ' + node.data('label') + '\\nPath: ' + filePath + '\\nSymbols: ' + (node.data('symbolCount') || 0) + '\\n\\n(Standalone version - file opening not available)');
+                vscode.postMessage({
+                    type: 'openFile',
+                    path: filePath
+                });
             }
         });
 
@@ -909,9 +903,12 @@
             if (evt.originalEvent && (evt.originalEvent.ctrlKey || evt.originalEvent.metaKey)) {
                 const node = evt.target;
                 const filePath = node.data('path');
-                if (filePath) {
+                if (filePath && !true) {
                     console.log('Node Ctrl+clicked, opening file:', filePath);
-                    alert('File: ' + node.data('label') + '\\nPath: ' + filePath + '\\nSymbols: ' + (node.data('symbolCount') || 0) + '\\n\\n(Standalone version - file opening not available)');
+                    vscode.postMessage({
+                        type: 'openFile',
+                        path: filePath
+                    });
                 }
             }
         });

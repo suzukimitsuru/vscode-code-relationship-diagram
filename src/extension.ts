@@ -36,9 +36,11 @@ export function activate(context: vscode.ExtensionContext) {
 
 		// 経過の初期表示
 		statusBarItem.show();
-		const updateProgress = (processed: number, total: number, message: string = '') => {
-			const percentage = total > 0 ? ((processed / total) * 100).toFixed(2) : "0.00";
-			statusBarItem.text = `$(sync~spin) ${short_name}: ${processed}/${total} ${percentage}% ${message}`;
+		const updateProgress = (start: number, processed: number, total: number, message: string = '') => {
+			const percentage = total > 0 ? (processed / total) * 100 : 0.00;
+			const processed_sec = (performance.now() - start) / 1000;
+			const rest_sec = percentage > 0 ? (processed_sec / percentage) * (total - processed) : 0;
+			statusBarItem.text = `$(sync~spin) ${short_name}: ${processed}/${total} ${percentage.toFixed(2)}% ...${rest_sec.toFixed(3)}s ${message}`;
 		};
 
 		// ワークスペースが在り、ファイルの関連付けのパターンが在ったら
@@ -55,7 +57,7 @@ export function activate(context: vscode.ExtensionContext) {
 					const start = performance.now();
 					let progress_total = 0;
 					let progressed = 0;
-					updateProgress(progressed, progress_total);
+					updateProgress(start, progressed, progress_total);
 					const last_phase = 7;
 
 					// コードファイルを列挙する
@@ -64,7 +66,7 @@ export function activate(context: vscode.ExtensionContext) {
 					const patterns = codeFiles.list(workspace_folder, associations, ignores, (file: codeFiles.File) => {
 						files.push(file);
 						logs.log(`1/${last_phase} Listed file: ${file.relative_path}`);
-						updateProgress(progressed, progress_total++);
+						updateProgress(start, progressed++, progress_total++);
 					});
 					logs.log(`Listed file: ${files.length} files`);
 
@@ -86,7 +88,7 @@ export function activate(context: vscode.ExtensionContext) {
 							upsert_dic[upsert.relative_path] = new codeSymbols.DocumentDictionary(upsert.updated, upsert.language_id, symbol, doc);
 							symbol_dic[upsert.relative_path] = new codeSymbols.Dictionary(upsert.updated, upsert.language_id, symbol);
 							logs.log(`2/${last_phase} Extructed symbol: ${upsert.relative_path}`);
-							updateProgress(progressed++, progress_total);
+							updateProgress(start, progressed++, progress_total);
 						} catch (error) {
 							logs.error(`2/${last_phase} Failed to open document ${upsert.relative_path}: `, error);
 						}
@@ -101,7 +103,7 @@ export function activate(context: vscode.ExtensionContext) {
 							for (const symbol of symbols) {
 								symbol_dic[symbol.path] = new codeSymbols.Dictionary(nochange.updated, nochange.language_id, symbol);
 								logs.log(`3/${last_phase} Not changed: ${symbol.path}`);
-								updateProgress(progressed++, progress_total);
+								updateProgress(start, progressed++, progress_total);
 							}
 						} catch (error) {
 							logs.error(`3/${last_phase} Failed to load symbols for ${nochange.relative_path}: `, error);
@@ -117,7 +119,7 @@ export function activate(context: vscode.ExtensionContext) {
 							db.symbol_delete(remove).then(() => {
 								db.codeFile_delete(remove).then(() => {
 									logs.log(`4/${last_phase} Removed file: ${remove}`);
-									updateProgress(progressed++, progress_total);
+									updateProgress(start, progressed++, progress_total);
 									resolve();
 								}).catch(error => {
 									reject(`4/${last_phase} db.codeFile_delete(${remove}): ${error instanceof Error ? error.message : error}`);
@@ -128,12 +130,6 @@ export function activate(context: vscode.ExtensionContext) {
 						}));
 					}
 
-					/* 言語サーバーを再構築する
-					if (config.rescanCommand) {
-						await vscode.commands.executeCommand(config.rescanCommand);
-					}
-					*/
-
 					// ファイル更新を追加する
 					Object.values(upsert_dic).forEach(({updated, languageId, symbol: root, document: doc}) => {
 						let ls_wait: ls.LanguageCompleteWaiter | null = null;
@@ -142,7 +138,7 @@ export function activate(context: vscode.ExtensionContext) {
 							// 言語サーバーの補完が完了するまで待つ
 							const config = lc.getConfig(languageId);
 							if (config) {
-								updateProgress(progressed, progress_total, `Waiting language server: ${root.path}`);
+								updateProgress(start, progressed, progress_total, `Waiting language server: ${root.path}`);
 								ls_wait = new ls.LanguageCompleteWaiter();
 								ls_wait.waitComplete(doc, config).then((uri) => {
 
@@ -157,10 +153,12 @@ export function activate(context: vscode.ExtensionContext) {
 												logs.log(`5/${last_phase} Saved symbol: ${root.path}`);
 
 												// 関係を抽出
-												updateProgress(progressed, progress_total, `Extracting relationships: ${root.path}`);
-												codeRelationships.extract(workspace_folder, config, doc.uri, root, symbol_dic, 60).then(reference_rels => {
+												updateProgress(start, progressed, progress_total, `Extracting relationships: ${root.path}`);
+												codeRelationships.extract(workspace_folder, config, doc.uri, root, symbol_dic, 60).then(value => {
+													const retry = value[0];
+													const reference_rels = value[1];
 													const inserts: Promise<void>[] = [];
-													logs.log(`6/${last_phase} Extract relationship: ${root.path} ${reference_rels.length} counts`);
+													logs.log(`6/${last_phase} Extracted relationship: ${root.path} ${reference_rels.length} counts ${retry}/60`);
 
 													// 関係を追加する
 													for (const reference_rel of reference_rels) {
@@ -184,7 +182,7 @@ export function activate(context: vscode.ExtensionContext) {
 														// コードファイルを更新または挿入する
 														db.codeFile_upsert(root.path, updated).then(() => {
 															logs.log(`7/${last_phase} Upserted file: ${root.path}`);
-															updateProgress(progressed++, progress_total);
+															updateProgress(start, progressed++, progress_total);
 															resolve();
 														}).catch(error => {
 															reject(`7/${last_phase} db.codeFile_upsert(${root.path}): ${error instanceof Error ? error.message : error}`);

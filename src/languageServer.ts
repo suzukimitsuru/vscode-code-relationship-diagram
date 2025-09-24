@@ -32,7 +32,7 @@ async function waitReady(uri: vscode.Uri, maxWait: number): Promise<boolean> {
     const checkInterval = 1000; // 1秒
     for (let elapsed = 0; (elapsed < maxWait) && !result; elapsed += checkInterval) {
         try {
-            // 複数のプロバイダーが利用可能かチェック
+            /* 複数のプロバイダーが利用可能かチェック
             const [symbols, hover, definition] = await Promise.all([
                 vscode.commands.executeCommand<vscode.DocumentSymbol[]>('vscode.executeDocumentSymbolProvider', uri),
                 vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', uri, new vscode.Position(0, 0)),
@@ -43,11 +43,14 @@ async function waitReady(uri: vscode.Uri, maxWait: number): Promise<boolean> {
             if (symbols && hover && definition) {
                 result = true;
             }
+            */
+            result = true;
         } catch (error) {
             // まだ準備中
         }
-        // 少し待つ
+        /* 少し待つ
         await new Promise(resolve => setTimeout(resolve, checkInterval));
+        */
     }
     return result;
 }
