@@ -1,19 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as SYMBOL from './symbol';
-import { randomUUID } from 'crypto';
+import { createHash, hash } from 'crypto';
 
-export class Dictionary {
-    constructor(public updated: Date, public languageId: string, public symbol: SYMBOL.SymbolModel) {}
-}
-export class DocumentDictionary extends Dictionary {
-    constructor(updated: Date, languageId: string, symbol: SYMBOL.SymbolModel, public document: vscode.TextDocument) {
-        super(updated, languageId, symbol);
-    }
-}
-
-
-export function extract(filepath: string, document: vscode.TextDocument): Promise<SYMBOL.SymbolModel> {
+export function extract(filepath: string, document: vscode.TextDocument): Promise<SYMBOL.SymbolModel[]> {
     return new Promise(async (resolve, reject) => {
         try {
             // 書類からシンボルを抽出
@@ -22,33 +12,30 @@ export function extract(filepath: string, document: vscode.TextDocument): Promis
             const foundSymbols = docSymbols ? docSymbols.filter(symbol => symbolKinds.includes(symbol.kind)) : undefined;
 
             // シンボル階層を構築
-            const id = randomUUID();
-            const rootSymbol = new SYMBOL.SymbolModel(id, path.basename(filepath), vscode.SymbolKind.File, filepath,
-                0, 0, document.lineCount ? document.lineCount - 1 : 0, 0);
+            const symbols: SYMBOL.SymbolModel[] = [];
+            const rootSymbol = new SYMBOL.SymbolModel(
+                filepath, path.basename(filepath), vscode.SymbolKind.File, filepath,
+                new vscode.Position(0, 0), new vscode.Position(0, 0), new vscode.Position(document.lineCount ? document.lineCount - 1 : 0, 0),
+                Buffer.alloc(32), null
+            );
+            symbols.push(rootSymbol);
             const sumSymbol = (found: vscode.DocumentSymbol, parent: SYMBOL.SymbolModel) => {
-                // selectionRangeが利用可能な場合はそれを使用（より正確なシンボル名の位置）
-                const id = randomUUID();
-                const symbolRange = found.selectionRange || found.range;
-                const branch = new SYMBOL.SymbolModel(id, found.name, found.kind, filepath,
-                    symbolRange.start.line, symbolRange.start.character,
-                    found.range.end.line, found.range.end.character,
-                    parent.id);
+                const id = `${parent.id}/${found.name}`;
+                const hash = createHash('sha256').update(document.getText(found.range)).digest();
+                const define = found.selectionRange;
+                const branch = new SYMBOL.SymbolModel(
+                    id, found.name, found.kind, filepath,
+                    define.start, found.range.start, found.range.end,
+                    hash, parent.id
+                );
+                symbols.push(branch);
                 found.children.forEach(child => { sumSymbol(child, branch); });
                 parent.addChild(branch);
             };
             foundSymbols?.forEach(found => { sumSymbol(found, rootSymbol); });
-            resolve(rootSymbol);
+            resolve(symbols);
         } catch (error) {
             reject(error);
         }
     });
-}
-
-export function each(symbol: SYMBOL.SymbolModel, callback: (symbol: SYMBOL.SymbolModel) => void, inFile: boolean = false): void {
-     if ((symbol.kind !== vscode.SymbolKind.File) || inFile) {
-        callback(symbol);
-    }
-    for (const child of symbol.children) {
-        each(child, callback, inFile);
-    }
 }

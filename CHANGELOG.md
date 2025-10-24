@@ -21,8 +21,6 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - **処理効率向上**: 言語サーバー処理の排除
 - **進捗表示強化**: 残り時間予測機能付き詳細な進捗表示システム
-- **テンプレート統合**: スタンドアロン版HTMLテンプレートの完全統合
-- **設定最適化**: 言語サーバー設定の簡略化と処理速度向上
 
 ### [Changed] 言語サーバー処理の排除
 
@@ -32,36 +30,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **関係抽出の効率化**
   - 言語サーバー処理をコメントアウトし効率化
 
-### [Enhanced] 進捗表示システムの大幅改善
+### [Enhanced] 進捗表示の改善
 
 - **残り時間予測機能**
   - 残り時間予測表示の追加
 
 - **詳細な進捗情報**
   - リトライ回数の可視化によりデバッグ性を向上
-
-### [Fixed] スタンドアロンHTMLの完全統合
-
-- **テンプレートシステム対応**
-  - Font Awesomeアイコンの適切な表示
-  - プレースホルダーシステムによる動的生成
-  - 日本語タイトル「コード関係図」の表示
-
-- **不要なコードの削除**
-  - 無効なbox-shadowスタイル属性を削除
-  - 重複するzoom制限コードを除去
-  - レイアウトイベントハンドラーの重複を解消
-
-### [Removed] 設定の簡略化
-
-- **言語サーバー設定最適化**
-  - `rescanCommand`プロパティを削除
-  - 各言語サーバー設定から再構築コマンドを除去
-  - 設定構造の簡素化
-
-- **待機処理の簡略化**
-  - `waitReady()`関数の複雑なプロバイダーチェックを無効化
-  - 処理速度優先の設定に変更
 
 ### [Technical] 実装詳細
 
@@ -116,7 +91,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - Reset Layoutボタン押下時のノード移動重複実行を解消
   - パフォーマンスとユーザーエクスペリエンスの改善
 
-### [Technical] 実装詳細
+### [Technical] 実装内容
 
 - **ファイル除外の流れ**
   1. 初期化時に`.gitignore`ファイルを読み込み

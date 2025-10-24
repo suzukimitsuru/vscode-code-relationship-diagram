@@ -1,6 +1,7 @@
 /** @file DB操作 with DuckDB */
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as codeFiles from './codeFiles';
 import * as SYMBOL from './symbol';
 import * as codeRelationships from './codeRelationships';
 
@@ -41,7 +42,7 @@ export class Db extends vscode.Disposable {
 
     /**
      * @description テーブル作成
-     * @returns テーブル作成の完了を示すPromise
+     * @returns 完了
      */
     public table_create(): Promise<void> {
         return new Promise<void>((resolve, reject) => {
@@ -49,6 +50,7 @@ export class Db extends vscode.Disposable {
                 // コードファイル
                 `CREATE TABLE IF NOT EXISTS table_files (
                     relative_path TEXT PRIMARY KEY,
+                    language_id TEXT,
                     updated_at TIMESTAMP
                 );`,
                 'CREATE INDEX IF NOT EXISTS idx_files_updated_at ON table_files(updated_at);',
@@ -60,50 +62,27 @@ export class Db extends vscode.Disposable {
                     name TEXT,
                     kind INTEGER,
                     path TEXT,
+                    define_line INTEGER,
+                    define_character INTEGER,
                     start_line INTEGER,
                     start_character INTEGER,
                     end_line INTEGER,
                     end_character INTEGER,
-                    update_id TEXT,
-                    pos_x REAL,
-                    pos_y REAL
+                    hash TEXT
                 );`,
                 'CREATE INDEX IF NOT EXISTS idx_symbols_parent_id ON table_symbols(parent_id);',
                 'CREATE INDEX IF NOT EXISTS idx_symbols_path ON table_symbols(path);',
-                'CREATE INDEX IF NOT EXISTS idx_symbols_path_line ON table_symbols(path, start_line);',
 
                 // 関係
                 `CREATE TABLE IF NOT EXISTS table_relationships (
-                    id TEXT PRIMARY KEY,
                     reference_id TEXT,
-                    reference_path TEXT,
-                    reference_line INTEGER,
                     define_id TEXT,
-                    define_path TEXT,
-                    define_line INTEGER
                 );`,
                 'CREATE INDEX IF NOT EXISTS idx_relationships_reference_id ON table_relationships(reference_id);',
                 'CREATE INDEX IF NOT EXISTS idx_relationships_define_id ON table_relationships(define_id);',
-                'CREATE INDEX IF NOT EXISTS idx_relationships_paths ON table_relationships(reference_path, define_path);',
-
-                // パス検索用（WHERE path = ?）
-                'CREATE INDEX IF NOT EXISTS idx_symbols_path_search ON table_symbols(path)',
-
-                // 範囲検索用（WHERE start_line BETWEEN ? AND ?）
-                'CREATE INDEX IF NOT EXISTS idx_symbols_line_range ON table_symbols(start_line, end_line)',
-
-                // 結合用（JOIN ON reference_id = id）
-                'CREATE INDEX IF NOT EXISTS idx_relationships_join_reference ON table_relationships(reference_id)',
-                'CREATE INDEX IF NOT EXISTS idx_relationships_join_define ON table_relationships(define_id)',
-
-                // ソート用（ORDER BY updated_at）
-                'CREATE INDEX IF NOT EXISTS idx_files_sort_updated ON table_files(updated_at DESC)',
-
-                // 複合条件用
-                'CREATE INDEX IF NOT EXISTS idx_symbols_kind_path ON table_symbols(kind, path)',
 
                 // 統計情報を更新
-                'ANALYZE'
+                'ANALYZE;'
             ];
             for (let index = 0; index < sqls.length; index++) {
                 this._conn.prepare(sqls[index], (err: Error | null) => {
@@ -120,49 +99,59 @@ export class Db extends vscode.Disposable {
     }
  
     /**
-     * @description コードファイルの問い合わせ
-     * @param relative_path 相対パス
-     * @returns コードファイルの情報を含むPromise
+     * @description 全てのファイルの読み込み
+     * @param path 相対パス
+     * @returns ファイル配列
      */
-    public codeFile_query(relative_path: string | null): Promise<duckdb.TableData> {
-        return new Promise<duckdb.TableData>((resolve, reject) => {
-            if (relative_path) {
-                this._conn.prepare(`SELECT * FROM table_files WHERE relative_path = ?;`).all(
-                    relative_path,
-                    (err: Error | null, res: duckdb.TableData) => {
-                        if (err) {
-                            reject(err);
-                        } else {
-                            resolve(res);
-                        }
+    public codeFile_loadAll(): Promise<codeFiles.File[]> {
+        return new Promise<codeFiles.File[]>((resolve, reject) => {
+            this._conn.prepare('SELECT * FROM table_files').all(
+                (err: Error | null, rows: duckdb.TableData) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        const files: codeFiles.File[] = rows.map(row =>
+                            new codeFiles.File(row.relative_path, row.language_id, row.updated_at));
+                        resolve(files);
                     }
-                );
-            } else {
-                this._conn.prepare(`SELECT * FROM table_files;`).all(
-                    (err: Error | null, res: duckdb.TableData) => {
-                        if (err) {
-                            reject(err);
-                        } else {
-                            resolve(res);
-                        }
+                }
+            );
+        });
+    }
+
+    /**
+     * @description ファイルの問い合わせ
+     * @param path  パス
+     * @returns ファイル配列
+     */
+    public codeFile_load(path: string): Promise<codeFiles.File[]> {
+        return new Promise<codeFiles.File[]>((resolve, reject) => {
+            this._conn.prepare('SELECT * FROM table_files WHERE relative_path = ?;').all(
+                path,
+                (err: Error | null, rows: duckdb.TableData) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        const files: codeFiles.File[] = rows.map(row =>
+                            new codeFiles.File(row.relative_path, row.language_id, row.updated_at));
+                        resolve(files);
                     }
-                );
-            }
+                }
+            );
         });
     }
 
     /**
      * @description コードファイルを更新または挿入
-     * @param relative_path 更新または挿入するコードファイルの相対パス
-     * @param updated       更新日時
-     * @returns 更新または挿入の完了を示すPromise
+     * @param file  ファイル
+     * @returns 完了
      */
-    public codeFile_upsert(relative_path: string, updated: Date): Promise<void> {
+    public codeFile_upsert(file : codeFiles.File): Promise<void> {
         return new Promise<void>((resolve, reject) => {
 
             // コードファイルの存在確認
-            this._conn.prepare(`SELECT COUNT(*) AS count FROM table_files WHERE relative_path = ?;`).all(
-                relative_path,
+            this._conn.prepare('SELECT COUNT(*) AS count FROM table_files WHERE relative_path = ?;').all(
+                file.relative_path,
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
                         reject(err);
@@ -171,10 +160,10 @@ export class Db extends vscode.Disposable {
                         // 更新または挿入
                         this._conn.prepare(
                             (rows.length > 0) && (rows[0].count > 0)
-                                ? `UPDATE table_files SET updated_at = ? WHERE relative_path = ?;`
-                                : `INSERT INTO table_files (updated_at, relative_path) VALUES (?, ?);`
+                                ? 'UPDATE table_files SET language_id = ?, updated_at = ? WHERE relative_path = ?;'
+                                : 'INSERT INTO table_files (language_id, updated_at, relative_path) VALUES (?, ?, ?);'
                         ).run(
-                            updated.toISOString(), relative_path,
+                            file.language_id, file.updated.toISOString(), file.relative_path,
                             (err: Error | null) => {
                                 if (err) {
                                     reject(err);
@@ -190,14 +179,14 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description コードファイルを削除
-     * @param relative_path 削除するコードファイルの相対パス
-     * @returns 削除の完了を示すPromise
+     * @description ファイルを削除
+     * @param path  パス
+     * @returns 完了
      */
-    public codeFile_delete(relative_path: string): Promise<void> {
+    public codeFile_delete(path: string): Promise<void> {
         return new Promise<void>((resolve, reject) => {
-            this._conn.prepare(`DELETE FROM table_files WHERE relative_path = ?;`).run(
-                relative_path,
+            this._conn.prepare('DELETE FROM table_files WHERE relative_path = ?;').run(
+                path,
                 (err: Error | null) => {
                     if (err) {
                         reject(err);
@@ -210,78 +199,71 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description シンボルの再帰的保存
-     * @param symbol シンボル情報
-     * @param parentId 親シンボルのID
+     * @description 階層シンボルの保存
+     * @param symbols シンボル配列
+     * @returns 完了
      */
-    public symbol_save(symbol: SYMBOL.SymbolModel, parentId: string | null): Promise<void> {
+    public symbol_save(symbols: SYMBOL.SymbolModel[]): Promise<void> {
         return new Promise<void>((resolve, reject) => {
-            this._conn.prepare(
-                `INSERT INTO table_symbols (id, parent_id, name, kind, path, start_line, start_character, end_line, end_character, update_id, pos_x, pos_y)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-                    symbol.id,
-                    parentId,
-                    symbol.name,
-                    symbol.kind,
-                    symbol.path,
-                    symbol.startLine,
-                    symbol.startCharacter,
-                    symbol.endLine,
-                    symbol.endCharacter,
-                    symbol.updateId,
-                    symbol.position ? symbol.position.x : null,
-                    symbol.position ? symbol.position.y : null,
+            if (symbols.length > 0) {
+                const placeholders: string[] = [];
+                const values: any[] = [];
+                for (const symbol of symbols) {
+                    placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                    values.push(
+                        symbol.id, symbol.parentId,
+                        symbol.name, symbol.kind, symbol.path,
+                        symbol.define.line, symbol.define.character,
+                        symbol.start.line,  symbol.start.character,
+                        symbol.end.line,    symbol.end.character,
+                        symbol.hash.toString('hex')
+                    );
+                }
+                this._conn.prepare(
+                    'INSERT INTO table_symbols ' + 
+                    '(id, parent_id, name, kind, path, define_line, define_character, start_line, start_character, end_line, end_character, hash) ' + 
+                    `VALUES ${placeholders.join(', ')};`).run(
+                    ...values,
                     (err: Error | null) => {
                         if (err) {
                             reject(err);
                         } else {
-                            const children = [];
-                            for (const child of symbol.children) {
-                                children.push(this.symbol_save(child, symbol.id));
-                            }
-                            Promise.all(children).then(
-                                () => resolve(),
-                                (err: Error) => reject(err)
-                            );
+                            resolve();
                         }
                     }
-                
-            );
+                );
+            } else {
+                resolve();
+            }
         });
     }
 
     /**
-     * @description シンボルの全てを読み込み
-     * @param path コードファイルのパス
+     * @description 全ての階層シンボルを読み込み
+     * @param path  パス
      * @returns シンボルのルート要素の配列
      */
     public symbol_load(path: string): Promise<SYMBOL.SymbolModel[]> {
         return new Promise<SYMBOL.SymbolModel[]>((resolve, reject) => {
-            this._conn.prepare(`SELECT * FROM table_symbols WHERE path = ? ORDER BY start_line ASC`).all(
+            this._conn.prepare('SELECT * FROM table_symbols WHERE path = ? ORDER BY id,start_line ASC;').all(
                 path,
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
                         reject(err);
                     } else {
-                        const map = new Map<string, SYMBOL.SymbolModel>();
+                        const symbols: SYMBOL.SymbolModel[] = [];
                         for (const row of rows) {
-                            map.set(row.id, new SYMBOL.SymbolModel(row.id, row.name, row.kind, row.path,
-                                row.start_line, row.start_character,
-                                row.end_line, row.end_character,
-                                row.parent_id,
-                                row.update_id,
-                                (row.pos_x !== null && row.pos_y !== null) ? new SYMBOL.Position(row.pos_x, row.pos_y) : null
-                            ));
+                            const hash = Buffer.from(row.hash, 'hex');
+                            const symbol = new SYMBOL.SymbolModel(
+                                row.id, row.name, row.kind, row.path,
+                                new vscode.Position(row.define_line, row.define_character),
+                                new vscode.Position(row.start_line, row.start_character),
+                                new vscode.Position(row.end_line, row.end_character),
+                                hash, row.parent_id,
+                            );
+                            symbols.push(symbol);
                         }
-                        const roots: SYMBOL.SymbolModel[] = [];
-                        for (const symbol of map.values()) {
-                            if (symbol.parentId && map.has(symbol.parentId)) {
-                                map.get(symbol.parentId)!.addChild(symbol);
-                            } else {
-                                roots.push(symbol);
-                            }
-                        }
-                        resolve(roots);
+                        resolve(symbols);
                     }
                 }
             );
@@ -290,29 +272,48 @@ export class Db extends vscode.Disposable {
 
     /**
      * @description シンボルを削除
-     * @param symbol シンボルのパス
-     * @returns 更新または挿入の完了を示すPromise
+     * @param path  パス
+     * @returns 完了
      */
-    public symbol_delete(symbol_path: string): Promise<void> {
+    public symbol_deletePath(path: string): Promise<void> {
         return new Promise<void>((resolve, reject) => {
-            // 既存のシンボルの関係を先に削除（path一致のものを全削除）
-            this._conn.prepare(`DELETE FROM table_relationships WHERE reference_path = ? OR define_path = ?`).run(
-                symbol_path, symbol_path,
+            // 既存のシンボルを削除（path一致のものを全削除）
+            this._conn.prepare('DELETE FROM table_symbols WHERE path = ?;').run(
+                path,
                 (err: Error | null) => {
                     if (err) {
                         reject(err);
                     } else {
-                        // 既存のシンボルを削除（path一致のものを全削除）
-                        this._conn.prepare(`DELETE FROM table_symbols WHERE path = ?`).run(
-                            symbol_path,
-                            (err: Error | null) => {
-                                if (err) {
-                                    reject(err);
-                                } else {
-                                    resolve();
-                                }
-                            }
-                        );
+                        resolve();
+                    }
+                }
+            );
+        });
+    }
+
+    /**
+     * @description 全てのシンボルを読み込み
+     * @returns シンボルの配列
+     */
+    public symbol_quaryAll(): Promise<SYMBOL.SymbolModel[]> {
+        return new Promise<SYMBOL.SymbolModel[]>((resolve, reject) => {
+            this._conn.prepare('SELECT * FROM table_symbols ORDER BY path, start_line ASC;').all(
+                (err: Error | null, rows: duckdb.TableData) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        const symbols: SYMBOL.SymbolModel[] = [];
+                        for (const row of rows) {
+                            const hash = Buffer.from(row.hash, 'hex');
+                            symbols.push(new SYMBOL.SymbolModel(
+                                row.id, row.name, row.kind, row.path,
+                                new vscode.Position(row.define_line, row.define_character),
+                                new vscode.Position(row.start_line, row.start_character),
+                                new vscode.Position(row.end_line, row.end_character),
+                                hash, row.parent_id,
+                            ));
+                        }
+                        resolve(symbols);
                     }
                 }
             );
@@ -322,29 +323,13 @@ export class Db extends vscode.Disposable {
     /**
      * @description 関係を追加
      * @param rel 関係
-     * @returns 保存の完了を示すPromise
+     * @returns 完了
      */
     public relationship_insert(rel: codeRelationships.Relationship): Promise<void> {
         return new Promise<void>((resolve, reject) => {
-            this._conn.prepare(
-                `INSERT INTO table_relationships
-                (id, reference_id, reference_path, reference_line, define_id, define_path, define_line)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (id) DO UPDATE SET
-                    reference_id = excluded.reference_id,
-                    reference_path = excluded.reference_path,
-                    reference_line = excluded.reference_line,
-                    define_id = excluded.define_id,
-                    define_path = excluded.define_path,
-                    define_line = excluded.define_line`
-            ).run(
-                rel.id,
+            this._conn.prepare('INSERT INTO table_relationships (reference_id, define_id) VALUES (?, ?);').run(
                 rel.reference.id,
-                rel.reference.path,
-                rel.reference.startLine,
                 rel.define.id,
-                rel.define.path,
-                rel.define.startLine,
                 (err: Error | null) => {
                     if (err) {
                         reject(err);
@@ -357,20 +342,50 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description 関係の全てを読み込み
+     * @description 関係を削除
+     * @param path  パス
+     * @returns 完了
+     */
+    public relationship_deletePath(path: string): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            // 既存のシンボルの関係を先に削除（path一致のものを全削除）
+            this._conn.prepare(
+                'DELETE FROM table_relationships ' +
+                'WHERE reference_id IN (SELECT id FROM table_symbols WHERE path = ?) ' +
+                'OR    define_id    IN (SELECT id FROM table_symbols WHERE path = ?);'
+            ).run(
+                path, path,
+                (err: Error | null) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve();}
+                }
+            );
+        });
+    }
+
+    /**
+     * @description 全ての関係を読み込み
      * @returns 関係の配列
      */
     public relationship_quaryAll(): Promise<codeRelationships.Relationship[]> {
         return new Promise<codeRelationships.Relationship[]>((resolve, reject) => {
-            this._conn.prepare(`SELECT * FROM table_relationships`).all(
+            this._conn.prepare(
+                'SELECT ' +
+                    'r.reference_id, s_ref.path AS reference_path, s_ref.start_line AS reference_line, ' +
+                    'r.define_id,    s_def.path AS define_path,    s_def.start_line AS define_line ' +
+                'FROM table_relationships r ' +
+                'LEFT JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
+                'LEFT JOIN table_symbols s_def ON r.define_id = s_def.id;').all(
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
                         reject(err);
                     } else {
                         const relationships: codeRelationships.Relationship[] = rows.map(row =>
-                            new codeRelationships.Relationship(row.id,
-                                new codeRelationships.Symbol(row.reference_id, row.reference_path, row.reference_line),
-                                new codeRelationships.Symbol(row.define_id, row.define_path, row.define_line)
+                            new codeRelationships.Relationship(
+                                new codeRelationships.SymbolLocation(row.reference_id, row.reference_path, row.reference_line),
+                                new codeRelationships.SymbolLocation(row.define_id, row.define_path, row.define_line)
                         ));
                         resolve(relationships);
                     }
@@ -380,22 +395,29 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description 定義を検索
+     * @description 定義ファイルパスから関係を検索
      * @param definePath 定義ファイルパス
      * @returns 定義の配列
      */
-    public relationship_definePath(definePath: string): Promise<codeRelationships.Relationship[]> {
+    public relationship_queryDefinePath(definePath: string): Promise<codeRelationships.Relationship[]> {
         return new Promise<codeRelationships.Relationship[]>((resolve, reject) => {
-            this._conn.prepare(`SELECT * FROM table_relationships WHERE define_path = ?`).all(
+            this._conn.prepare(
+                'SELECT ' +
+                    'r.reference_id, s_ref.path AS reference_path, s_ref.start_line AS reference_line, ' +
+                    'r.define_id,    s_def.path AS define_path,    s_def.start_line AS define_line ' +
+                'FROM table_relationships r ' +
+                'LEFT JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
+                'LEFT JOIN table_symbols s_def ON r.define_id = s_def.id ' +
+                'WHERE s_def.path = ?;').all(
                 definePath,
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
                         reject(err);
                     } else {
                         const relationships: codeRelationships.Relationship[] = rows.map(row =>
-                            new codeRelationships.Relationship(row.id,
-                                new codeRelationships.Symbol(row.reference_id, row.reference_path, row.reference_line),
-                                new codeRelationships.Symbol(row.define_id, row.define_path, row.define_line)
+                            new codeRelationships.Relationship(
+                                new codeRelationships.SymbolLocation(row.reference_id, row.reference_path, row.reference_line),
+                                new codeRelationships.SymbolLocation(row.define_id, row.define_path, row.define_line)
                         ));
                         resolve(relationships);
                     }

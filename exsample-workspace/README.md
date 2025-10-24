@@ -2,6 +2,10 @@
 
 このワークスペースは、Code Relationship Diagram 拡張機能の実行例として作成されたC言語プロジェクトです。
 
+関係の抽出結果は、以下になる筈です。
+
+- 9 processed 3 files(upserted 3, no changed 0, removed 0) 158 lines, 16 relationships
+
 ## ファイル構造
 
 ``` text
@@ -16,8 +20,10 @@ exsample-workspace/
 ├── .vscode/
 │   ├── launch.json      # デバッグ設定
 │   ├── tasks.json       # ビルドタスク設定
-│   └── c_cpp_properties.json  # C/C++言語サーバー設定
-└── Makefile            # ビルド設定
+│   ├── c_cpp_properties.json  # C/C++言語サーバー設定
+│   └── crd.duckdb       # コード関係図 データベース
+├── Makefile             # ビルド設定
+└── exsample-workspace.code-workspace   # ワークスペース
 ```
 
 ## 参照関係

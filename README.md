@@ -55,6 +55,38 @@
 
 ### E.関係の抽出
 
+シンボルの定義場所から参照場所を抽出する事できる。
+シンボルの参照場所を変更した場合は、検出できない。
+このため、変更ファイルで参照しているシンボルの、関係の再抽出も行う必要がある。
+
+- E1.codeFile.distribute(List File, Load table_symbols)
+  - case Upsert(Add | Update):
+    - a) codeSymbols.distribute(Extruct Symbols, Load table_symbols)
+      - case Upsert(Add | Update):
+        - a) Extruct Relationship
+          - a) Extruct Relationship define
+          - a) case Update: Extruct Relationship referance 全ての抽出を統合して、同じ抽出は1度だけにする -> 抽出完了のイベントにより個々の抽出完了の同期を行う。
+        - z) codeSymbols_upsert()
+          - case Update: ''
+          - case Insert: ''
+        - z) relationship_upsert()
+          - case Update: ''
+          - case Insert: ''
+      - case Delete:
+        - a) 'DELETE FROM table_symbols WHERE id = ?;'
+        - a) 'DELETE FROM table_relationships WHERE reference_id = ? OR define_id = ?;
+      - case No change:
+        - No opration
+    - z) codeFile_upsert(path, updated)
+      - case Update: `UPDATE table_files SET updated_at = ? WHERE relative_path = ?;`
+      - case Insert: `INSERT INTO table_files (updated_at, relative_path) VALUES (?, ?);`
+  - case Delete:
+    - 'DELETE FROM table_files WHERE relative_path = ?;'
+    - 'DELETE FROM table_symbols WHERE path = ?;'
+    - 'DELETE FROM table_relationships WHERE reference_path = ? OR define_path = ?;
+  - case No change:
+    - No opration
+
 ### G.コード関係図エディタ
 
 - G1.コード関係図の初期表示

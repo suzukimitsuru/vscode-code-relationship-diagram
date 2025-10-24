@@ -4,7 +4,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /** @type 列挙したコードファイル */
-export type File = {relative_path: string, updated: Date, language_id: string};
+export class File  {
+    constructor(public readonly relative_path: string, public readonly language_id: string, public readonly updated: Date) {};
+}
 
 /**
  * @description .gitignoreファイルからignoreパターンを読み込む
@@ -62,48 +64,7 @@ export function list(wsFolder: string, associations: object, ignores: string[], 
             const stats = fs.statSync(path);
             
             // 進捗を報告
-            const relative_path = path.substring(wsFolder.length + 1);
-            progress({relative_path: relative_path, updated: stats.mtime, language_id: language_id});
+            progress(new File(path.substring(wsFolder.length + 1), typeof language_id === 'string' ? language_id : '', stats.mtime));
         }
     }
-}
-
-/**
- * @description コードファイルテーブルの変更を抽出する  
- * - 追加されたファイルを追加する
- * - 更新されたファイルは更新日時を更新する
- * - 削除されたファイルを削除する
- * @param files 列挙したコードファイル配列
- * @param  rows コードファイルテーブル配列
- * @returns 変更するコードファイル配列, 削除するコードファイル名配列
-*/
-export function updates(files: File[], rows: TableData): [upserts: File[], nochanges: File[], removes: string[]] {
-    const upserts: File[] = [];
-    const nochanges: File[] = [];
-    const removes: string[] = rows.map((row) => row.relative_path as string);
-    for (const file of files) {
-
-        // テーブルに登録済みなら
-        const row_index = rows.findIndex((row) => row.relative_path === file.relative_path);
-        if (row_index >= 0) {
-
-            // 削除しない
-            const remove_index = removes.indexOf(file.relative_path);
-            if (remove_index >= 0) {
-                removes.splice(remove_index, 1);
-            }
-
-            // 更新日時が変わったら、変更する
-            if (rows[row_index].updated_at.toISOString() !== file.updated.toISOString()) {
-                upserts.push(file);
-            } else {
-                nochanges.push(file);
-            }
-        } else {
-            // 追加する
-            upserts.push(file);
-        }
-    }
-
-    return [upserts, nochanges, removes];
 }

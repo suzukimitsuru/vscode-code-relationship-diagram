@@ -1,11 +1,9 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
-import { randomUUID } from 'crypto';
 import * as SYMBOL from './symbol';
 import * as codeSymbols from './codeSymbols';
-import * as lc from './languageConfig';
 
-export class Symbol {
+/** シンボル位置 */
+export class SymbolLocation {
     public readonly id: string;
     private _path: string;
     private _startLine: number;
@@ -16,152 +14,123 @@ export class Symbol {
         this._path = path;
         this._startLine = startLine;
     }
-    public update(path: string, startLine: number) {
-        this._path = path;
-        this._startLine = startLine;
-    }
 }
 
 /** 関係(参照->定義) */
 export class Relationship {
-    /** 識別 */
-    public readonly id: string;
     /** 参照 */
-    public readonly reference: Symbol;
+    public readonly reference: SymbolLocation;
     /** 定義 */
-    public readonly define: Symbol;
+    public readonly define: SymbolLocation;
     /** コンストラクタ */
-    public constructor(id: string, reference: Symbol, define: Symbol) {
-        this.id = id;
+    public constructor(reference: SymbolLocation, define: SymbolLocation) {
         this.reference = reference;
         this.define = define;
     }
 }
 
 /**
+ * インデックス完了の検出
+ * @returns 完了フラグ
+ */
+export async function indexingIsComplete(): Promise<boolean> {
+    // プロジェクト全体のシンボル検索で完了度をテスト
+    try {
+        const workspaceSymbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
+            'vscode.executeWorkspaceSymbolProvider',
+            '' // 空文字で全シンボル取得試行
+        );
+        return workspaceSymbols !== undefined;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * 関係を抽出する
  * @param wsFolder      ワークスペースフォルダ
- * @param config        言語サーバ設定
- * @param uri           ファイルURI
+ * @param define_uri    ファイルURI
  * @param root          ルートシンボル
- * @param symbol_dic    シンボル辞書
+ * @param symbol_all    シンボル辞書
  * @returns 関係配列
  */
-export async function extract(wsFolder: string, config: lc.Config, uri: vscode.Uri,
-    root: SYMBOL.SymbolModel, symbol_dic: Record<string,codeSymbols.Dictionary>, retries: number
-): Promise<[number, Relationship[]]> {
-    let retry = 0;
+export async function extract(wsFolder: string, define_uri: vscode.Uri,
+    def_symbols: SYMBOL.SymbolModel[], symbol_all: Record<string, SYMBOL.SymbolModel[]>, retries: number
+): Promise<Relationship[]> {
     const result: Relationship[] = [];
-    
-    const symbols: SYMBOL.SymbolModel[] = [];
-    codeSymbols.each(root, (symbol) => {
-        symbols.push(symbol);
-    });
-    for (const symbol of symbols) {
+    for (const def_symbol of def_symbols) {
+        // 親シンボルはスキップ
+        if (def_symbol.parentId) {            
+            // 関係を抽出する
+            try {
+                // 全ての参照を検索
+                const ref_locs = await extractWithRetry(define_uri, def_symbol.define, retries);
+                for (const ref_loc of ref_locs) {
 
-        // 関係を抽出する
-        try {
-            // リトライ付きで関係取得
-            const pos = new vscode.Position(symbol.startLine, symbol.startCharacter);
-            const [ retry, locations ] = await extractWithRetry(uri, pos, config, retries, symbol.name);
-            const relationships: Relationship[] = [];
-            console.log(`${config.name} ${symbol.name}: Processing ${locations.length} found relationships`);
-            for (const location of locations) {
+                    // 参照パスが別のファイルで
+                    const ref_path = ref_loc.uri.fsPath.substring(wsFolder.length + 1);
+                    if (ref_path !== def_symbol.path) {
 
-                // 参照パスが別のファイルで
-                const reference_path = location.uri.fsPath.substring(wsFolder.length + 1);
-                console.log(`${config.name} ${symbol.name}: Processing relationship at ${reference_path}:${location.range.start.line}`);
-                if (reference_path !== symbol.path) {
-                    console.log(`${config.name} ${symbol.name}: Cross-file relationship referrence ${reference_path}`);
+                        // 参照シンボルが在れば
+                        const ref_root = symbol_all[ref_path];
+                        if (ref_root) {
+                            const ref_symbol = findSymbol(ref_root, ref_loc.range.start);
+                            if (ref_symbol) {
 
-                    // 参照シンボルが在れば
-                    const reference_root = symbol_dic[reference_path]?.symbol;
-                    if (reference_root) {
-                        const reference_symbol = findSymbol(reference_root, location.range.start);
-                        if (reference_symbol) {
-                            console.log(`${config.name} ${symbol.name}: Found source symbol ${reference_symbol.id}`);
-
-                            // 関係を追加
-                            relationships.push(new Relationship(randomUUID(),
-                                new Symbol(reference_symbol.id, reference_path, location.range.start.line),
-                                new Symbol(symbol.id, symbol.path, symbol.startLine)
-                            ));
-                        } else {
-                            console.warn(`${config.name} ${symbol.name}: Could not find target symbol at ${reference_path}:${location.range.start.line}`);
+                                // 関係を追加
+                                result.push(new Relationship(
+                                    new SymbolLocation(ref_symbol.id, ref_path, ref_loc.range.start.line),
+                                    new SymbolLocation(def_symbol.id, def_symbol.path, def_symbol.start.line)
+                                ));
+                            }
                         }
-                    } else {
-                        console.warn(`${config.name} ${symbol.name}: No symbol dictionary entry for ${reference_path}`);
                     }
-                } else {
-                    console.log(`${config.name} ${symbol.name}: Skipping same-file relationship`);
                 }
+            } finally {
             }
-            
-            console.log(`${config.name} ${symbol.name}: Extracted ${relationships.length} relationships for symbol ${symbol.id}`);
-            result.push(...relationships);
-        } catch (error) {
-            console.error(`${config.name} ${symbol.name}: Failed to extract relationships for ${symbol.path}:${symbol.startLine}`, error);
         }
-        
-        // 言語サーバ負荷軽減のため少し待つ
-        await new Promise(resolve => setTimeout(resolve, 50));
     }
-    console.log(`${root.path}: successful, ${result.length} relationships found`);
-
-    return [ retry, result ];
+    return result;
 }
 
 /**
  * リトライ機能付き関係抽出
  * @param uri       ファイルURI
- * @param start     シンボル開始位置
- * @param config    言語サーバ設定
+ * @param define    シンボル定義位置
  * @param retries   リトライ回数
  * @returns 関係リスト
  */
-async function extractWithRetry(uri: vscode.Uri, start: vscode.Position, config: lc.Config, retries: number, symbolName: string): Promise<[number, vscode.Location[]]> {
+async function extractWithRetry(uri: vscode.Uri, define: vscode.Position, retries: number): Promise<vscode.Location[]> {
     const result: vscode.Location[] = [];
-    console.log(`${config.name}: Attempting to get relationships for ${path.basename(uri.fsPath)} at line ${start.line}, char ${start.character}`);
-    let attempt = 0;
-    for (; (attempt < retries) && (result.length <= 0); attempt++) {
+    let is_extracted = false;
+    for (let attempt = 0; (attempt < retries) && (result.length <= 0); attempt++) {
         try {
-            console.log(`${config.name} ${symbolName}: Attempt ${attempt + 1}/${retries}...`);
-
-            const locations = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, start) as vscode.Location[];
-            console.log(`${config.name} ${symbolName}: executeReferenceProvider returned:`, locations);
-            if (locations && locations.length > 0) {
-                console.log(`${config.name} ${symbolName}: Found ${locations.length} relationships on attempt ${attempt + 1}`);
-                result.push(...locations);
-            } else {
-                if (attempt < retries - 1) {
-                    console.log(`${config.name} ${symbolName}: Attempt ${attempt + 1} returned empty, retrying in ${config.retryDelay}ms...`);
-                    await new Promise(resolve => setTimeout(resolve, 1000));//config.retryDelay));
-                } else {
-                    console.log(`${config.name} ${symbolName}: All ${retries} attempts failed to find relationships`);
+            const found = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, define);
+            if (Array.isArray(found)) {
+                if (found.length > 0 && found[0] instanceof vscode.Location) {
+                    result.push(...found as vscode.Location[]);
                 }
+                is_extracted = true;
             }
-        } catch (error) {
-            console.warn(`${config.name} ${symbolName}: Relationship provider attempt ${attempt + 1} failed:`, error);
-            if (attempt < retries - 1) {
-                await new Promise(resolve => setTimeout(resolve, 1000));//config.retryDelay));
+        } finally {
+            if ((result.length <= 0) && (attempt < (retries - 1))) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
     }
-    return [ attempt, result ];
+    return result;
 }
 
-function findSymbol(root: SYMBOL.SymbolModel, position: vscode.Position): SYMBOL.SymbolModel | null {
+function findSymbol(symbols: SYMBOL.SymbolModel[], position: vscode.Position): SYMBOL.SymbolModel | null {
     let found: SYMBOL.SymbolModel | null = null;
-
-    codeSymbols.each(root, (symbol) => {
-        const range: vscode.Range = new vscode.Range(
-            new vscode.Position(symbol.startLine, symbol.startCharacter),
-            new vscode.Position(symbol.endLine, symbol.endCharacter)
-        );
-        if (range.contains(position)) {
-            found = symbol;
+    for (const symbol of symbols) {
+        // 親シンボルはスキップ
+        if (symbol.parentId) {            
+            const range: vscode.Range = new vscode.Range(symbol.start, symbol.end);
+            if (range.contains(position)) {
+                found = symbol;
+            }
         }
-    });
-
+    }
     return found;
 }

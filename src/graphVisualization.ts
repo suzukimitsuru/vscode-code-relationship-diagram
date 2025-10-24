@@ -8,13 +8,17 @@ import { Logs } from './logs';
 
 export class GraphVisualization {
     private panel: vscode.WebviewPanel | null = null;
-    private readonly context: vscode.ExtensionContext;
+    private readonly subscriptions: { dispose(): any; }[];
+    private readonly extensionPath: string;
+    private readonly extensionUri: vscode.Uri;
     private readonly wsFolder: string;
     private readonly htmlFilename: string;
     private readonly logs: Logs;
 
     constructor(context: vscode.ExtensionContext, wsFolder: string, htmlFilename: string, logs: Logs) {
-        this.context = context;
+        this.subscriptions = context.subscriptions;
+        this.extensionPath = context.extensionPath;
+        this.extensionUri = context.extensionUri;
         this.wsFolder = wsFolder;
         this.htmlFilename = htmlFilename;
         this.logs = logs;
@@ -88,7 +92,7 @@ export class GraphVisualization {
                     }
                 },
                 undefined,
-                this.context.subscriptions
+                this.subscriptions
             );
 
             const panelElapsed = (performance.now() - startTime) / 1000;
@@ -100,7 +104,7 @@ export class GraphVisualization {
         }
 
         // 初期HTML（ローディング状態）を表示
-        const html_loading = this.loadHtmlTemplate(path.join(this.context.extensionPath, 'templates', 'loading.html'));
+        const html_loading = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'loading.html'));
         this.panel.webview.html = this.replacePlaceholders(html_loading, locale('window-title'), { nodes: [], edges: [] });
         const loadingElapsed = (performance.now() - startTime) / 1000;
         this.logs.log(`${loadingElapsed.toFixed(3)}s  15.00%: Generated loading content`);
@@ -118,7 +122,7 @@ export class GraphVisualization {
         
         // 最終的なHTMLを設定
         const htmlStartTime = performance.now();
-        const html_load = this.loadHtmlTemplate(path.join(this.context.extensionPath, 'templates', 'graph.html'));
+        const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph.html'));
         this.panel.webview.html = this.replacePlaceholders(html_load, locale('window-title'), elements);
         const htmlEndTime = performance.now();
         const htmlElapsed = (htmlEndTime - startTime) / 1000;
@@ -381,13 +385,13 @@ export class GraphVisualization {
             'TITLE_PLACEHOLDER':                title,
             'FONT_AWWSOME_CSS_URI_PLACEHOLDER': isStandalone
                 ?  'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css'
-                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'font-awesome', 'css', 'font-awesome.min.css')).toString(),
+                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'font-awesome', 'css', 'font-awesome.min.css')).toString(),
             'CYTOSCAPE_URI_PLACEHOLDER':        isStandalone
                 ? 'https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js'
-                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'cytoscape', 'dist', 'cytoscape.min.js')).toString(),
+                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'cytoscape', 'dist', 'cytoscape.min.js')).toString(),
             'CYTOSCAPE_DAGRE_URI_PLACEHOLDER':  isStandalone
                 ? 'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js'
-                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'cytoscape-dagre', 'cytoscape-dagre.js')).toString(),
+                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'cytoscape-dagre', 'cytoscape-dagre.js')).toString(),
 
             'BACKGROUND_COLOR_PLACEHOLDER':     isDarkTheme ? '#1e1e1e' : '#ffffff',
             'PROGRESS_BG_COLOR_PLACEHOLDER':    isDarkTheme ? '#333' : '#e0e0e0',
@@ -437,7 +441,7 @@ export class GraphVisualization {
     }
     
     private async exportStandaloneHTML(filename: string, data: { nodes: any[], edges: any[] }) {
-        const html_load = this.loadHtmlTemplate(path.join(this.context.extensionPath, 'templates', 'graph.html'));
+        const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph.html'));
         const html_text = this.replacePlaceholders(html_load, locale('window-title') + ' - Standalone', data, true);
 
         // ファイル保存ダイアログを表示

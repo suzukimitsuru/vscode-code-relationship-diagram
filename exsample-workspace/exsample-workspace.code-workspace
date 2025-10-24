@@ -5,29 +5,15 @@
     }
   ],
   "settings": {
-    "C_Cpp.default.includePath": [
-      "${workspaceFolder}/include",
-      "${workspaceFolder}/src"
-    ],
-    "C_Cpp.default.compilerPath": "/usr/bin/gcc",
-    "C_Cpp.default.cStandard": "c11",
-    "C_Cpp.default.intelliSenseMode": "gcc-arm64",
     "C_Cpp.loggingLevel": "Debug",
     "C_Cpp.workspaceParsingPriority": "highest",
+    "C_Cpp.autoAddFileAssociations": false,
     "files.associations": {
-      "src/**/*.(c|h)": "c",
-      "string": "c",
-      "__split_buffer": "c",
-      "deque": "c",
-      "iterator": "c",
-      "locale": "c",
-      "unordered_map": "c",
-      "vector": "c"
+      "src/**/*.(c|h)": "c"
     }
   },
   "extensions": {
     "recommendations": [
-      "ms-vscode.cpptools",
       "ms-vscode.cpptools-extension-pack"
     ]
   }
