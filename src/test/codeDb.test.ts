@@ -11,26 +11,26 @@ suite('codeDb Test Suite', () => {
         
         // テーブル作成
         await db.table_create();
-        const empty_codes = await db.codeFile_loadAll();
+        const empty_codes = await db.codeFile_queryAll();
         assert.strictEqual(empty_codes.length, 0, 'codes.length should be 0');
 
         // コードファイル1の挿入
         await db.codeFile_upsert(new codeFiles.File('test1.txt', 'plaintext', new Date('2023-10-01T12:34:56.123Z')));
-        const insert_codes1 = await db.codeFile_loadAll();
+        const insert_codes1 = await db.codeFile_queryAll();
         assert.strictEqual(insert_codes1.length, 1, 'insert_codes1.length should be 1');
         assert.strictEqual(insert_codes1[0].relative_path, 'test1.txt', 'insert_codes1[0].relative_path should be test.1txt');
         assert.strictEqual(insert_codes1[0].updated.toISOString(), new Date('2023-10-01T12:34:56.123Z').toISOString(), 'insert_codes1[0].updated should be 2023-10-01T12:34:56.123Z');
         
         // コードファイル1の更新
         await db.codeFile_upsert(new codeFiles.File('test1.txt', 'plaintext', new Date('2023-10-02T12:34:56.123Z')));
-        const update_codes1 = await db.codeFile_loadAll();
+        const update_codes1 = await db.codeFile_queryAll();
         assert.strictEqual(update_codes1.length, 1, 'update_codes1.length should be 1');
         assert.strictEqual(update_codes1[0].relative_path, 'test1.txt', 'update_codes1[0].relative_path should be test1.txt');
         assert.strictEqual(update_codes1[0].updated.toISOString(), new Date('2023-10-02T12:34:56.123Z').toISOString(), 'update_codes1[0].updated should be 2023-10-02T12:34:56.123Z');
         
         // コードファイル2の挿入
         await db.codeFile_upsert(new codeFiles.File('test2.txt', 'plaintext', new Date('2023-10-03T12:34:56.123Z')));
-        const insert_codes2 = await db.codeFile_loadAll();
+        const insert_codes2 = await db.codeFile_queryAll();
         assert.strictEqual(insert_codes2.length, 2, 'codes2.length should be 2');
         assert.strictEqual(insert_codes2[0].relative_path, 'test1.txt', 'insert_codes2[0].relative_path should be test1.txt');
         assert.strictEqual(insert_codes2[0].updated.toISOString(), new Date('2023-10-02T12:34:56.123Z').toISOString(), 'insert_codes2[0].updated should be 2023-10-02T12:34:56.123Z');
@@ -38,11 +38,11 @@ suite('codeDb Test Suite', () => {
         assert.strictEqual(insert_codes2[1].updated.toISOString(), new Date('2023-10-03T12:34:56.123Z').toISOString(), 'insert_codes2[0].updated should be 2023-10-03T12:34:56.123Z');
         
         // コードファイルの問い合わせ
-        const query_codes1 = await db.codeFile_load('test1.txt');
+        const query_codes1 = await db.codeFile_query('test1.txt');
         assert.strictEqual(query_codes1.length, 1, 'query_codes1.length should be 1');
         assert.strictEqual(query_codes1[0].relative_path, 'test1.txt', 'query_codes1[0].relative_path should be test1.txt');
         assert.strictEqual(query_codes1[0].updated.toISOString(), new Date('2023-10-02T12:34:56.123Z').toISOString(), 'query_codes1[0].updated should be 2023-10-01T12:34:56.123Z');
-        const query_codes2 = await db.codeFile_load('test2.txt');
+        const query_codes2 = await db.codeFile_query('test2.txt');
         assert.strictEqual(query_codes2.length, 1, 'query_codes2.length should be 1');
         assert.strictEqual(query_codes2[0].relative_path, 'test2.txt', 'query_codes2[0].relative_path should be test1.txt');
         assert.strictEqual(query_codes2[0].updated.toISOString(), new Date('2023-10-03T12:34:56.123Z').toISOString(), 'query_codes2[0].updated should be 2023-10-03T12:34:56.123Z');

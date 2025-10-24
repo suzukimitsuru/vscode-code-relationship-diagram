@@ -14,10 +14,24 @@ import * as codeRelationships from './codeRelationships';
 import { GraphVisualization } from './graphVisualization';
 import { log } from 'console';
 
-export class DocumentDictionary {
-	constructor(public file: codeFiles.File, public symbol: SYMBOL.SymbolModel[], public document: vscode.TextDocument) {}
+export class WillExamine {
+	public readonly path: string;
+	public readonly updated: Date;
+	public readonly lineCount: number;
+	public readonly languageId: string;
+	public readonly uri: vscode.Uri;
+	public readonly symbols: SYMBOL.SymbolModel[];
+	constructor(file: codeFiles.File, document: vscode.TextDocument, symbols: SYMBOL.SymbolModel[]) {
+		this.path = file.relative_path;
+		this.updated = file.updated;
+		this.languageId = document.languageId;
+		this.uri = document.uri;
+		const sum_line = symbols.reduce((sum, symbol) => sum + symbol.lineCount, 0);
+		const file_line = symbols.reduce((sum, symbol) => sum + ((symbol.kind === vscode.SymbolKind.File) ? symbol.lineCount : 0), 0);
+		this.lineCount = file_line > 0 ? file_line : sum_line;
+		this.symbols = symbols;
+	}
 }	
-
 
 let _logs: Logs | null = null;
 
@@ -90,7 +104,7 @@ export function activate(context: vscode.ExtensionContext) {
 					// ファイルを列挙する
 					const file_lists: codeFiles.File[] = [];
 					const ignores = codeFiles.loadGitignorePatterns(workspace_folder);
-					const patterns = codeFiles.list(workspace_folder, associations, ignores, (file: codeFiles.File) => {
+					codeFiles.list(workspace_folder, associations, ignores, (file: codeFiles.File) => {
 						file_lists.push(file);
 						logs.log(`1/${last_phase} Listed file: ${file.relative_path}`);
 						updateProgress(status_bar, start, (progressed++ / 3) * 1, progress_total++);
@@ -98,7 +112,7 @@ export function activate(context: vscode.ExtensionContext) {
 					logs.log(`Listed file: ${file_lists.length} files`);
 
 					// ファイルテーブルの変更を分配する
-					const file_loads = await db.codeFile_loadAll();
+					const file_loads = await db.codeFile_queryAll();
 					const file_sorted = file_lists.sort((a, b) => a.relative_path.localeCompare(b.relative_path));
 					const [file_additions, file_updates, file_notchanges, file_removes] = distribute<RowData, codeFiles.File>(file_loads, file_sorted,
 						(oldItem) => oldItem?.relative_path ?? '',
@@ -108,81 +122,101 @@ export function activate(context: vscode.ExtensionContext) {
 					);
 					progress_total += file_additions.length + file_updates.length + file_notchanges.length + file_removes.length;
 
-					const symbol_all: SYMBOL.SymbolModel[] = [];
+					// 更新対象
+					const code_upserts: WillExamine[] = [];
+					const symbol_all: Record<string, SYMBOL.SymbolModel[]> = {};
+					const db_processes: Promise<void>[] = [];
+
+					// 追加ファイルは、シンボルをコードから抽出する
+					for (const code of file_additions) {
+						try {
+							// シンボルをコードから抽出する
+							const [doc, symbols] = await new Promise<[vscode.TextDocument, SYMBOL.SymbolModel[]]>(resolve => {
+								vscode.workspace.openTextDocument(vscode.Uri.file(path.join(workspace_folder, code.relative_path))).then(doc => {
+									codeSymbols.extract(code.relative_path, doc).then((symbols) => resolve([doc, symbols])).catch(() => resolve([doc, []]));
+								});
+							});
+
+							// 更新対象を登録
+							code_upserts.push(new WillExamine(code, doc, symbols));
+							symbol_all[code.relative_path] = symbols;
+
+							// 経過表示
+							logs.log(`2/${last_phase} Extructed symbol: ${code.relative_path}`);
+							updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
+						} catch (error) {
+							logs.error(`2/${last_phase} Failed to open document ${code.relative_path}: `, error);
+						}
+					}
 
 					// 変更ファイルは、シンボルのテーブルと抽出から変更を分配する
-					const relationship_simbols: SYMBOL.SymbolModel[] = []; 
 					for (const code of file_updates) {
-						const [olds, news] = await Promise.all([
-							db.symbol_load(code.relative_path),
-							new Promise<SYMBOL.SymbolModel[]>(resolve => {
+
+						// シンボルのテーブルからの読み込みと、コードからシンボルの抽出を行う
+						const [olds, [doc, news]] = await Promise.all([
+							db.symbol_query(code.relative_path),
+							new Promise<[vscode.TextDocument, SYMBOL.SymbolModel[]]>(resolve => {
 								vscode.workspace.openTextDocument(vscode.Uri.file(path.join(workspace_folder, code.relative_path))).then(doc => {
-									codeSymbols.extract(code.relative_path, doc).then((symbols) => resolve(symbols)).catch(() => resolve([]));
+									codeSymbols.extract(code.relative_path, doc).then((symbols) => resolve([doc, symbols])).catch(() => resolve([doc, []]));
 								});
 							})
 						]);
+
+						// シンボルの変更を分配する
 						const [symbol_additions, symbol_updates, symbol_notchanges, symbol_removes] = distribute<SYMBOL.SymbolModel, SYMBOL.SymbolModel>(olds, news,
 							(oldItem) => oldItem.id,
 							(newItem) => newItem.id,
 							(oldItem, newItem) => newItem.id === oldItem.id,
 							(oldItem, newItem) => !newItem.hash.equals(oldItem.hash)  
 						);
-						logs.log(`symbols ${code.relative_path}: (added ${symbol_additions.length}, updated ${symbol_updates.length}, no changed ${symbol_notchanges.length}, removed ${symbol_removes.length})`);
-						relationship_simbols.push(...symbol_additions, ...symbol_updates);
-					}
-					// 追加ファイルは、シンボルをコードから抽出する
-					for (const code of file_additions) {
-						const symbols = await new Promise<SYMBOL.SymbolModel[]>(resolve => {
-							vscode.workspace.openTextDocument(vscode.Uri.file(path.join(workspace_folder, code.relative_path))).then(doc => {
-								codeSymbols.extract(code.relative_path, doc).then((symbols) => resolve(symbols)).catch(() => resolve([]));
-							});
-						});
-						symbol_all.push(...symbols);
-					}
-					// 変更のないファイルは、シンボルテーブルを読み込む
-					for (const code of file_notchanges) {
-						const symbols = await db.symbol_load(code.relative_path);
-						symbol_all.push(...symbols);
-					}
 
+						// 追加シンボルは、定義から関係を調査する
+						const define_symbols: SYMBOL.SymbolModel[] = [];
+						define_symbols.push(...symbol_additions);
 
+						// 変更シンボルは、定義から関係を調査する
+						define_symbols.push(...symbol_updates);
+						code_upserts.push(new WillExamine(code, doc, define_symbols));
 
-					// ファイルのシンボルを抽出する
-					const hierarchy_all: Record<string, SYMBOL.SymbolModel[]> = {};
-					const hierarchy_upserts: DocumentDictionary[] = [];
-					for (const upsert of [...file_additions, ...file_updates]) {
-						try {
-							const [doc, symbols] = await new Promise<[vscode.TextDocument, SYMBOL.SymbolModel[]]>(resolve => {
-								vscode.workspace.openTextDocument(vscode.Uri.file(path.join(workspace_folder, upsert.relative_path))).then(doc => {
-									codeSymbols.extract(upsert.relative_path, doc).then((symbols) => resolve([doc, symbols])).catch(() => resolve([doc, []]));
+						// 変更シンボルは、参照から関係を調査する
+						const refs = await db.relationship_queryReferencedSymbols(symbol_updates.map(symbol => symbol.id));
+						for (const ref of refs) {
+							const [ref_doc, ref_symbols] = await new Promise<[vscode.TextDocument, SYMBOL.SymbolModel[]]>(resolve => {
+								vscode.workspace.openTextDocument(vscode.Uri.file(path.join(workspace_folder, ref.reference.path))).then(doc => {
+									codeSymbols.extract(ref.reference.path, doc).then((symbols) => resolve([doc, symbols])).catch(() => resolve([doc, []]));
 								});
 							});
-							hierarchy_upserts.push(new DocumentDictionary(upsert, symbols, doc));
-							hierarchy_all[upsert.relative_path] = symbols;
-							logs.log(`2/${last_phase} Extructed symbol: ${upsert.relative_path}`);
-							updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
-							/*
-							const diags = vscode.languages.getDiagnostics(doc.uri);
-							for (const diag of diags) {
-								logs.warn(`  Diagnostic: ${upsert.relative_path}(${diag.range.start.line + 1},${diag.range.start.character + 1}-${diag.range.end.line + 1},${diag.range.end.character + 1}) ${diag.code}:${diag.message}`);
-							}*/
-						} catch (error) {
-							logs.error(`2/${last_phase} Failed to open document ${upsert.relative_path}: `, error);
+							const ref_file = file_lists.filter((file) => file.relative_path === ref.reference.path);
+							code_upserts.push(new WillExamine(ref_file[0], ref_doc, ref_symbols));
 						}
-					}
-					progress_total += hierarchy_upserts.length;
-					logs.log(`Extructed symbols: ${hierarchy_upserts.length} files`);
 
-					// 変更のないファイルのシンボルを読み込む
-					for (const nochange of file_notchanges) {
+
+						// 変更のないシンボルは、既にシンボルテーブルにも関係テーブルにも在るため、何もしない
+						symbol_all[code.relative_path] = news;
+
+						// 削除シンボルはDBから削除する
+						if (symbol_removes.length > 0) {
+							db_processes.push(db.symbol_delete(symbol_removes));
+							db_processes.push(db.relationship_deleteSymbols(symbol_removes));
+						}
+
+						// 経過表示
+						logs.log(`symbols ${code.relative_path}: (added ${symbol_additions.length}, updated ${symbol_updates.length}, no changed ${symbol_notchanges.length}, removed ${symbol_removes.length})`);
+					}
+
+					progress_total += code_upserts.length;
+					logs.log(`Extructed symbols: ${code_upserts.length} files`);
+
+					// 変更のないファイルは、シンボルテーブルを読み込む
+					for (const code of file_notchanges) {
 						try {
-							const symbols = await db.symbol_load(nochange.relative_path);
-							hierarchy_all[nochange.relative_path] = symbols;
+							const symbols = await db.symbol_query(code.relative_path);
+							symbol_all[code.relative_path] = symbols;
 							line_count += symbols[0].lineCount;
-							logs.log(`3/${last_phase} Not changed: ${nochange.relative_path}`);
+							logs.log(`3/${last_phase} Not changed: ${code.relative_path}`);
 							updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
 						} catch (error) {
-							logs.error(`3/${last_phase} Failed to load symbols for ${nochange.relative_path}: `, error);
+							logs.error(`3/${last_phase} Failed to load symbols for ${code.relative_path}: `, error);
 						}
 					}										
 					logs.log(`Not changed symbols ${file_notchanges.length} files`);
@@ -200,22 +234,18 @@ export function activate(context: vscode.ExtensionContext) {
 					}
 					logs.log(`Waitied for indexing to complete... attempt ${attempt + 1}`);
 
-					const save_promises: Promise<void>[] = [];
 
 					// ファイル削除を追加する
 					for (const remove of file_removes) {
-						save_promises.push(new Promise<void>((resolve, reject) => {
+						db_processes.push(new Promise<void>((resolve, reject) => {
 							Promise.all([
-								db.relationship_deletePath(remove),
-								db.symbol_deletePath(remove)
+								db.relationship_deleteFile(remove),
+								db.symbol_deleteFile(remove),
+								db.codeFile_delete(remove),
 							]).then(() => {
-								db.codeFile_delete(remove).then(() => {
-									logs.log(`4/${last_phase} Removed file: ${remove}`);
-									updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
-									resolve();
-								}).catch(error => {
-									reject(`4/${last_phase} db.codeFile_delete(${remove}): ${error instanceof Error ? error.message : error}`);
-								});
+								logs.log(`4/${last_phase} Removed file: ${remove}`);
+								updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
+								resolve();
 							}).catch(error => {
 								reject(`4/${last_phase} db.symbol_delete(${remove}): ${error instanceof Error ? error.message : error}`);
 							});
@@ -223,78 +253,73 @@ export function activate(context: vscode.ExtensionContext) {
 					}
 
 					// ファイル更新を追加する
-					for (const hierarchy_upsert of	hierarchy_upserts) {
-						line_count += hierarchy_upsert.symbol[0].lineCount;
-						save_promises.push(new Promise<void>((resolve, reject) => {
+					for (const code_upsert of code_upserts) {
+						line_count += code_upsert.lineCount;
+						db_processes.push(new Promise<void>((resolve, reject) => {
 
 							// 定義を検索
-							db.relationship_queryDefinePath(hierarchy_upsert.file.relative_path).then(define_rels => {
+							db.relationship_queryDefinePath(code_upsert.path).then(define_rels => {
 
-								// シンボルを削除する
-								Promise.all([
-									db.relationship_deletePath(hierarchy_upsert.file.relative_path),
-									db.symbol_deletePath(hierarchy_upsert.file.relative_path)
-								]).then(() => {
+								// 更新対象を予め削除しておく TODO: シンボル単位?
 
+									// 関係を調査
+									updateProgress(status_bar, start, progressed, progress_total, `Examining relationships: ${code_upsert.path}`);
+									codeRelationships.examine(workspace_folder, code_upsert.uri, code_upsert.symbols, symbol_all, 3).then(reference_rels => {
+										reference_count += reference_rels.length;
+										const inserts: Promise<void>[] = [];
+										logs.log(`5/${last_phase} Examined relationship: ${code_upsert.path}:${code_upsert.lineCount} ${reference_rels.length} counts`);
 
-									// シンボルをDBに保存する
-									db.symbol_save(hierarchy_upsert.symbol).then(() => {
-										logs.log(`5/${last_phase} Saved symbol: ${hierarchy_upsert.file.relative_path}`);
+										// 関係の参照と関係の定義を追加する
+										inserts.push(new Promise<void>((rel_resolve) => {
+											db.relationship_delete(reference_rels).then(() =>{
+												db.relationship_inserts(reference_rels).then(() => rel_resolve());
+											});
+										}));
+										inserts.push(new Promise<void>((rel_resolve) => {
+											db.relationship_delete(define_rels).then(() =>{
+												db.relationship_inserts(define_rels).then(() => rel_resolve());
+											});
+										}));
+										Promise.all(inserts).then(() => {
 
-										// 関係を抽出
-										updateProgress(status_bar, start, progressed, progress_total, `Extracting relationships: ${hierarchy_upsert.file.relative_path}`);
-										codeRelationships.extract(workspace_folder, hierarchy_upsert.document.uri, hierarchy_upsert.symbol, hierarchy_all, 3).then(reference_rels => {
-											reference_count += reference_rels.length;
-											const inserts: Promise<void>[] = [];
-											logs.log(`6/${last_phase} Extracted relationship: ${hierarchy_upsert.file.relative_path}:${hierarchy_upsert.symbol[0].lineCount} ${reference_rels.length} counts`);
-
-											// 関係の参照を追加する
-											for (const reference_rel of reference_rels) {
-												inserts.push( db.relationship_insert(reference_rel) );
-											}
-											// 関係の定義を追加する
-											for (const define_rel of define_rels) {
-												inserts.push( db.relationship_insert(define_rel) );
-											}
-											Promise.all(inserts).then(() => {
+											// シンボルをDBに保存する
+											db.symbol_inserts(code_upsert.symbols).then(() => {
+												logs.log(`6/${last_phase} Saved symbol: ${code_upsert.path}`);
 
 												// ファイルを更新または挿入する
-												db.codeFile_upsert(new codeFiles.File(hierarchy_upsert.file.relative_path, hierarchy_upsert.document.languageId, hierarchy_upsert.file.updated)).then(() => {
-													logs.log(`7/${last_phase} Upserted file: ${hierarchy_upsert.file.relative_path}`);
+												db.codeFile_upsert(new codeFiles.File(code_upsert.path, code_upsert.languageId, code_upsert.updated)).then(() => {
+													logs.log(`7/${last_phase} Upserted file: ${code_upsert.path}`);
 													updateProgress(status_bar, start, progressed++, progress_total);
 													resolve();
 												}).catch(error => {
-													reject(`7/${last_phase} db.codeFile_upsert(${hierarchy_upsert.file.relative_path}): ${error instanceof Error ? error.message : error}`);
+													reject(`7/${last_phase} db.codeFile_upsert(${code_upsert.path}): ${error instanceof Error ? error.message : error}`);
 												});
 											}).catch(error => {
-												reject(`7/${last_phase} Failed to insert relationships for ${hierarchy_upsert.file.relative_path}: ${error instanceof Error ? error.message : error}`);
+												reject(`6/${last_phase} db.symbol_save(${code_upsert.path}): ${error instanceof Error ? error.message : error}`);
 											});
 										}).catch(error => {
-											reject(`6/${last_phase} Failed to extract relationships from ${hierarchy_upsert.file.relative_path}: ${error instanceof Error ? error.message : error}`);
+											reject(`5/${last_phase} Failed to insert relationships for ${code_upsert.path}: ${error instanceof Error ? error.message : error}`);
 										});
 									}).catch(error => {
-										reject(`5/${last_phase} db.symbol_save(${hierarchy_upsert.file.relative_path}): ${error instanceof Error ? error.message : error}`);
+										reject(`5/${last_phase} Failed to Examine relationships from ${code_upsert.path}: ${error instanceof Error ? error.message : error}`);
 									});
-								}).catch(error => {
-									reject(`5/${last_phase} db.symbol_delete(${hierarchy_upsert.file.relative_path}): ${error instanceof Error ? error.message : error}`);
-								});
 							}).catch(error => {
-								reject(`5/${last_phase} Failed to query relationships for ${hierarchy_upsert.file.relative_path}: ${error instanceof Error ? error.message : error}`);
+								reject(`4/${last_phase} Failed to query relationships for ${code_upsert.path}: ${error instanceof Error ? error.message : error}`);
 							});
 						}));
 					}
 
 					// 保存処理を実行する
-					for (const save_promise of save_promises) {
+					for (const process of db_processes) {
 						try {
-							await save_promise;
+							await process;
 						} catch (error) {
 							logs.error('', error);
 						}
 					}
 					/*
 					try {
-						await Promise.all(save_promises);
+						await Promise.all(db_processes);
 					} catch (error) {
 						logs.error('', error);
 					}
@@ -303,9 +328,14 @@ export function activate(context: vscode.ExtensionContext) {
 					// DBを破棄する
 					db.dispose();
 
-					logs.log(`${secondsToTime(performance.now() - start)} processed ${file_lists.length} files(` +
-						`added ${file_additions.length}, updated ${file_updates.length}, no changed ${file_notchanges.length}, removed ${file_removes.length}) ` +
-						`${line_count} lines, ${reference_count} relationships`);
+					logs.log(`${secondsToTime(performance.now() - start)} ` +
+						`processed ${file_lists.length.toLocaleString()} files(` +
+							`added ${file_additions.length.toLocaleString()}, ` +
+							`updated ${file_updates.length.toLocaleString()}, ` +
+							`no changed ${file_notchanges.length.toLocaleString()}, ` +
+							`removed ${file_removes.length.toLocaleString()}) ` +
+						`${line_count.toLocaleString()} lines, ` +
+						`${reference_count.toLocaleString()} relationships`);
 
 					// 初期化メッセージを表示する
 					updateCommand(status_bar, short_name, 'vscode-code-relationship-diagram.showDiagram', locale('show-diagram-tooltip'));
@@ -366,11 +396,6 @@ export function activate(context: vscode.ExtensionContext) {
 		} else {
 			logs.error('No workspace folder found');
 		}
-	}));
-
-	// ドキュメント変更イベント
-	context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
-    	const doc = event.document;
 	}));
 }
 

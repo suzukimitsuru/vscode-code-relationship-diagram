@@ -47,14 +47,14 @@ export async function indexingIsComplete(): Promise<boolean> {
 }
 
 /**
- * 関係を抽出する
+ * 関係を調査する
  * @param wsFolder      ワークスペースフォルダ
  * @param define_uri    ファイルURI
  * @param root          ルートシンボル
  * @param symbol_all    シンボル辞書
  * @returns 関係配列
  */
-export async function extract(wsFolder: string, define_uri: vscode.Uri,
+export async function examine(wsFolder: string, define_uri: vscode.Uri,
     def_symbols: SYMBOL.SymbolModel[], symbol_all: Record<string, SYMBOL.SymbolModel[]>, retries: number
 ): Promise<Relationship[]> {
     const result: Relationship[] = [];
@@ -64,7 +64,7 @@ export async function extract(wsFolder: string, define_uri: vscode.Uri,
             // 関係を抽出する
             try {
                 // 全ての参照を検索
-                const ref_locs = await extractWithRetry(define_uri, def_symbol.define, retries);
+                const ref_locs = await examineWithRetry(define_uri, def_symbol.define, retries);
                 for (const ref_loc of ref_locs) {
 
                     // 参照パスが別のファイルで
@@ -94,15 +94,15 @@ export async function extract(wsFolder: string, define_uri: vscode.Uri,
 }
 
 /**
- * リトライ機能付き関係抽出
+ * リトライ機能付き関係調査
  * @param uri       ファイルURI
  * @param define    シンボル定義位置
  * @param retries   リトライ回数
  * @returns 関係リスト
  */
-async function extractWithRetry(uri: vscode.Uri, define: vscode.Position, retries: number): Promise<vscode.Location[]> {
+async function examineWithRetry(uri: vscode.Uri, define: vscode.Position, retries: number): Promise<vscode.Location[]> {
     const result: vscode.Location[] = [];
-    let is_extracted = false;
+    let is_examined = false;
     for (let attempt = 0; (attempt < retries) && (result.length <= 0); attempt++) {
         try {
             const found = await vscode.commands.executeCommand('vscode.executeReferenceProvider', uri, define);
@@ -110,7 +110,7 @@ async function extractWithRetry(uri: vscode.Uri, define: vscode.Position, retrie
                 if (found.length > 0 && found[0] instanceof vscode.Location) {
                     result.push(...found as vscode.Location[]);
                 }
-                is_extracted = true;
+                is_examined = true;
             }
         } finally {
             if ((result.length <= 0) && (attempt < (retries - 1))) {
