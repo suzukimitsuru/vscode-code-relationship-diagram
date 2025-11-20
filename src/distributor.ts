@@ -1,5 +1,3 @@
-import { RowData, TableData } from 'duckdb';
-
 /**
  * 新旧から変更を分配する
  * @param olds      旧配列

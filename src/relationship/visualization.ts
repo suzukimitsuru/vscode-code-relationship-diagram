@@ -1,12 +1,12 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import locale from './locale';
-import * as SYMBOL from './symbol';
+import locale from '../locale';
+import * as SYMBOL from '../extruct/symbol';
 import * as codeRelationships from './codeRelationships';
-import { Logs } from './logs';
+import { Logs } from '../logs';
 
-export class GraphVisualization {
+export class Visualization {
     private panel: vscode.WebviewPanel | null = null;
     private readonly subscriptions: { dispose(): any; }[];
     private readonly extensionPath: string;

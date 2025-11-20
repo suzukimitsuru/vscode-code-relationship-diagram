@@ -13,7 +13,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
-## 0.1.24 - 2025-01-18
+## 0.1.26 - 2025-11-18
+
+- コード関係調査の効率化
+- ファイル監視の追加
+
+## 0.1.24 - 2025-09-25
 
 ### 0.1.24 - Language Server Processing Optimization and Progress Enhancement
 
@@ -48,7 +53,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - 言語サーバー待機時間の最適化
   - 無駄な処理ループの削減
 
-## 0.1.23 - 2025-01-18
+## 0.1.23 - 2025-09-23
 
 ### 0.1.23 - Gitignore Integration and Layout Optimization
 
@@ -103,7 +108,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - 関係図生成時間の短縮
   - メモリ使用量の削減
 
-## 0.1.22 - 2025-01-18
+## 0.1.22 - 2025-09-23
 
 ### 0.1.22 - Template System Implementation and Architecture Refactoring
 

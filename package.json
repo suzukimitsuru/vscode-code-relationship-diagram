@@ -33,16 +33,16 @@
   "contributes": {
     "commands": [
       {
-        "command": "vscode-code-relationship-diagram.initialize",
-        "title": "Initialize Code Relationship Diagram",
+        "command": "vscode-code-relationship-diagram.examineRelationships",
+        "title": "Examine Code Relationships",
         "category": "CRD",
-        "description": "%initialize-description%"
+        "description": "%examine-description%"
       },
       {
         "command": "vscode-code-relationship-diagram.showDiagram",
         "title": "Show Code Relationship Diagram",
         "category": "CRD",
-        "description": "Display the code relationship diagram using Cytoscape.js"
+        "description": "%show-diagram-description%"
       }
     ]
   },

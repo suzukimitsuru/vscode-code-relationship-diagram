@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as assert from 'assert';
-import * as codeFiles from '../codeFiles';
-import * as SYMBOL from '../symbol';
+import * as codeFiles from '../extruct/codeFiles';
+import * as SYMBOL from '../extruct/symbol';
 import { RowData } from 'duckdb';
 import { distribute } from '../distributor';
 

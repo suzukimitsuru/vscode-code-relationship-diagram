@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import * as SYMBOL from './symbol';
-import * as codeSymbols from './codeSymbols';
+import * as SYMBOL from '../extruct/symbol';
+import * as path from 'path';
 
 /** シンボル位置 */
 export class SymbolLocation {
@@ -30,20 +30,34 @@ export class Relationship {
 }
 
 /**
- * インデックス完了の検出
- * @returns 完了フラグ
+ * インデックス完了待ち
+ * @param retry 最大試行回数
+ * @returns 試行回数
  */
-export async function indexingIsComplete(): Promise<boolean> {
-    // プロジェクト全体のシンボル検索で完了度をテスト
-    try {
-        const workspaceSymbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
-            'vscode.executeWorkspaceSymbolProvider',
-            '' // 空文字で全シンボル取得試行
-        );
-        return workspaceSymbols !== undefined;
-    } catch {
-        return false;
+export async function indexingCompleteWait(retry: number): Promise<number> {
+    let attempt = 0;
+    for (attempt = 0; attempt < retry; attempt++) {
+        // プロジェクト全体のシンボル検索で完了度をテスト
+        let is_complete = false;
+        try {
+            const workspaceSymbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
+                'vscode.executeWorkspaceSymbolProvider',
+                '' // 空文字で全シンボル取得試行
+            );
+            is_complete = workspaceSymbols !== undefined;
+        } catch {
+            is_complete = false;
+        }
+
+        // インデックス作成が完了するまで待つ
+        if (is_complete) {
+            break;
+        } else {
+            // まだ完了していなかったら、もう少し待つ
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
     }
+    return attempt + 1;
 }
 
 /**
@@ -68,7 +82,7 @@ export async function examine(wsFolder: string, define_uri: vscode.Uri,
                 for (const ref_loc of ref_locs) {
 
                     // 参照パスが別のファイルで
-                    const ref_path = ref_loc.uri.fsPath.substring(wsFolder.length + 1);
+                    const ref_path = path.relative(wsFolder, ref_loc.uri.fsPath);
                     if (ref_path !== def_symbol.path) {
 
                         // 参照シンボルが在れば

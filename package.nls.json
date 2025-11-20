@@ -1,8 +1,9 @@
 {
     "window-title": "Code Relationship Diagram",
-    "initialize-description": "Displays a Hello World message.",
-    "initialize-message": "Hello World from Code Relationship Diagram!",
-    "error-no-associations": "Create workspace and set 'files.associations'.",
+    "examine-description": "Examine code relationships.",
+    "examing-tooltip": "Examing Relationships...",
+    "show-diagram-description": "Show Code Relationship Diagram.",
     "show-diagram-tooltip": "Show Diagram",
-    "initialize-tooltip": "Extructing Relationships..."
+    "error-no-associations": "Create workspace and set 'files.associations'.",
+    "error-no-database": "Please run 'CRD: Examine code relationships' command first to create the database."
 }

@@ -1,9 +1,9 @@
 /** @file DB操作 with DuckDB */
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as codeFiles from './codeFiles';
-import * as SYMBOL from './symbol';
-import * as codeRelationships from './codeRelationships';
+import * as codeFiles from './extruct/codeFiles';
+import * as SYMBOL from './extruct/symbol';
+import * as codeRelationships from './relationship/codeRelationships';
 
 import * as duckdb from 'duckdb';
 const dynDuckdb = require(path.join(__dirname, '..', 'bindings', `duckdb-${process.platform}-${process.arch}.node`)) as typeof duckdb;
@@ -14,7 +14,7 @@ export class Db extends vscode.Disposable {
     /** @description データベース */
     private _db: duckdb.Database;
     /** @description 接続 */
-    private _conn: duckdb.Connection;
+    protected _conn: duckdb.Connection;
     
     /**
      * @description コンストラクタ
@@ -45,7 +45,7 @@ export class Db extends vscode.Disposable {
      * @returns 完了
      */
     public table_create(): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
+        return new Promise<void>(async (resolve, reject) => {
             const sqls = [
                 // コードファイル
                 `CREATE TABLE IF NOT EXISTS table_files (
@@ -85,16 +85,22 @@ export class Db extends vscode.Disposable {
                 'ANALYZE;'
             ];
             for (let index = 0; index < sqls.length; index++) {
-                this._conn.prepare(sqls[index], (err: Error | null) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        if (index === sqls.length - 1) {
-                            resolve();
-                        }
-                    }
-                }).run();
+                try {
+                    await new Promise<void>((one_resolve, one_reject) => {
+                        this._conn.prepare(sqls[index]).run(
+                            (err: Error | null) => {
+                            if (err) {
+                                one_reject(err);
+                            } else {
+                                one_resolve();
+                            }
+                        });
+                    });
+                } catch (error) {
+                    reject(error);
+                }
             }
+            resolve();
         });
     }
  
@@ -392,7 +398,8 @@ export class Db extends vscode.Disposable {
                     if (err) {
                         reject(err);
                     } else {
-                        resolve();}
+                        resolve();
+                    }
                 }
             );
         });
@@ -416,7 +423,8 @@ export class Db extends vscode.Disposable {
                     if (err) {
                         reject(err);
                     } else {
-                        resolve();}
+                        resolve();
+                    }
                 }
             );
         });

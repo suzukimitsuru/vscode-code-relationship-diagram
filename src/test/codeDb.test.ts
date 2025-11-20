@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as codeDb from '../codeDb';
-import * as codeFiles from '../codeFiles';
+import * as codeFiles from '../extruct/codeFiles';
 
 suite('codeDb Test Suite', () => {
 

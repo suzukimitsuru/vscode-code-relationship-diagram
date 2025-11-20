@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import * as codeFiles from '../codeFiles';
+import * as codeFiles from '../extruct/codeFiles';
 import * as path from 'path';
 import { TableData } from 'duckdb';
 

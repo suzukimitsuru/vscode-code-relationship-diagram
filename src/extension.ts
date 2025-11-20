@@ -5,47 +5,86 @@ import * as fs from 'fs';
 import locale from './locale';
 import { Logs } from './logs';
 import * as codeDb from './codeDb';
-import * as codeFiles from './codeFiles';
-import * as SYMBOL from './symbol';
-import * as codeSymbols from './codeSymbols';
-import { RowData } from 'duckdb';
-import { distribute } from './distributor';
-import * as codeRelationships from './codeRelationships';
-import { GraphVisualization } from './graphVisualization';
-import { log } from 'console';
+import * as codeFiles from './extruct/codeFiles';
+import * as codeRelationships from './relationship/codeRelationships';
+import * as Relationship from './relationship';
+import ignore from 'ignore';
+import { Queue } from './queue';
 
-export class WillExamine {
-	public readonly path: string;
-	public readonly updated: Date;
-	public readonly lineCount: number;
-	public readonly languageId: string;
-	public readonly uri: vscode.Uri;
-	public readonly symbols: SYMBOL.SymbolModel[];
-	constructor(file: codeFiles.File, document: vscode.TextDocument, symbols: SYMBOL.SymbolModel[]) {
-		this.path = file.relative_path;
-		this.updated = file.updated;
-		this.languageId = document.languageId;
-		this.uri = document.uri;
-		const sum_line = symbols.reduce((sum, symbol) => sum + symbol.lineCount, 0);
-		const file_line = symbols.reduce((sum, symbol) => sum + ((symbol.kind === vscode.SymbolKind.File) ? symbol.lineCount : 0), 0);
-		this.lineCount = file_line > 0 ? file_line : sum_line;
-		this.symbols = symbols;
+// 定期処理
+class IntervalProcess {
+	private _queue = new Queue<Promise<void>>();
+	private _results: PromiseSettledResult<void>[] = [];
+	private _timer: NodeJS.Timeout;
+	constructor() {
+		this._timer = setInterval(async () => {
+			if (this._queue.size > 0) {
+				const processes: Promise<void>[] = this._queue.isEmpty ? [] : this._queue.toArray();
+				this._queue.clear();
+				this._results.splice(0, this._results.length);
+
+				// コード関係調査を実行する
+				this._results = await Promise.allSettled(processes);
+			}
+		}, 500);
 	}
-}	
+	public request(processes: Promise<void>[]): Promise<PromiseSettledResult<void>[]> {
+		return new Promise<PromiseSettledResult<void>[]>((resolve) => {
+			processes.map(process => this._queue.enqueue(process));
+			const process_count = this._queue.size;
+			if (process_count > 0) {
+				let phase = 0;
+				const interval_id = setInterval(() => {
+					switch (phase) {
+						case 0:
+							if (this._queue.isEmpty) {
+								phase = 1;
+							}
+							break;
+						case 1:
+							if (this._results.length >= process_count) {
+								resolve([...this._results]);
+							}
+							break;
+					}
+					if (this._queue.size === 0) {
+						clearInterval(interval_id);
+						Promise.allSettled(processes).then(results => resolve(results));
+					}
+				}, 100);
+			} else {
+				resolve([]);
+			}
+		});
+	}
+}
 
 let _logs: Logs | null = null;
+const _interval_processe = new IntervalProcess();
+
 
 /**
  * @function 拡張機能の有効化イベント
  * @param context extention contexest
  */
 export function activate(context: vscode.ExtensionContext) {
+
+	// 拡張機能情報
 	const package_json = context.extension.packageJSON;
 	const short_name = package_json?.shortName || '';
 	const version = package_json?.version || '';
-	const logs = _logs = new Logs(package_json?.displayName);
+
+	// ワークスペース情報
+	const workspace_file = vscode.workspace.workspaceFile ? vscode.workspace.workspaceFile.fsPath : undefined;
+	const workspace_folder = workspace_file ? path.dirname(workspace_file) : undefined;
+	const workspace_basename = workspace_file ? path.basename(workspace_file, path.extname(workspace_file)) : undefined;
+
+	// ファイルの関連付け設定
+	const readSetting = (setting: object | undefined): object => setting ? setting : {};
+	const associations = readSetting(vscode.workspace.getConfiguration("files").get<object>("associations"));
 
 	// 動作環境ログ
+	const logs = _logs = new Logs(package_json?.displayName);
 	const platform = process.platform;  // 'darwin' / 'win32' / 'linux'
 	const arch = process.arch;          // 'x64' / 'arm64'
 	logs.log(`extension is now active! ${version} Node.js:${process.version}, VSCode:${vscode.version}, Platform:${platform}-${arch}`);
@@ -60,10 +99,47 @@ export function activate(context: vscode.ExtensionContext) {
 	updateCommand(status_bar, short_name, 'vscode-code-relationship-diagram.showDiagram', locale('show-diagram-tooltip'));
 	status_bar.show();
 
-	// 初期化するコマンドの登録
-	context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.initialize', async () => {
-		let reference_count = 0;
-		let line_count = 0;
+	// ファイル監視
+	if (workspace_folder && (Object.keys(associations).length > 0)) {
+		for (const [pattern, language_id] of Object.entries(associations)) {
+			const watcher = vscode.workspace.createFileSystemWatcher(
+				new vscode.RelativePattern(workspace_folder, pattern)
+			);
+			// ファイル追加
+			watcher.onDidCreate((uri) => {
+				// .gitignoreを除外
+				const ig = ignore().add(codeFiles.loadGitignorePatterns(workspace_folder));
+				const relative_path = path.relative(workspace_folder, uri.fsPath);
+				if (!ig.ignores(relative_path)) {
+					logs.log(`on create ${language_id}: ${relative_path}`);
+				} else {
+					logs.error(`on create (ignored) ${language_id}: ${relative_path}`);
+				}
+			});
+			// ファイル削除
+			watcher.onDidDelete((uri) => {
+				const relative_path = path.relative(workspace_folder, uri.fsPath);
+				logs.log(`on delete ${language_id}: ${relative_path}`);
+			});
+			// ファイル変更
+			watcher.onDidChange((uri) => {
+				const relative_path = path.relative(workspace_folder, uri.fsPath);
+
+				// コードにエラーが無い事を確認
+				const diagnostics = vscode.languages.getDiagnostics(uri);
+				const errors = diagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Error);
+				if (errors.length === 0) {
+					logs.log(`on change ${language_id}: ${relative_path}`);
+				} else {
+					logs.error(`on change ${errors.length} errors.`);
+				}
+			});
+			context.subscriptions.push(watcher);
+		}
+	}
+
+	// コード関係調査コマンドの登録
+	context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.examineRelationships', async () => {
 
 		// 経過の初期表示
 		status_bar.show();
@@ -80,266 +156,87 @@ export function activate(context: vscode.ExtensionContext) {
 			const percentage = total > 0 ? (processed / total) * 100 : 0.00;
 			const processed_msec = performance.now() - start;
 			const rest_sec = percentage > 0 ? (processed_msec / percentage) * (total - processed) : 0;
-			bar.text = `$(sync~spin) ${short_name}: ${processed}/${total} ${percentage.toFixed(2)}% ...${secondsToTime(rest_sec)} ${message}`;
+			bar.text = `$(sync~spin) ${short_name}: ${processed.toLocaleString()}/${total.toLocaleString()} ${percentage.toFixed(2)}% ...${secondsToTime(rest_sec)} ${message}`;
 		};
-		updateCommand(status_bar, short_name, undefined, locale('initialize-tooltip'));
+		updateCommand(status_bar, short_name, undefined, locale('examing-tooltip'));
 
 		// ワークスペースが在り、ファイルの関連付けのパターンが在ったら
-		const workspace_file = vscode.workspace.workspaceFile;
-		const associations = readSetting(vscode.workspace.getConfiguration("files").get<object>("associations"));
-		if (workspace_file && (Object.keys(associations).length > 0)) {
-			const workspace_folder = path.dirname(workspace_file.fsPath);
+		if (workspace_folder && (Object.keys(associations).length > 0)) {
 			const db_file = path.join(workspace_folder, '.vscode', 'crd.duckdb');
 			try {
 				// コード関係図DBを作成する
 				const db = new codeDb.Db(db_file);
 				await db.table_create();
 				try {
+					// 開始時間
 					const start = performance.now();
+
+					// 進捗表示の初期化
 					let progress_total = 0;
 					let progressed = 0;
 					updateProgress(status_bar, start, progressed, progress_total);
-					const last_phase = 7;
 
-					// ファイルを列挙する
-					const file_lists: codeFiles.File[] = [];
-					const ignores = codeFiles.loadGitignorePatterns(workspace_folder);
-					codeFiles.list(workspace_folder, associations, ignores, (file: codeFiles.File) => {
-						file_lists.push(file);
-						logs.log(`1/${last_phase} Listed file: ${file.relative_path}`);
+					const examine = new Relationship.Examine(workspace_folder, db, message => logs.log(message), (message, error) => logs.error(message, error));
+
+					// ファイルの差分を求める
+					const file_diff = await examine.fileDifference(workspace_folder, associations, () => {
 						updateProgress(status_bar, start, (progressed++ / 3) * 1, progress_total++);
 					});
-					logs.log(`Listed file: ${file_lists.length} files`);
-
-					// ファイルテーブルの変更を分配する
-					const file_loads = await db.codeFile_queryAll();
-					const file_sorted = file_lists.sort((a, b) => a.relative_path.localeCompare(b.relative_path));
-					const [file_additions, file_updates, file_notchanges, file_removes] = distribute<RowData, codeFiles.File>(file_loads, file_sorted,
-						(oldItem) => oldItem?.relative_path ?? '',
-						(newItem) => newItem.relative_path,
-						(oldItem, newItem) => newItem.relative_path === oldItem.relative_path,
-						(oldItem, newItem) => newItem.updated.getTime() !== oldItem?.updated_at?.getTime()  
-					);
-					progress_total += file_additions.length + file_updates.length + file_notchanges.length + file_removes.length;
-
-					// 更新対象
-					const code_upserts: WillExamine[] = [];
-					const symbol_all: Record<string, SYMBOL.SymbolModel[]> = {};
-					const db_processes: Promise<void>[] = [];
+					progress_total += file_diff.additions.length + file_diff.updates.length + file_diff.notchanges.length + file_diff.removes.length;
 
 					// 追加ファイルは、シンボルをコードから抽出する
-					for (const code of file_additions) {
-						try {
-							// シンボルをコードから抽出する
-							const [doc, symbols] = await new Promise<[vscode.TextDocument, SYMBOL.SymbolModel[]]>(resolve => {
-								vscode.workspace.openTextDocument(vscode.Uri.file(path.join(workspace_folder, code.relative_path))).then(doc => {
-									codeSymbols.extract(code.relative_path, doc).then((symbols) => resolve([doc, symbols])).catch(() => resolve([doc, []]));
-								});
-							});
-
-							// 更新対象を登録
-							code_upserts.push(new WillExamine(code, doc, symbols));
-							symbol_all[code.relative_path] = symbols;
-
-							// 経過表示
-							logs.log(`2/${last_phase} Extructed symbol: ${code.relative_path}`);
-							updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
-						} catch (error) {
-							logs.error(`2/${last_phase} Failed to open document ${code.relative_path}: `, error);
-						}
-					}
+					let upsert_count = await examine.fileAdditions(file_diff.additions, (code, doc, symbols) => {
+						updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
+					});
 
 					// 変更ファイルは、シンボルのテーブルと抽出から変更を分配する
-					for (const code of file_updates) {
-
-						// シンボルのテーブルからの読み込みと、コードからシンボルの抽出を行う
-						const [olds, [doc, news]] = await Promise.all([
-							db.symbol_query(code.relative_path),
-							new Promise<[vscode.TextDocument, SYMBOL.SymbolModel[]]>(resolve => {
-								vscode.workspace.openTextDocument(vscode.Uri.file(path.join(workspace_folder, code.relative_path))).then(doc => {
-									codeSymbols.extract(code.relative_path, doc).then((symbols) => resolve([doc, symbols])).catch(() => resolve([doc, []]));
-								});
-							})
-						]);
-
-						// シンボルの変更を分配する
-						const [symbol_additions, symbol_updates, symbol_notchanges, symbol_removes] = distribute<SYMBOL.SymbolModel, SYMBOL.SymbolModel>(olds, news,
-							(oldItem) => oldItem.id,
-							(newItem) => newItem.id,
-							(oldItem, newItem) => newItem.id === oldItem.id,
-							(oldItem, newItem) => !newItem.hash.equals(oldItem.hash)  
-						);
-
-						// 追加シンボルは、定義から関係を調査する
-						const define_symbols: SYMBOL.SymbolModel[] = [];
-						define_symbols.push(...symbol_additions);
-
-						// 変更シンボルは、定義から関係を調査する
-						define_symbols.push(...symbol_updates);
-						code_upserts.push(new WillExamine(code, doc, define_symbols));
-
-						// 変更シンボルは、参照から関係を調査する
-						const refs = await db.relationship_queryReferencedSymbols(symbol_updates.map(symbol => symbol.id));
-						for (const ref of refs) {
-							const [ref_doc, ref_symbols] = await new Promise<[vscode.TextDocument, SYMBOL.SymbolModel[]]>(resolve => {
-								vscode.workspace.openTextDocument(vscode.Uri.file(path.join(workspace_folder, ref.reference.path))).then(doc => {
-									codeSymbols.extract(ref.reference.path, doc).then((symbols) => resolve([doc, symbols])).catch(() => resolve([doc, []]));
-								});
-							});
-							const ref_file = file_lists.filter((file) => file.relative_path === ref.reference.path);
-							code_upserts.push(new WillExamine(ref_file[0], ref_doc, ref_symbols));
-						}
-
-
-						// 変更のないシンボルは、既にシンボルテーブルにも関係テーブルにも在るため、何もしない
-						symbol_all[code.relative_path] = news;
-
-						// 削除シンボルはDBから削除する
-						if (symbol_removes.length > 0) {
-							db_processes.push(db.symbol_delete(symbol_removes));
-							db_processes.push(db.relationship_deleteSymbols(symbol_removes));
-						}
-
-						// 経過表示
-						logs.log(`symbols ${code.relative_path}: (added ${symbol_additions.length}, updated ${symbol_updates.length}, no changed ${symbol_notchanges.length}, removed ${symbol_removes.length})`);
-					}
-
-					progress_total += code_upserts.length;
-					logs.log(`Extructed symbols: ${code_upserts.length} files`);
+					upsert_count += await examine.fileUpdates(file_diff.lists, file_diff.updates);
+					progress_total += upsert_count;
+					logs.log(`Extructed symbols: ${upsert_count} files`);
 
 					// 変更のないファイルは、シンボルテーブルを読み込む
-					for (const code of file_notchanges) {
-						try {
-							const symbols = await db.symbol_query(code.relative_path);
-							symbol_all[code.relative_path] = symbols;
-							line_count += symbols[0].lineCount;
-							logs.log(`3/${last_phase} Not changed: ${code.relative_path}`);
-							updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
-						} catch (error) {
-							logs.error(`3/${last_phase} Failed to load symbols for ${code.relative_path}: `, error);
-						}
-					}										
-					logs.log(`Not changed symbols ${file_notchanges.length} files`);
+					await examine.fileNotchanges(file_diff.notchanges, () => {
+						updateProgress(status_bar, start, (progressed++ / 3) * 3, progress_total);
+					});
+					logs.log(`Not changed symbols ${file_diff.notchanges.length} files`);
+
+					// 削除ファイルは、ファイル削除に追加する
+					examine.fileRemoves(file_diff.removes, () => {
+						updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
+					});
+					
+					// ファイル更新を追加する
+					examine.updateRelationships(() => {
+						updateProgress(status_bar, start, progressed++, progress_total);
+					});
 
 					// インデックス作成待ち
-					let attempt = 0;
 					updateProgress(status_bar, start, progressed, progress_total, 'Waiting for indexing to complete...');
-					for (attempt = 0; attempt < 10; attempt++) {
-						// インデックス作成が完了するまで待つ
-						if (await codeRelationships.indexingIsComplete()) {
-							break;
-						}
-						// まだ完了していなかったら、もう少し待つ
-						await new Promise(resolve => setTimeout(resolve, 1000));
+					const attempt = await codeRelationships.indexingCompleteWait(10);
+					logs.log(`Waitied for indexing to complete... attempt ${attempt}`);
+
+					// コード関係調査を登録する
+					const results = await _interval_processe.request(examine.processes);
+					const failures = results.filter(result => result.status === 'rejected');
+					failures.map(result => logs.error(result.reason));
+					if (failures.length > 0) {
+						logs.error(`${failures.length}/${results.length} processes failed.`);
 					}
-					logs.log(`Waitied for indexing to complete... attempt ${attempt + 1}`);
-
-
-					// ファイル削除を追加する
-					for (const remove of file_removes) {
-						db_processes.push(new Promise<void>((resolve, reject) => {
-							Promise.all([
-								db.relationship_deleteFile(remove),
-								db.symbol_deleteFile(remove),
-								db.codeFile_delete(remove),
-							]).then(() => {
-								logs.log(`4/${last_phase} Removed file: ${remove}`);
-								updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
-								resolve();
-							}).catch(error => {
-								reject(`4/${last_phase} db.symbol_delete(${remove}): ${error instanceof Error ? error.message : error}`);
-							});
-						}));
-					}
-
-					// ファイル更新を追加する
-					for (const code_upsert of code_upserts) {
-						line_count += code_upsert.lineCount;
-						db_processes.push(new Promise<void>((resolve, reject) => {
-
-							// 定義を検索
-							db.relationship_queryDefinePath(code_upsert.path).then(define_rels => {
-
-								// 更新対象を予め削除しておく TODO: シンボル単位?
-
-									// 関係を調査
-									updateProgress(status_bar, start, progressed, progress_total, `Examining relationships: ${code_upsert.path}`);
-									codeRelationships.examine(workspace_folder, code_upsert.uri, code_upsert.symbols, symbol_all, 3).then(reference_rels => {
-										reference_count += reference_rels.length;
-										const inserts: Promise<void>[] = [];
-										logs.log(`5/${last_phase} Examined relationship: ${code_upsert.path}:${code_upsert.lineCount} ${reference_rels.length} counts`);
-
-										// 関係の参照と関係の定義を追加する
-										inserts.push(new Promise<void>((rel_resolve) => {
-											db.relationship_delete(reference_rels).then(() =>{
-												db.relationship_inserts(reference_rels).then(() => rel_resolve());
-											});
-										}));
-										inserts.push(new Promise<void>((rel_resolve) => {
-											db.relationship_delete(define_rels).then(() =>{
-												db.relationship_inserts(define_rels).then(() => rel_resolve());
-											});
-										}));
-										Promise.all(inserts).then(() => {
-
-											// シンボルをDBに保存する
-											db.symbol_inserts(code_upsert.symbols).then(() => {
-												logs.log(`6/${last_phase} Saved symbol: ${code_upsert.path}`);
-
-												// ファイルを更新または挿入する
-												db.codeFile_upsert(new codeFiles.File(code_upsert.path, code_upsert.languageId, code_upsert.updated)).then(() => {
-													logs.log(`7/${last_phase} Upserted file: ${code_upsert.path}`);
-													updateProgress(status_bar, start, progressed++, progress_total);
-													resolve();
-												}).catch(error => {
-													reject(`7/${last_phase} db.codeFile_upsert(${code_upsert.path}): ${error instanceof Error ? error.message : error}`);
-												});
-											}).catch(error => {
-												reject(`6/${last_phase} db.symbol_save(${code_upsert.path}): ${error instanceof Error ? error.message : error}`);
-											});
-										}).catch(error => {
-											reject(`5/${last_phase} Failed to insert relationships for ${code_upsert.path}: ${error instanceof Error ? error.message : error}`);
-										});
-									}).catch(error => {
-										reject(`5/${last_phase} Failed to Examine relationships from ${code_upsert.path}: ${error instanceof Error ? error.message : error}`);
-									});
-							}).catch(error => {
-								reject(`4/${last_phase} Failed to query relationships for ${code_upsert.path}: ${error instanceof Error ? error.message : error}`);
-							});
-						}));
-					}
-
-					// 保存処理を実行する
-					for (const process of db_processes) {
-						try {
-							await process;
-						} catch (error) {
-							logs.error('', error);
-						}
-					}
-					/*
-					try {
-						await Promise.all(db_processes);
-					} catch (error) {
-						logs.error('', error);
-					}
-					*/
 
 					// DBを破棄する
 					db.dispose();
 
 					logs.log(`${secondsToTime(performance.now() - start)} ` +
-						`processed ${file_lists.length.toLocaleString()} files(` +
-							`added ${file_additions.length.toLocaleString()}, ` +
-							`updated ${file_updates.length.toLocaleString()}, ` +
-							`no changed ${file_notchanges.length.toLocaleString()}, ` +
-							`removed ${file_removes.length.toLocaleString()}) ` +
-						`${line_count.toLocaleString()} lines, ` +
-						`${reference_count.toLocaleString()} relationships`);
+						`processed ${file_diff.lists.length.toLocaleString()} files(` +
+							`added ${file_diff.additions.length.toLocaleString()}, ` +
+							`updated ${file_diff.updates.length.toLocaleString()}, ` +
+							`no changed ${file_diff.notchanges.length.toLocaleString()}, ` +
+							`removed ${file_diff.removes.length.toLocaleString()}) ` +
+						`${examine.lineCount.toLocaleString()} lines, ` +
+						`${examine.relationshipCount.toLocaleString()} relationships`);
 
-					// 初期化メッセージを表示する
+					// コード関係図表示に切替える
 					updateCommand(status_bar, short_name, 'vscode-code-relationship-diagram.showDiagram', locale('show-diagram-tooltip'));
-					logs.info(locale('initialize-message'));
 				} catch (error) {
 					setTimeout(() => status_bar.dispose(), 3000);
 					logs.error(`codeFile.list(${workspace_folder}): `, error);
@@ -354,22 +251,18 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}));
 
-	// グラフ表示コマンドの登録
+	// コード関係図表示コマンドの登録
 	context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.showDiagram', async () => {
 		logs.log('=== SHOWDIAGRAM COMMAND STARTED ===');
 		
-		const workspace_file = vscode.workspace.workspaceFile;
-		if (workspace_file) {
-			const workspace_folder = path.dirname(workspace_file.fsPath);
-			const workspace_basename = path.basename(workspace_file.fsPath, path.extname(workspace_file.fsPath));
+		if (workspace_folder) {
 			const db_file = path.join(workspace_folder, '.vscode', 'crd.duckdb');
 			logs.log(`Attempting to open database: ${db_file}`);
 			
 			// DBファイルの存在確認
 			logs.log('Checking database file existence:', db_file);
 			if (!fs.existsSync(db_file)) {
-				logs.error(`Database file not found: ${db_file}`);
-				logs.error('Please run "Initialize Code Relationship Diagram" command first to create the database.');
+				logs.error(locale('error-no-database'));
 			} else {
 				try {
 					const db = new codeDb.Db(db_file);
@@ -383,7 +276,7 @@ export function activate(context: vscode.ExtensionContext) {
 					logs.log(`Loaded relationships: ${all_rels.length} counts`);
 					
 					// グラフを表示
-					const graphViz = new GraphVisualization(context, workspace_folder, workspace_basename + '.crd.html', logs);
+					const graphViz = new Relationship.Visualization(context, workspace_folder, workspace_basename + '.crd.html', logs);
 					await graphViz.showDiagram(all_symbols, all_rels);
 					logs.log('Show Diagram completed');
 					
@@ -402,8 +295,4 @@ export function activate(context: vscode.ExtensionContext) {
 // This method is called when your extension is deactivated
 export function deactivate() {
 	_logs?.info('extension is now deactivate!');
-}
-
-function readSetting(setting: object | undefined): object {
-	return setting ? setting : {};
 }

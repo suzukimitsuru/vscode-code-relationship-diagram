@@ -1,4 +1,3 @@
-import { TableData } from 'duckdb';
 import glob from 'fast-glob';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -57,14 +56,14 @@ export function list(wsFolder: string, associations: object, ignores: string[], 
 	for (const [pattern, language_id] of Object.entries(associations)) {
 
         // globパターンを列挙する（.gitignoreパターンを除外）
-        const paths = glob.sync(pattern, {cwd: wsFolder, absolute: true, onlyFiles: true, ignore: ignores});
-        for (const path of paths) {
+        const files = glob.sync(pattern, {cwd: wsFolder, absolute: true, onlyFiles: true, ignore: ignores});
+        for (const file of files) {
 
             // ファイル状態を取得
-            const stats = fs.statSync(path);
+            const stats = fs.statSync(file);
             
             // 進捗を報告
-            progress(new File(path.substring(wsFolder.length + 1), typeof language_id === 'string' ? language_id : '', stats.mtime));
+            progress(new File(path.relative(wsFolder, file), typeof language_id === 'string' ? language_id : '', stats.mtime));
         }
     }
 }
