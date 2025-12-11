@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>TITLE_PLACEHOLDER</title>
+    <link href="FONT_AWWSOME_CSS_URI_PLACEHOLDER" rel="stylesheet">
+    <script src="CYTOSCAPE_URI_PLACEHOLDER"></script>
+    <script src="PLAIN_DAGRE_URI_PLACEHOLDER"></script>
+    <script src="CYTOSCAPE_DAGRE_URI_PLACEHOLDER"></script>
+    <script>
+        // Debug: Check what libraries are loaded
+        console.log('=== Library Loading Status ===');
+        console.log('cytoscape:', typeof cytoscape);
+        console.log('dagre:', typeof dagre);
+        console.log('cytoscapeDagre:', typeof cytoscapeDagre);
+
+        // Register cytoscape-dagre extension
+        if (typeof cytoscape !== 'undefined' && typeof cytoscapeDagre !== 'undefined') {
+            cytoscape.use(cytoscapeDagre);
+            console.log('✓ cytoscape-dagre registered successfully');
+        } else {
+            console.error('✗ Failed to register cytoscape-dagre:', {
+                cytoscape: typeof cytoscape,
+                cytoscapeDagre: typeof cytoscapeDagre,
+                dagre: typeof dagre
+            });
+        }
+    </script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: BACKGROUND_COLOR_PLACEHOLDER;
+            overflow: hidden;
+        }
+
+        /* プログレスバー */
+        #progress-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background-color: PROGRESS_BG_COLOR_PLACEHOLDER;
+            z-index: 2000;
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+        #progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #007ACC, #4A90E2);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 0 2px 2px 0;
+        }
+        #progress-text {
+            position: fixed;
+            top: 8px;
+            left: 10px;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            font-size: 12px;
+            z-index: 2001;
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+
+        /* タブナビゲーション */
+        .tab-navigation {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1500;
+            background: CONTROLS_BG_PLACEHOLDER;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px BOX_SHADOW_COLOR_PLACEHOLDER;
+            border: BORDER_STYLE_PLACEHOLDER;
+            display: flex;
+            overflow: hidden;
+        }
+        .tab-button {
+            padding: 10px 20px;
+            border: none;
+            background: transparent;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-right: BORDER_STYLE_PLACEHOLDER;
+            min-width: 150px;
+            justify-content: center;
+        }
+        .tab-button:last-child {
+            border-right: none;
+        }
+        .tab-button:hover {
+            background: BUTTON_HOVER_BG_PLACEHOLDER;
+            color: white;
+        }
+        .tab-button.active {
+            background: BUTTON_NO_POINT_BG_PLACEHOLDER;
+            color: white;
+            font-weight: bold;
+        }
+        .tab-button i {
+            font-size: 16px;
+        }
+
+        /* ビューコンテナ */
+        .view-container {
+            width: 100%;
+            height: 100vh;
+            background-color: BACKGROUND_COLOR_PLACEHOLDER;
+            padding-top: 60px;
+            display: none;
+        }
+        .view-container.active {
+            display: block;
+        }
+        .cy-container {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* コントロールパネル */
+        .controls {
+            position: absolute;
+            top: 70px;
+            left: 10px;
+            z-index: 1000;
+            background: CONTROLS_BG_PLACEHOLDER;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px BOX_SHADOW_COLOR_PLACEHOLDER;
+            border: BORDER_STYLE_PLACEHOLDER;
+        }
+        button {
+            margin: 5px;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 3px;
+            background: BUTTON_NO_POINT_BG_PLACEHOLDER;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            min-width: auto;
+        }
+        button:hover {
+            background: BUTTON_HOVER_BG_PLACEHOLDER;
+        }
+        button i.codicon {
+            font-size: 16px;
+        }
+        button span {
+            font-weight: normal;
+        }
+        .export-dropdown {
+            position: relative;
+            display: inline-flex;
+            margin: 5px;
+        }
+        .export-main {
+            border-radius: 3px 0 0 3px;
+            margin: 0;
+        }
+        .export-toggle {
+            border-radius: 0 3px 3px 0;
+            border-left: 1px solid BUTTON_HOVER_BG_PLACEHOLDER;
+            margin: 0;
+            padding: 8px 6px;
+            min-width: auto;
+        }
+        .export-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: CONTROLS_BG_PLACEHOLDER;
+            border: BORDER_STYLE_PLACEHOLDER;
+            border-radius: 3px;
+            box-shadow: 0 4px 8px BOX_SHADOW_COLOR_PLACEHOLDER;
+            min-width: 120px;
+            z-index: 1001;
+            display: none;
+            flex-direction: column;
+            padding: 4px 0;
+        }
+        .export-menu.show {
+            display: flex;
+        }
+        .export-menu button {
+            margin: 0;
+            padding: 8px 12px;
+            background: transparent;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            border-radius: 0;
+            justify-content: flex-start;
+            text-align: left;
+            border: none;
+        }
+        .export-menu button:hover {
+            background: BUTTON_HOVER_BG_PLACEHOLDER;
+        }
+        .export-menu button i {
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <!-- プログレスバー -->
+    <div id="progress-container">
+        <div id="progress-bar"></div>
+    </div>
+    <div id="progress-text">Loading...</div>
+
+    <!-- タブナビゲーション -->
+    <div class="tab-navigation">
+        <button class="tab-button active" data-view="file-deps">
+            <i class="fa fa-file-code-o" aria-hidden="true"></i>
+            <span>File Dependencies</span>
+        </button>
+        <button class="tab-button" data-view="hierarchy">
+            <i class="fa fa-sitemap" aria-hidden="true"></i>
+            <span>Hierarchy</span>
+        </button>
+        <button class="tab-button" data-view="call-graph">
+            <i class="fa fa-share-alt" aria-hidden="true"></i>
+            <span>Call Graph</span>
+        </button>
+    </div>
+
+    <!-- ビュー1: ファイル依存関係 -->
+    <div id="view-file-deps" class="view-container active">
+        <div class="controls">
+            <button onclick="fitGraph('file-deps')" title="Fit to Screen">
+                <i class="icon fa fa-expand" aria-hidden="true"></i>
+            </button>
+            <button onclick="resetLayout('file-deps')" title="Reset Layout">
+                <i class="fa fa-refresh" aria-hidden="true"></i>
+            </button>
+            EXPORT_BUTTON_PLACEHOLDER
+        </div>
+        <div id="cy-file-deps" class="cy-container"></div>
+    </div>
+
+    <!-- ビュー2: 階層構造 -->
+    <div id="view-hierarchy" class="view-container">
+        <div class="controls">
+            <button onclick="fitGraph('hierarchy')" title="Fit to Screen">
+                <i class="icon fa fa-expand" aria-hidden="true"></i>
+            </button>
+            <button onclick="resetLayout('hierarchy')" title="Reset Layout">
+                <i class="fa fa-refresh" aria-hidden="true"></i>
+            </button>
+            <button onclick="expandAll()" title="Expand All">
+                <i class="fa fa-plus-square-o" aria-hidden="true"></i>
+            </button>
+            <button onclick="collapseAll()" title="Collapse All">
+                <i class="fa fa-minus-square-o" aria-hidden="true"></i>
+            </button>
+        </div>
+        <div id="cy-hierarchy" class="cy-container"></div>
+    </div>
+
+    <!-- ビュー3: 呼び出しグラフ -->
+    <div id="view-call-graph" class="view-container">
+        <div class="controls">
+            <button onclick="fitGraph('call-graph')" title="Fit to Screen">
+                <i class="icon fa fa-expand" aria-hidden="true"></i>
+            </button>
+            <button onclick="resetLayout('call-graph')" title="Reset Layout">
+                <i class="fa fa-refresh" aria-hidden="true"></i>
+            </button>
+            <button onclick="toggleOrientation()" title="Toggle Orientation">
+                <i class="fa fa-rotate-right" aria-hidden="true"></i>
+                <span id="orientation-label">Horizontal</span>
+            </button>
+        </div>
+        <div id="cy-call-graph" class="cy-container"></div>
+    </div>
+
+    <script>
+        // WCAG基準の相対輝度を計算する関数
+        function getRelativeLuminance(color) {
+            // カラー文字列からRGBを抽出
+            let r, g, b;
+            if (color.startsWith('#')) {
+                // #RRGGBB形式
+                r = parseInt(color.substr(1, 2), 16);
+                g = parseInt(color.substr(3, 2), 16);
+                b = parseInt(color.substr(5, 2), 16);
+            } else if (color.startsWith('rgb')) {
+                // rgb(r, g, b)形式
+                const match = color.match(/\d+/g);
+                r = parseInt(match[0]);
+                g = parseInt(match[1]);
+                b = parseInt(match[2]);
+            } else {
+                return 0.5; // デフォルト
+            }
+
+            // RGB値を0-1の範囲に正規化
+            r = r / 255;
+            g = g / 255;
+            b = b / 255;
+
+            // ガンマ補正を適用
+            const applyGamma = (value) => {
+                if (value <= 0.03928) {
+                    return value / 12.92;
+                } else {
+                    return Math.pow((value + 0.055) / 1.055, 2.4);
+                }
+            };
+
+            r = applyGamma(r);
+            g = applyGamma(g);
+            b = applyGamma(b);
+
+            // WCAG相対輝度の計算式
+            // 緑は人間の目に最も明るく見え、青は最も暗く見える
+            const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            return luminance;
+        }
+
+        // 背景色の輝度に基づいて最適なテキスト色を返す関数
+        function getContrastColor(backgroundColor) {
+            const luminance = getRelativeLuminance(backgroundColor);
+
+            // 輝度が0.5より小さい（暗い背景）場合は白、
+            // それ以外（明るい背景）の場合は黒を返す
+            // より厳密には、コントラスト比4.5:1以上を確保するため
+            // 閾値を調整することも可能
+            return luminance < 0.5 ? '#ffffff' : '#000000';
+        }
+
+        // VSCodeのシンボルアイコンの色を取得する関数
+        // VSCode標準のアウトラインビューで使用されている色を返す
+        function getSymbolKindColor(kind) {
+            // VSCode標準のシンボルアイコンカラー（デフォルトダークテーマ基準）
+            switch(kind) {
+                case 0:  return '#519aba'; // File - 青
+                case 1:  return '#4d9fd1'; // Module - 青
+                case 2:  return '#4d9fd1'; // Namespace - 青
+                case 3:  return '#4d9fd1'; // Package - 青
+                case 4:  return '#ee9d28'; // Class - オレンジ
+                case 5:  return '#b180d7'; // Method - 紫
+                case 6:  return '#75beff'; // Property - 明るい青
+                case 7:  return '#75beff'; // Field - 明るい青
+                case 8:  return '#b180d7'; // Constructor - 紫
+                case 9:  return '#ee9d28'; // Enum - オレンジ
+                case 10: return '#75beff'; // Interface - 明るい青
+                case 11: return '#b180d7'; // Function - 紫
+                case 12: return '#75beff'; // Variable - 明るい青
+                case 13: return '#4fc1ff'; // Constant - シアン
+                case 14: return '#ce9178'; // String - 薄い橙
+                case 15: return '#b5cea8'; // Number - 明るい緑
+                case 16: return '#569cd6'; // Boolean - 青
+                case 17: return '#4d9fd1'; // Array - 青
+                case 18: return '#4d9fd1'; // Object - 青
+                case 19: return '#4fc1ff'; // Key - シアン
+                case 20: return '#569cd6'; // Null - 青
+                case 21: return '#75beff'; // EnumMember - 明るい青
+                case 22: return '#4d9fd1'; // Struct - 青
+                case 23: return '#ee9d28'; // Event - オレンジ
+                case 24: return '#b5cea8'; // Operator - 明るい緑
+                case 25: return '#4fc1ff'; // TypeParameter - シアン
+                default: return '#cccccc'; // Unknown - グレー
+            }
+        }
+
+        // テキスト幅を測定する関数
+        function measureTextWidth(text, fontSize, fontWeight = 'normal') {
+            // Canvas要素を使用してテキストの実際の幅を測定
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            context.font = `${fontWeight} ${fontSize}px Arial, sans-serif`;
+            const metrics = context.measureText(text);
+            return metrics.width;
+        }
+
+        // グローバル変数
+        let currentView = 'file-deps';
+        let cyInstances = {};
+        let graphData = {
+            symbols: [],
+            relationships: []
+        };
+        let callGraphOrientation = 'TB'; // TB (Top-Bottom) or LR (Left-Right)
+
+        // プログレス表示
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const progressContainer = document.getElementById('progress-container');
+
+        function updateProgress(percent, message) {
+            progressBar.style.width = percent + '%';
+            progressText.textContent = message;
+
+            if (percent >= 100) {
+                setTimeout(() => {
+                    progressContainer.style.opacity = '0';
+                    progressText.style.opacity = '0';
+                    setTimeout(() => {
+                        progressContainer.style.display = 'none';
+                        progressText.style.display = 'none';
+                    }, 300);
+                }, 500);
+            }
+        }
+
+        // VSCode Extension からのメッセージ受信
+        window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.type === 'progress') {
+                updateProgress(message.percent, message.message);
+            }
+        });
+
+        // 初期進捗表示
+        updateProgress(10, 'Initializing graph...');
+        console.log('Initializing Multi-View with', ELEMENTS_NODES_LENGTH_PLACEHOLDER, 'nodes and', ELEMENTS_EDGES_LENGTH_PLACEHOLDER, 'edges');
+
+        // データの準備
+        const allElements = ELEMENTS_PLACEHOLDER;
+        const allNodes = allElements.filter(el => !el.data.source);
+        const allEdges = allElements.filter(el => el.data.source);
+
+        // デバッグ: データ構造を確認
+        console.log('Total elements:', allElements.length);
+        console.log('Total nodes:', allNodes.length);
+        console.log('Total edges:', allEdges.length);
+        console.log('Sample node:', allNodes[0]);
+        console.log('Sample edge:', allEdges[0]);
+        if (allNodes.length > 0) {
+            const fileNodes = allNodes.filter(n => n.data.kind === 0); // SymbolKind.File = 0
+            const symbolNodes = allNodes.filter(n => n.data.kind !== 0);
+            console.log('File nodes:', fileNodes.length);
+            console.log('Symbol nodes:', symbolNodes.length);
+            console.log('Sample file node:', fileNodes[0]);
+            console.log('Sample symbol node:', symbolNodes[0]);
+        }
+
+        // タブ切り替え
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                const targetView = button.getAttribute('data-view');
+                switchView(targetView);
+            });
+        });
+
+        function switchView(viewName) {
+            console.log('Switching to view:', viewName);
+
+            // タブのアクティブ状態を更新
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelector(`.tab-button[data-view="${viewName}"]`).classList.add('active');
+
+            // ビューコンテナの表示切り替え
+            document.querySelectorAll('.view-container').forEach(container => {
+                container.classList.remove('active');
+            });
+            document.getElementById(`view-${viewName}`).classList.add('active');
+
+            currentView = viewName;
+
+            // ビューがまだ初期化されていない場合は初期化
+            if (!cyInstances[viewName]) {
+                initializeView(viewName);
+            } else {
+                // 既存のビューをリフレッシュ
+                cyInstances[viewName].resize();
+                cyInstances[viewName].fit();
+            }
+        }
+
+        function initializeView(viewName) {
+            console.log('Initializing view:', viewName);
+            updateProgress(30 + (viewName === 'file-deps' ? 0 : 20), `Initializing ${viewName} view...`);
+
+            try {
+                switch (viewName) {
+                    case 'file-deps':
+                        initFileDepView();
+                        break;
+                    case 'hierarchy':
+                        initHierarchyView();
+                        break;
+                    case 'call-graph':
+                        initCallGraphView();
+                        break;
+                }
+                console.log(`View ${viewName} initialized successfully`);
+            } catch (error) {
+                console.error(`Error initializing view ${viewName}:`, error);
+                console.error('Error stack:', error.stack);
+            }
+        }
+
+        // ビュー1: ファイル依存関係ビュー（既存実装）
+        function initFileDepView() {
+            try {
+                console.log('=== initFileDepView START ===');
+                // ファイルノードとファイル間の関係のみを抽出
+                const fileNodes = allNodes.filter(node => node.data.kind === 0); // SymbolKind.File = 0
+                const fileEdges = allEdges.filter(edge => edge.data.relationshipType === 'file-relationship');
+
+                console.log('initFileDepView - File nodes:', fileNodes.length);
+                console.log('initFileDepView - File edges:', fileEdges.length);
+                console.log('initFileDepView - Sample file node:', fileNodes[0]);
+                console.log('initFileDepView - Sample file edge:', fileEdges[0]);
+
+                if (fileNodes.length === 0) {
+                    console.error('initFileDepView - ERROR: No file nodes found!');
+                    return;
+                }
+
+                cyInstances['file-deps'] = cytoscape({
+                container: document.getElementById('cy-file-deps'),
+                elements: [...fileNodes, ...fileEdges],
+
+                style: [
+                    {
+                        selector: 'node',
+                        style: {
+                            'background-color': function(ele) {
+                                const kind = ele.data('kind');
+                                return getSymbolKindColor(kind);
+                            },
+                            'label': 'data(label)',
+                            'text-valign': 'center',
+                            'text-halign': 'center',
+                            'color': function(ele) {
+                                const bgColor = ele.style('background-color');
+                                return getContrastColor(bgColor);
+                            },
+                            'font-size': '14px',
+                            'font-weight': 'bold',
+                            'shape': 'rectangle',
+                            'width': function(ele) {
+                                const label = ele.data('label');
+                                const textWidth = measureTextWidth(label, 14, 'bold');
+                                // パディング（左右20pxずつ）を追加
+                                return Math.max(100, textWidth + 40) + 'px';
+                            },
+                            'height': '50px',
+                            'text-wrap': 'none',
+                            'border-width': '2px',
+                            'border-color': '#2E5984',
+                            'background-opacity': 0.9
+                        }
+                    },
+                    {
+                        selector: 'node.selected',
+                        style: {
+                            'border-color': '#FF6B35',
+                            'border-width': '4px',
+                            'background-color': '#1177bb',
+                            'z-index': '999'
+                        }
+                    },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': function(ele) {
+                                const relationshipCount = ele.data('relationshipCount') || 1;
+                                return Math.min(Math.max(relationshipCount * 0.8, 1), 10);
+                            },
+                            'line-color': function(ele) {
+                                const relationshipCount = ele.data('relationshipCount') || 1;
+                                const intensity = Math.min(relationshipCount / 10, 1);
+                                const red = Math.floor(71 + (231 - 71) * intensity);
+                                const green = Math.floor(144 + (76 - 144) * intensity);
+                                const blue = Math.floor(226 + (60 - 226) * intensity);
+                                return `rgb(${red}, ${green}, ${blue})`;
+                            },
+                            'target-arrow-color': function(ele) {
+                                const relationshipCount = ele.data('relationshipCount') || 1;
+                                const intensity = Math.min(relationshipCount / 10, 1);
+                                const red = Math.floor(71 + (231 - 71) * intensity);
+                                const green = Math.floor(144 + (76 - 144) * intensity);
+                                const blue = Math.floor(226 + (60 - 226) * intensity);
+                                return `rgb(${red}, ${green}, ${blue})`;
+                            },
+                            'target-arrow-shape': 'triangle',
+                            'curve-style': 'bezier',
+                            'opacity': function(ele) {
+                                const relationshipCount = ele.data('relationshipCount') || 1;
+                                return Math.min(0.6 + relationshipCount * 0.04, 1.0);
+                            }
+                        }
+                    }
+                ],
+                layout: {
+                    name: 'cose',
+                    animate: true,
+                    animationDuration: 1500,
+                    fit: true,
+                    padding: 120,
+                    nodeRepulsion: function(node) {
+                        const symbolCount = node.data('symbolCount') || 1;
+                        return 150000 + symbolCount * 8000;
+                    },
+                    nodeOverlap: 100,
+                    idealEdgeLength: function(edge) {
+                        const relationshipCount = edge.data('relationshipCount') || 1;
+                        return Math.max(250, 450 - relationshipCount * 15);
+                    },
+                    edgeElasticity: function(edge) {
+                        const relationshipCount = edge.data('relationshipCount') || 1;
+                        return 80 + relationshipCount * 15;
+                    },
+                    gravity: 25,
+                    numIter: 2000,
+                    initialTemp: 400,
+                    coolingFactor: 0.92,
+                    minTemp: 1.0,
+                    avoidOverlap: true,
+                    randomize: false,
+                    componentSpacing: 150
+                }
+            });
+
+                setupCommonEventHandlers('file-deps');
+                updateProgress(60, 'File dependency view initialized');
+                console.log('=== initFileDepView COMPLETE ===');
+            } catch (error) {
+                console.error('initFileDepView - ERROR:', error);
+                console.error('Error stack:', error.stack);
+            }
+        }
+
+        // ビュー2: 階層構造ビュー
+        function initHierarchyView() {
+            try {
+                console.log('=== initHierarchyView START ===');
+                // 全ノードとエッジを使用（親子関係を含む）
+                const hierarchyElements = createHierarchyElements();
+
+                console.log('initHierarchyView - Hierarchy elements:', hierarchyElements.length);
+                console.log('initHierarchyView - Sample element:', hierarchyElements[0]);
+
+                if (hierarchyElements.length === 0) {
+                    console.error('initHierarchyView - ERROR: No elements found!');
+                    return;
+                }
+
+                cyInstances['hierarchy'] = cytoscape({
+                container: document.getElementById('cy-hierarchy'),
+                elements: hierarchyElements,
+
+                style: [
+                    // ファイルノード（親ノード）のスタイル
+                    {
+                        selector: 'node[kind=0]', // SymbolKind.File = 0
+                        style: {
+                            'background-color': function(ele) {
+                                const kind = ele.data('kind');
+                                return getSymbolKindColor(kind);
+                            },
+                            'label': 'data(label)',
+                            'text-valign': 'top',
+                            'text-halign': 'center',
+                            'color': function(ele) {
+                                const bgColor = ele.style('background-color');
+                                return getContrastColor(bgColor);
+                            },
+                            'font-size': '14px',
+                            'font-weight': 'bold',
+                            'shape': 'rectangle',
+                            'padding': '20px',
+                            'min-width': function(ele) {
+                                const label = ele.data('label');
+                                const textWidth = measureTextWidth(label, 14, 'bold');
+                                // パディングとマージンを考慮
+                                return Math.max(150, textWidth + 60) + 'px';
+                            },
+                            'text-wrap': 'none',
+                            'border-width': '3px',
+                            'border-color': '#2E5984',
+                            'background-opacity': 0.3
+                        }
+                    },
+                    // シンボルノード（子ノード）のスタイル
+                    {
+                        selector: 'node[kind!=0]',
+                        style: {
+                            'background-color': function(ele) {
+                                const kind = ele.data('kind');
+                                return getSymbolKindColor(kind);
+                            },
+                            'label': 'data(label)',
+                            'text-valign': 'center',
+                            'text-halign': 'center',
+                            'color': function(ele) {
+                                const bgColor = ele.style('background-color');
+                                return getContrastColor(bgColor);
+                            },
+                            'font-size': '11px',
+                            'shape': 'roundrectangle',
+                            'width': function(ele) {
+                                const label = ele.data('label');
+                                const textWidth = measureTextWidth(label, 11, 'normal');
+                                // パディング（左右15pxずつ）を追加
+                                return Math.max(80, textWidth + 30) + 'px';
+                            },
+                            'height': '40px',
+                            'text-wrap': 'none',
+                            'border-width': '1px',
+                            'border-color': '#34495E'
+                        }
+                    },
+                    {
+                        selector: 'node.selected',
+                        style: {
+                            'border-color': '#FF6B35',
+                            'border-width': '4px',
+                            'z-index': '999'
+                        }
+                    },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': 2,
+                            'line-color': '#7F8C8D',
+                            'target-arrow-color': '#7F8C8D',
+                            'target-arrow-shape': 'triangle',
+                            'curve-style': 'bezier'
+                        }
+                    }
+                ],
+                layout: {
+                    name: 'dagre',
+                    rankDir: 'TB',
+                    nodeSep: 50,
+                    rankSep: 100,
+                    animate: true,
+                    animationDuration: 1000
+                }
+            });
+
+                setupCommonEventHandlers('hierarchy');
+                updateProgress(70, 'Hierarchy view initialized');
+                console.log('=== initHierarchyView COMPLETE ===');
+            } catch (error) {
+                console.error('initHierarchyView - ERROR:', error);
+                console.error('Error stack:', error.stack);
+            }
+        }
+
+        // ビュー3: 呼び出しグラフビュー
+        function initCallGraphView() {
+            try {
+                console.log('=== initCallGraphView START ===');
+                // シンボル間の関係のみを表示（ファイルノードは除外）
+                const symbolNodes = allNodes.filter(node => node.data.kind !== 0); // SymbolKind.File = 0 を除外
+                const symbolEdges = allEdges.filter(edge => edge.data.relationshipType !== 'file-relationship');
+
+                console.log('initCallGraphView - Symbol nodes:', symbolNodes.length);
+                console.log('initCallGraphView - Symbol edges:', symbolEdges.length);
+                console.log('initCallGraphView - Sample symbol node:', symbolNodes[0]);
+                console.log('initCallGraphView - Sample symbol edge:', symbolEdges[0]);
+
+                if (symbolNodes.length === 0) {
+                    console.error('initCallGraphView - ERROR: No symbol nodes found!');
+                    return;
+                }
+
+                cyInstances['call-graph'] = cytoscape({
+                container: document.getElementById('cy-call-graph'),
+                elements: [...symbolNodes, ...symbolEdges],
+
+                style: [
+                    {
+                        selector: 'node',
+                        style: {
+                            'background-color': function(ele) {
+                                const kind = ele.data('kind');
+                                return getSymbolKindColor(kind);
+                            },
+                            'label': 'data(label)',
+                            'text-valign': 'center',
+                            'text-halign': 'center',
+                            'color': function(ele) {
+                                const bgColor = ele.style('background-color');
+                                return getContrastColor(bgColor);
+                            },
+                            'font-size': '12px',
+                            'shape': 'ellipse',
+                            'width': function(ele) {
+                                const label = ele.data('label');
+                                const textWidth = measureTextWidth(label, 12, 'normal');
+                                // 楕円形なので少し余裕を持たせる（左右20pxずつ）
+                                return Math.max(80, textWidth + 40) + 'px';
+                            },
+                            'height': '50px',
+                            'text-wrap': 'none',
+                            'border-width': '2px',
+                            'border-color': '#34495E'
+                        }
+                    },
+                    {
+                        selector: 'node.selected',
+                        style: {
+                            'border-color': '#FF6B35',
+                            'border-width': '4px',
+                            'z-index': '999'
+                        }
+                    },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': 2,
+                            'line-color': '#3498DB',
+                            'target-arrow-color': '#3498DB',
+                            'target-arrow-shape': 'triangle',
+                            'curve-style': 'bezier'
+                        }
+                    }
+                ],
+                layout: {
+                    name: 'dagre',
+                    rankDir: callGraphOrientation,
+                    nodeSep: 40,
+                    rankSep: 80,
+                    animate: true,
+                    animationDuration: 1000
+                }
+            });
+
+                setupCommonEventHandlers('call-graph');
+                updateProgress(80, 'Call graph view initialized');
+                console.log('=== initCallGraphView COMPLETE ===');
+            } catch (error) {
+                console.error('initCallGraphView - ERROR:', error);
+                console.error('Error stack:', error.stack);
+            }
+        }
+
+        // 階層構造用のエレメント作成
+        function createHierarchyElements() {
+            const elements = [];
+            const processedIds = new Set();
+
+            console.log('createHierarchyElements - Starting with', allNodes.length, 'nodes');
+
+            // 全ノードを追加（親子関係を含む）
+            let nodesWithParent = 0;
+            allNodes.forEach(node => {
+                if (!processedIds.has(node.data.id)) {
+                    const element = {
+                        data: {
+                            id: node.data.id,
+                            label: node.data.label,
+                            kind: node.data.kind,
+                            path: node.data.path,
+                            line: node.data.line
+                        }
+                    };
+
+                    // 親IDがある場合は追加
+                    if (node.data.parent) {
+                        element.data.parent = node.data.parent;
+                        nodesWithParent++;
+                    }
+
+                    elements.push(element);
+                    processedIds.add(node.data.id);
+                }
+            });
+
+            console.log('createHierarchyElements - Nodes with parent:', nodesWithParent);
+
+            // シンボル間の関係を追加
+            let symbolEdgeCount = 0;
+            allEdges.forEach(edge => {
+                if (edge.data.relationshipType !== 'file-relationship') {
+                    elements.push({
+                        data: {
+                            id: edge.data.id,
+                            source: edge.data.source,
+                            target: edge.data.target
+                        }
+                    });
+                    symbolEdgeCount++;
+                }
+            });
+
+            console.log('createHierarchyElements - Symbol edges:', symbolEdgeCount);
+            console.log('createHierarchyElements - Total elements:', elements.length);
+
+            return elements;
+        }
+
+        // 共通のイベントハンドラ設定
+        function setupCommonEventHandlers(viewName) {
+            const cy = cyInstances[viewName];
+
+            // エッジのマウスホバー処理（ツールチップ）
+            cy.on('mouseover', 'edge', function(evt) {
+                const edge = evt.target;
+                const relationshipDetails = edge.data('relationshipDetails') || [];
+
+                if (relationshipDetails.length > 0) {
+                    tooltip.innerHTML = '';
+
+                    // 参照シンボルと定義シンボルの関係をソート
+                    const sortedRelations = [];
+                    relationshipDetails.forEach(detail => {
+                        sortedRelations.push({
+                            referenceSymbol: detail.referenceSymbolName,
+                            defineSymbol: detail.defineSymbolName,
+                            referenceLine: detail.referenceLine,
+                            detail
+                        });
+                    });
+
+                    sortedRelations.sort((a, b) => {
+                        const symbolCompare = a.referenceSymbol.localeCompare(b.referenceSymbol);
+                        if (symbolCompare !== 0) return symbolCompare;
+                        return a.referenceLine - b.referenceLine;
+                    });
+
+                    let displayCount = 0;
+                    for (const relation of sortedRelations) {
+                        if (displayCount >= 10) break;
+
+                        const relationDiv = document.createElement('div');
+                        relationDiv.style.cssText = 'margin: 2px 0; color: white; cursor: pointer; padding: 2px 4px; border-radius: 2px;';
+                        relationDiv.style.cssText += 'background: rgba(255, 255, 255, 0.1); border-left: 3px solid #4A90E2;';
+                        relationDiv.textContent = `${relation.referenceSymbol} → ${relation.defineSymbol}`;
+
+                        relationDiv.addEventListener('click', function(e) {
+                            e.stopPropagation();
+                            const rect = relationDiv.getBoundingClientRect();
+                            const clickX = e.clientX - rect.left;
+                            const arrowPos = relationDiv.textContent.indexOf(' → ');
+                            const charWidth = rect.width / relationDiv.textContent.length;
+                            const arrowPixelPos = arrowPos * charWidth;
+
+                            if (!IS_STANDALONE_PLACEHOLDER) {
+                                if (clickX < arrowPixelPos) {
+                                    vscode.postMessage({type: 'openFile', path: relation.detail.referencePath, line: relation.detail.referenceLine});
+                                } else {
+                                    vscode.postMessage({type: 'openFile', path: relation.detail.definePath, line: relation.detail.defineLine
+                                    });
+                                }
+                            }
+                            tooltip.style.opacity = '0';
+                        });
+
+                        tooltip.appendChild(relationDiv);
+                        displayCount++;
+                    }
+
+                    if (sortedRelations.length > 10) {
+                        const moreDiv = document.createElement('div');
+                        moreDiv.style.cssText = 'margin-top: 4px; color: #888; font-style: italic; text-align: center;';
+                        moreDiv.textContent = `... 他 ${sortedRelations.length - 10} 関係`;
+                        tooltip.appendChild(moreDiv);
+                    }
+
+                    tooltip.style.opacity = '1';
+                }
+            });
+
+            cy.on('mouseout', 'edge', function(evt) {
+                tooltip.style.opacity = '0';
+                tooltipPosition = null;
+            });
+
+            cy.on('mousemove', function(evt) {
+                if (tooltip.style.opacity === '1' && tooltipPosition === null) {
+                    tooltipPosition = {
+                        x: evt.originalEvent.pageX + 10,
+                        y: evt.originalEvent.pageY - 10
+                    };
+                    tooltip.style.left = tooltipPosition.x + 'px';
+                    tooltip.style.top = tooltipPosition.y + 'px';
+                }
+            });
+
+            // ノードクリック
+            cy.on('tap', 'node', function(evt) {
+                const node = evt.target;
+                const filePath = node.data('path');
+                const line = node.data('line');
+                if (evt.originalEvent && (evt.originalEvent.ctrlKey || evt.originalEvent.metaKey)) {
+                    if (filePath && !IS_STANDALONE_PLACEHOLDER) {
+                        vscode.postMessage({ type: 'openFile', path: filePath, line: line });
+                    }
+                }
+            });
+
+            // ダブルクリックでファイルを開く
+            cy.on('dbltap', 'node', function(evt) {
+                const node = evt.target;
+                const filePath = node.data('path');
+                const line = node.data('line');
+                if (filePath && !IS_STANDALONE_PLACEHOLDER) {
+                    vscode.postMessage({ type: 'openFile', path: filePath, line: line });
+                }
+            });
+        }
+
+        // コントロール関数
+        function fitGraph(viewName) {
+            if (cyInstances[viewName]) {
+                cyInstances[viewName].fit();
+            }
+        }
+
+        function resetLayout(viewName) {
+            if (cyInstances[viewName]) {
+                const cy = cyInstances[viewName];
+                const layout = cy.layout(cy.options().layout);
+                layout.run();
+            }
+        }
+
+        function expandAll() {
+            // 階層ビューで全ノードを展開
+            console.log('Expand all nodes');
+        }
+
+        function collapseAll() {
+            // 階層ビューで全ノードを折りたたみ
+            console.log('Collapse all nodes');
+        }
+
+        function toggleOrientation() {
+            callGraphOrientation = callGraphOrientation === 'TB' ? 'LR' : 'TB';
+            document.getElementById('orientation-label').textContent =
+                callGraphOrientation === 'TB' ? 'Horizontal' : 'Vertical';
+
+            if (cyInstances['call-graph']) {
+                const cy = cyInstances['call-graph'];
+                const layout = cy.layout({
+                    name: 'dagre',
+                    rankDir: callGraphOrientation,
+                    nodeSep: 40,
+                    rankSep: 80,
+                    animate: true,
+                    animationDuration: 1000
+                });
+                layout.run();
+            }
+        }
+
+        // エクスポート関数（既存実装を継承）
+        function toggleExportMenu() {
+            const menu = document.getElementById('export-menu');
+            if (menu) {
+                menu.classList.toggle('show');
+                if (menu.classList.contains('show')) {
+                    setTimeout(() => {
+                        document.addEventListener('click', closeExportMenuOnOutsideClick, true);
+                    }, 0);
+                } else {
+                    document.removeEventListener('click', closeExportMenuOnOutsideClick, true);
+                }
+            }
+        }
+
+        function closeExportMenu() {
+            const menu = document.getElementById('export-menu');
+            if (menu) {
+                menu.classList.remove('show');
+                document.removeEventListener('click', closeExportMenuOnOutsideClick, true);
+            }
+        }
+
+        function closeExportMenuOnOutsideClick(event) {
+            const dropdown = document.querySelector('.export-dropdown');
+            const menu = document.getElementById('export-menu');
+            if (dropdown && menu && !dropdown.contains(event.target)) {
+                closeExportMenu();
+            }
+        }
+
+        function exportPNG() {
+            const cy = cyInstances[currentView];
+            if (cy) {
+                const png = cy.png({
+                    output: 'blob',
+                    bg: 'white',
+                    full: true
+                });
+                const link = document.createElement('a');
+                link.download = `code-relationship-${currentView}.png`;
+                link.href = URL.createObjectURL(png);
+                link.click();
+            }
+        }
+
+        function exportHTML() {
+            const cy = cyInstances[currentView];
+            if (cy) {
+                const nodes = cy.nodes().map(node => ({ data: node.data() }));
+                const edges = cy.edges().map(edge => ({ data: edge.data() }));
+                if (!IS_STANDALONE_PLACEHOLDER) {
+                    vscode.postMessage({
+                        type: 'exportHTML',
+                        data: { nodes, edges }
+                    });
+                }
+            }
+        }
+
+        // VSCode API
+        let vscode = IS_STANDALONE_PLACEHOLDER ? null : acquireVsCodeApi();
+
+        // ツールチップ要素の作成
+        const tooltip = document.createElement('div');
+        tooltip.style.cssText = `
+            position: absolute;
+            background: rgba(0, 0, 0, 0.95);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: monospace;
+            z-index: 9999;
+            pointer-events: auto;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            max-width: 350px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        `;
+        document.body.appendChild(tooltip);
+
+        // ツールチップ位置管理
+        let tooltipPosition = null;
+
+        // 初期ビューを表示
+        initializeView('file-deps');
+        updateProgress(100, 'Complete!');
+    </script>
+</body>
+</html>

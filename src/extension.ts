@@ -13,55 +13,76 @@ import { Queue } from './queue';
 
 // 定期処理
 class IntervalProcess {
-	private _queue = new Queue<Promise<void>>();
+	private _progress_total: number;
+	private _progressed: number;
+	private _queue = new Queue<Relationship.FileDifference>();
 	private _results: PromiseSettledResult<void>[] = [];
-	private _timer: NodeJS.Timeout;
-	constructor() {
-		this._timer = setInterval(async () => {
-			if (this._queue.size > 0) {
-				const processes: Promise<void>[] = this._queue.isEmpty ? [] : this._queue.toArray();
-				this._queue.clear();
-				this._results.splice(0, this._results.length);
-
-				// コード関係調査を実行する
-				this._results = await Promise.allSettled(processes);
-			}
-		}, 500);
+	public constructor() {
+		this._progress_total = 0;
+		this._progressed = 0;
 	}
-	public request(processes: Promise<void>[]): Promise<PromiseSettledResult<void>[]> {
-		return new Promise<PromiseSettledResult<void>[]>((resolve) => {
-			processes.map(process => this._queue.enqueue(process));
-			const process_count = this._queue.size;
-			if (process_count > 0) {
-				let phase = 0;
-				const interval_id = setInterval(() => {
-					switch (phase) {
-						case 0:
-							if (this._queue.isEmpty) {
-								phase = 1;
-							}
-							break;
-						case 1:
-							if (this._results.length >= process_count) {
-								resolve([...this._results]);
-							}
-							break;
-					}
-					if (this._queue.size === 0) {
-						clearInterval(interval_id);
-						Promise.allSettled(processes).then(results => resolve(results));
-					}
-				}, 100);
-			} else {
-				resolve([]);
+	public set progress_total(value: number) {
+		this._progress_total = value;
+	}
+	public set progressed(value: number) {
+		this._progressed = value;
+	}
+	public get progress_total(): number {
+		return this._progress_total;
+	}
+	public get progressed(): number {
+		return this._progressed;
+	}
+	public request(fileDifference: Relationship.FileDifference, examine: Relationship.Examine,
+		progress: (progressed: number, total: number) => void,
+		log: (message: string, ...args: any[]) => void,
+		err: (message: string, ...args: any[]) => void):
+		Promise<PromiseSettledResult<void>[]> 
+	{
+		return new Promise<PromiseSettledResult<void>[]>( async (resolve, reject) => {
+			const results: PromiseSettledResult<void>[] = [];
+			this._queue.enqueue(fileDifference);
+			while (this._queue.size > 0) {
+				const file_diff = this._queue.dequeue();
+				if (file_diff) {
+
+					// 追加ファイルは、シンボルをコードから抽出する
+					let upsert_count = await examine.fileAdditions(file_diff.additions, (code, doc, symbols) => {
+						progress((this._progressed++ / 3) * 2, this._progress_total);
+					});
+
+					// 変更ファイルは、シンボルのテーブルと抽出から変更を分配する
+					upsert_count += await examine.fileUpdates(file_diff.lists, file_diff.updates);
+					this._progress_total += upsert_count;
+					log(`Extructed symbols: ${upsert_count} files`);
+
+					// 変更のないファイルは、シンボルテーブルを読み込む
+					await examine.fileNotchanges(file_diff.notchanges, () => {
+						progress((this._progressed++ / 3) * 3, this._progress_total);
+					});
+					log(`Not changed symbols ${file_diff.notchanges.length} files`);
+
+					// 削除ファイルは、ファイル削除に追加する
+					examine.fileRemoves(file_diff.removes, () => {
+						progress((this._progressed++ / 3) * 2, this._progress_total);
+					});
+					
+					// ファイル更新を追加する
+					examine.updateRelationships(() => {
+						progress(this._progressed++, this._progress_total);
+					});
+				}
 			}
+			resolve(results);
+		}).catch((error) => {
+			err('IntervalProcess request error:', error);
+			return [];
 		});
 	}
 }
 
 let _logs: Logs | null = null;
 const _interval_processe = new IntervalProcess();
-
 
 /**
  * @function 拡張機能の有効化イベント
@@ -168,55 +189,31 @@ export function activate(context: vscode.ExtensionContext) {
 				const db = new codeDb.Db(db_file);
 				await db.table_create();
 				try {
-					// 開始時間
+					const interval = _interval_processe;
 					const start = performance.now();
 
 					// 進捗表示の初期化
-					let progress_total = 0;
-					let progressed = 0;
-					updateProgress(status_bar, start, progressed, progress_total);
+					updateProgress(status_bar, start, interval.progressed, interval.progress_total);
 
 					const examine = new Relationship.Examine(workspace_folder, db, message => logs.log(message), (message, error) => logs.error(message, error));
 
 					// ファイルの差分を求める
 					const file_diff = await examine.fileDifference(workspace_folder, associations, () => {
-						updateProgress(status_bar, start, (progressed++ / 3) * 1, progress_total++);
+						updateProgress(status_bar, start, (interval.progressed++ / 3) * 1, interval.progress_total++);
 					});
-					progress_total += file_diff.additions.length + file_diff.updates.length + file_diff.notchanges.length + file_diff.removes.length;
-
-					// 追加ファイルは、シンボルをコードから抽出する
-					let upsert_count = await examine.fileAdditions(file_diff.additions, (code, doc, symbols) => {
-						updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
-					});
-
-					// 変更ファイルは、シンボルのテーブルと抽出から変更を分配する
-					upsert_count += await examine.fileUpdates(file_diff.lists, file_diff.updates);
-					progress_total += upsert_count;
-					logs.log(`Extructed symbols: ${upsert_count} files`);
-
-					// 変更のないファイルは、シンボルテーブルを読み込む
-					await examine.fileNotchanges(file_diff.notchanges, () => {
-						updateProgress(status_bar, start, (progressed++ / 3) * 3, progress_total);
-					});
-					logs.log(`Not changed symbols ${file_diff.notchanges.length} files`);
-
-					// 削除ファイルは、ファイル削除に追加する
-					examine.fileRemoves(file_diff.removes, () => {
-						updateProgress(status_bar, start, (progressed++ / 3) * 2, progress_total);
-					});
-					
-					// ファイル更新を追加する
-					examine.updateRelationships(() => {
-						updateProgress(status_bar, start, progressed++, progress_total);
-					});
+					await interval.request(file_diff, examine,
+						(progressed, total) => updateProgress(status_bar, start, progressed, total),
+						(message, params) => logs.log(message, params),
+						(message, error) => logs.error(message, error));
+					interval.progress_total += file_diff.additions.length + file_diff.updates.length + file_diff.notchanges.length + file_diff.removes.length;
 
 					// インデックス作成待ち
-					updateProgress(status_bar, start, progressed, progress_total, 'Waiting for indexing to complete...');
+					updateProgress(status_bar, start, interval.progressed, interval.progress_total, 'Waiting for indexing to complete...');
 					const attempt = await codeRelationships.indexingCompleteWait(10);
 					logs.log(`Waitied for indexing to complete... attempt ${attempt}`);
 
 					// コード関係調査を登録する
-					const results = await _interval_processe.request(examine.processes);
+					const results = await Promise.allSettled(examine.processes);
 					const failures = results.filter(result => result.status === 'rejected');
 					failures.map(result => logs.error(result.reason));
 					if (failures.length > 0) {

@@ -13,10 +13,40 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
-## 0.1.26 - 2025-11-18
+### 可視化の改善
+
+- 1.Cytoscape.js の拡張
+  - 階層表示のためのCompound Nodes機能
+  - cytoscape-cola: より良い階層レイアウト
+  - cytoscape-euler: 集合のビジュアライゼーション
+  - cytoscape-elk: Eclipse Layout Kernel統合
+  - cytoscape-popper: より良いツールチップ
+- 2.タブ切り替えによるマルチビュー
+  - 2-1.ファイル依存関係ビュー
+    - Cytoscape.js の force-directed layout
+  - 2-2.階層構造ビュー
+    - D3.js の tree layout または ELK.js
+    - ファイル > クラス > メソッドの階層
+  - 2-3.呼び出しグラフビュー
+    - G6 または Cytoscape.js の dagre layout
+    - 関数/メソッドの呼び出しフロー
+  - 2-4.アーキテクチャビュー
+    - D3.js の treemap または sunburst
+    - モジュール/パッケージの構造
+
+## 0.1.26 - 2025-12-11
+
+### コード関係調査
 
 - コード関係調査の効率化
-- ファイル監視の追加
+- ファイル監視の追加(途中)
+
+### コード関係図表示
+
+- タブ切り替えによるマルチビュー機能の追加
+  - File Dependencies
+  - Hierarchy
+  - Call Graph
 
 ## 0.1.24 - 2025-09-25
 

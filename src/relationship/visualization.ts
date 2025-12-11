@@ -71,7 +71,7 @@ export class Visualization {
 
                                 // 行番号が指定されている場合は該当行に移動
                                 const options: vscode.TextDocumentShowOptions = {};
-                                if (message.line !== undefined) {
+                                if (message.line) {
                                     options.selection = new vscode.Range(message.line, 0, message.line, 0);
                                 }
 
@@ -120,13 +120,13 @@ export class Visualization {
         
         await this.updateProgress(50, 'Generating graph...');
         
-        // 最終的なHTMLを設定
+        // 最終的なHTMLを設定（マルチビュー対応）
         const htmlStartTime = performance.now();
-        const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph.html'));
+        const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-multiview.html'));
         this.panel.webview.html = this.replacePlaceholders(html_load, locale('window-title'), elements);
         const htmlEndTime = performance.now();
         const htmlElapsed = (htmlEndTime - startTime) / 1000;
-        this.logs.log(`${htmlElapsed.toFixed(3)}s  90.00%: Generated webview content (${(htmlEndTime - htmlStartTime).toFixed(3)}ms)`);
+        this.logs.log(`${htmlElapsed.toFixed(3)}s  90.00%: Generated webview content (multi-view) (${(htmlEndTime - htmlStartTime).toFixed(3)}ms)`);
         
             const totalTime = (performance.now() - startTime) / 1000;
             this.logs.log(`${totalTime.toFixed(3)}s 100.00%: Code relationship diagram generation completed in ${totalTime.toFixed(3)}s`);
@@ -169,10 +169,11 @@ export class Visualization {
 
     private createGraphElements(symbols: SYMBOL.SymbolModel[], relationships: codeRelationships.Relationship[], startTime: number) {
         const currentElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`${currentElapsed.toFixed(3)}s  20.00%: Creating graph elements from symbols and relationships...`);
+        this.logs.log(`${currentElapsed.toFixed(3)}s  20.00%: Creating graph elements from symbols and relationships (multi-view)...`);
         const nodes: any[] = [];
         const edges: any[] = [];
         const fileNodes = new Map<string, any>();
+        const allSymbolNodes = new Map<string, any>();
         const fileRelations = new Map<string, number>();
         const fileRelationDetails = new Map<string, Array<{
             referenceSymbolName: string;
@@ -183,27 +184,39 @@ export class Visualization {
             definePath: string;
         }>>();
 
-        // ファイルノードのみを作成
+        // 全シンボルノードを作成（フラットな配列から生成）
         let fileSymbolCount = 0;
+        let totalNodeCount = 0;
+
+        // フラットな配列から全シンボルノードを作成
         symbols.forEach(symbol => {
-            if (symbol.kind === vscode.SymbolKind.File) {
-                fileSymbolCount++;
-                const fileName = this.getSymbolLabel(symbol);
-                const symbolCount = this.countSymbolsInFile(symbol);
-                
-                fileNodes.set(symbol.path, {
-                    data: {
-                        id: symbol.id,
-                        label: fileName,
-                        path: symbol.path,
-                        symbolCount: symbolCount,
-                        kind: symbol.kind
-                    }
-                });
+            const nodeData: any = {
+                id: symbol.id,
+                label: this.getSymbolLabel(symbol),
+                path: symbol.path,
+                kind: symbol.kind,
+                line: symbol.define.line
+            };
+
+            // 親IDがある場合は設定（階層構造ビュー用）
+            if (symbol.parentId) {
+                nodeData.parent = symbol.parentId;
             }
+
+            // ファイルノードの場合はシンボル数を追加
+            if (symbol.kind === vscode.SymbolKind.File) {
+                nodeData.symbolCount = this.countSymbolsInFile(symbol);
+                fileSymbolCount++;
+                // ファイルノードマップに追加
+                fileNodes.set(symbol.path, { data: nodeData });
+            }
+
+            allSymbolNodes.set(symbol.id, { data: nodeData });
+            totalNodeCount++;
         });
+
         const nodesElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`${nodesElapsed.toFixed(3)}s  30.00%: Created ${fileSymbolCount} file nodes from ${symbols.length} total symbols`);
+        this.logs.log(`${nodesElapsed.toFixed(3)}s  30.00%: Created ${fileSymbolCount} file nodes and ${totalNodeCount} total symbol nodes`);
 
         // シンボルIDのインデックスを作成してパフォーマンスを向上
         const symbolIndex = new Map<string, SYMBOL.SymbolModel>();
@@ -277,8 +290,9 @@ export class Visualization {
         const relationsElapsed = (performance.now() - startTime) / 1000;
         this.logs.log(`${relationsElapsed.toFixed(3)}s  40.00%: Processed ${processedRelationships} relationships into ${fileRelations.size} file relations`);
 
-        // ノードを配列に追加
-        nodes.push(...Array.from(fileNodes.values()));
+        // 全シンボルノードを配列に追加（マルチビュー対応）
+        nodes.push(...Array.from(allSymbolNodes.values()));
+        this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 42.00%] Added ${allSymbolNodes.size} nodes to graph`);
 
         // ファイル間のエッジを生成
         let edgeCount = 0;
@@ -323,8 +337,27 @@ export class Visualization {
             }
         });
         const edgesElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`${edgesElapsed.toFixed(3)}s  50.00%: Generated ${edgeCount} edges from ${fileRelations.size} file relations`);
-        
+        this.logs.log(`${edgesElapsed.toFixed(3)}s  50.00%: Generated ${edgeCount} file-level edges from ${fileRelations.size} file relations`);
+
+        // シンボル間の関係エッジを追加（マルチビュー対応）
+        let symbolEdgeCount = 0;
+        relationships.forEach((rel) => {
+            // 参照元と定義先のシンボルが両方存在する場合のみエッジを作成
+            if (allSymbolNodes.has(rel.reference.id) && allSymbolNodes.has(rel.define.id)) {
+                edges.push({
+                    data: {
+                        id: `symbol-relation-${rel.reference.id}-${rel.define.id}`,
+                        source: rel.reference.id,
+                        target: rel.define.id,
+                        relationshipType: 'symbol-relationship'
+                    }
+                });
+                symbolEdgeCount++;
+            }
+        });
+        const symbolEdgesElapsed = (performance.now() - startTime) / 1000;
+        this.logs.log(`${symbolEdgesElapsed.toFixed(3)}s  51.00%: Generated ${symbolEdgeCount} symbol-level edges from ${relationships.length} relationships`);
+
         // 関係線の詳細情報をログ出力
         if (edgeDetails.length > 0) {
             this.logs.log(`${edgesElapsed.toFixed(3)}s  52.00%: Relationship details:`);
@@ -348,7 +381,10 @@ export class Visualization {
 
         const totalSymbolCount = Array.from(fileNodes.values()).reduce((sum, node) => sum + node.data.symbolCount, 0);
         const summaryElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`${summaryElapsed.toFixed(3)}s  58.00%: Graph summary: ${nodes.length} nodes, ${edges.length} edges, ${totalSymbolCount} total symbols`);
+        this.logs.log(`${summaryElapsed.toFixed(3)}s  58.00%: Multi-view graph summary:`);
+        this.logs.log(`${summaryElapsed.toFixed(3)}s  58.50%:   - Total nodes: ${nodes.length} (${fileSymbolCount} files, ${nodes.length - fileSymbolCount} symbols)`);
+        this.logs.log(`${summaryElapsed.toFixed(3)}s  59.00%:   - Total edges: ${edges.length} (${edgeCount} file-level, ${symbolEdgeCount} symbol-level)`);
+        this.logs.log(`${summaryElapsed.toFixed(3)}s  59.50%:   - Total symbols in files: ${totalSymbolCount}`);
 
         return { nodes, edges };
     }
@@ -389,6 +425,9 @@ export class Visualization {
             'CYTOSCAPE_URI_PLACEHOLDER':        isStandalone
                 ? 'https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js'
                 : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'cytoscape', 'dist', 'cytoscape.min.js')).toString(),
+            'PLAIN_DAGRE_URI_PLACEHOLDER':            isStandalone
+                ? 'https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.js'
+                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'dagre', 'dist', 'dagre.js')).toString(),
             'CYTOSCAPE_DAGRE_URI_PLACEHOLDER':  isStandalone
                 ? 'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js'
                 : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'cytoscape-dagre', 'cytoscape-dagre.js')).toString(),
@@ -441,7 +480,7 @@ export class Visualization {
     }
     
     private async exportStandaloneHTML(filename: string, data: { nodes: any[], edges: any[] }) {
-        const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph.html'));
+        const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-multiview.html'));
         const html_text = this.replacePlaceholders(html_load, locale('window-title') + ' - Standalone', data, true);
 
         // ファイル保存ダイアログを表示
