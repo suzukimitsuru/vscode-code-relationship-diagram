@@ -1,89 +1,127 @@
-name: Build duckdb.node for all platforms
+name: Build duckdb.node for all platforms and Node.js versions
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-duckdb-binaries.yml'
+      - 'package.json'
 
 jobs:
-  build-linux:
-    name: Build for Linux (x64)
-    runs-on: ubuntu-latest
+  build-matrix:
+    name: Build for ${{ matrix.os }}-${{ matrix.arch }} (Node.js ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: read
+    strategy:
+      matrix:
+        include:
+          # Linux x64 - 複数のNode.jsバージョン
+          - os: ubuntu-22.04
+            arch: x64
+            platform: linux
+            node-version: 18
+            abi: 108
+          - os: ubuntu-22.04
+            arch: x64
+            platform: linux
+            node-version: 20
+            abi: 115
+          - os: ubuntu-22.04
+            arch: x64
+            platform: linux
+            node-version: 22
+            abi: 127
+
+          # macOS arm64 (Apple Silicon)
+          - os: macos-14
+            arch: arm64
+            platform: darwin
+            node-version: 18
+            abi: 108
+          - os: macos-14
+            arch: arm64
+            platform: darwin
+            node-version: 20
+            abi: 115
+          - os: macos-14
+            arch: arm64
+            platform: darwin
+            node-version: 22
+            abi: 127
+
+          # macOS x64 (Intel)
+          - os: macos-13
+            arch: x64
+            platform: darwin
+            node-version: 18
+            abi: 108
+          - os: macos-13
+            arch: x64
+            platform: darwin
+            node-version: 20
+            abi: 115
+          - os: macos-13
+            arch: x64
+            platform: darwin
+            node-version: 22
+            abi: 127
+
+          # Windows x64
+          - os: windows-2022
+            arch: x64
+            platform: win32
+            node-version: 18
+            abi: 108
+          - os: windows-2022
+            arch: x64
+            platform: win32
+            node-version: 20
+            abi: 115
+          - os: windows-2022
+            arch: x64
+            platform: win32
+            node-version: 22
+            abi: 127
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Find duckdb.node
+      - name: Find duckdb.node (Unix)
+        if: runner.os != 'Windows'
         run: find node_modules/duckdb/lib/binding -name "*.node"
 
-      - name: Copy Linux duckdb.node
-        run: |
-          mkdir -p duckdb-binaries/linux-x64
-          cp node_modules/duckdb/lib/binding/duckdb.node duckdb-binaries/linux-x64/duckdb-linux-x64.node
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: duckdb-linux-x64
-          path: duckdb-binaries/linux-x64/duckdb-linux-x64.node
-
-  build-macos:
-    name: Build for macOS (darwin-arm64)
-    runs-on: macos-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 18
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Find duckdb.node
-        run: find node_modules/duckdb/lib/binding -name "*.node"
-
-      - name: Copy macOS duckdb.node
-        run: |
-          mkdir -p duckdb-binaries/darwin-arm64
-          cp node_modules/duckdb/lib/binding/duckdb.node duckdb-binaries/darwin-arm64/duckdb-darwin-arm64.node
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: duckdb-darwin-arm64
-          path: duckdb-binaries/darwin-arm64/duckdb-darwin-arm64.node
-
-  build-windows:
-    name: Build for Windows (win32-x64)
-    runs-on: windows-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 18
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Find duckdb.node
+      - name: Find duckdb.node (Windows)
+        if: runner.os == 'Windows'
         run: Get-ChildItem -Recurse -Filter "duckdb*.node"
 
-      - name: Copy Windows duckdb.node
+      - name: Copy duckdb.node with ABI version (Unix)
+        if: runner.os != 'Windows'
         run: |
-          mkdir duckdb-binaries\win32-x64
-          copy node_modules\duckdb\lib\binding\duckdb.node duckdb-binaries\win32-x64\duckdb-win32-x64.node
+          mkdir -p bindings
+          cp node_modules/duckdb/lib/binding/duckdb.node bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
+          echo "Built for Node.js ${{ matrix.node-version }} (ABI ${{ matrix.abi }})"
+          echo "Output: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node"
+
+      - name: Copy duckdb.node with ABI version (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir bindings
+          copy node_modules\duckdb\lib\binding\duckdb.node bindings\duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
+          echo "Built for Node.js ${{ matrix.node-version }} (ABI ${{ matrix.abi }})"
+          echo "Output: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: duckdb-win32-x64
-          path: duckdb-binaries/win32-x64/duckdb-win32-x64.node
+          name: duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}
+          path: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
+          retention-days: 90
