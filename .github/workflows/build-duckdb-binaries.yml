@@ -36,6 +36,11 @@ jobs:
             platform: linux
             node-version: 22
             abi: 127
+          - os: ubuntu-22.04
+            arch: x64
+            platform: linux
+            node-version: 23
+            abi: 140
 
           # macOS arm64 (Apple Silicon)
           - os: macos-14
@@ -53,23 +58,11 @@ jobs:
             platform: darwin
             node-version: 22
             abi: 127
-
-          # macOS x64 (Intel) - 2027年8月まで利用可能
-          - os: macos-15-large
-            arch: x64
+          - os: macos-14
+            arch: arm64
             platform: darwin
-            node-version: 18
-            abi: 108
-          - os: macos-15-large
-            arch: x64
-            platform: darwin
-            node-version: 20
-            abi: 115
-          - os: macos-15-large
-            arch: x64
-            platform: darwin
-            node-version: 22
-            abi: 127
+            node-version: 23
+            abi: 140
 
           # Windows x64
           - os: windows-2022
@@ -87,6 +80,11 @@ jobs:
             platform: win32
             node-version: 22
             abi: 127
+          - os: windows-2022
+            arch: x64
+            platform: win32
+            node-version: 23
+            abi: 140
 
     steps:
       - uses: actions/checkout@v4
@@ -95,30 +93,47 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
+      - name: Install Python (for node-gyp)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Find duckdb.node (Unix)
+      - name: Build DuckDB from source (Unix)
         if: runner.os != 'Windows'
-        run: find node_modules/duckdb/lib/binding -name "*.node"
+        run: |
+          npm install
+          cd node_modules/duckdb
+          npm run install --build-from-source
 
-      - name: Find duckdb.node (Windows)
+      - name: Build DuckDB from source (Windows)
         if: runner.os == 'Windows'
-        run: Get-ChildItem -Recurse -Filter "duckdb*.node"
+        run: |
+          npm install
+          cd node_modules\duckdb
+          npm run install --build-from-source
 
-      - name: Copy duckdb.node with ABI version (Unix)
+      - name: Sign binary (macOS only)
+        if: runner.os == 'macOS'
+        run: |
+          echo "Signing DuckDB binary with ad-hoc signature..."
+          codesign -s - -f node_modules/duckdb/lib/binding/duckdb.node
+          codesign -v node_modules/duckdb/lib/binding/duckdb.node
+
+      - name: Copy and verify duckdb.node (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p bindings
           cp node_modules/duckdb/lib/binding/duckdb.node bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
+          ls -lh bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
           echo "Built for Node.js ${{ matrix.node-version }} (ABI ${{ matrix.abi }})"
           echo "Output: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node"
 
-      - name: Copy duckdb.node with ABI version (Windows)
+      - name: Copy and verify duckdb.node (Windows)
         if: runner.os == 'Windows'
         run: |
           New-Item -ItemType Directory -Force -Path bindings
           Copy-Item node_modules\duckdb\lib\binding\duckdb.node bindings\duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
+          Get-Item bindings\duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
           Write-Output "Built for Node.js ${{ matrix.node-version }} (ABI ${{ matrix.abi }})"
           Write-Output "Output: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node"
 
