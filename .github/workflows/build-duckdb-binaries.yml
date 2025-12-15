@@ -16,6 +16,8 @@ jobs:
     permissions:
       contents: read
     strategy:
+      fail-fast: false  # 1つのジョブが失敗しても他を継続
+      max-parallel: 6   # 並行実行数を制限（macOS課金対策）
       matrix:
         include:
           # Linux x64 - 複数のNode.jsバージョン
@@ -52,18 +54,18 @@ jobs:
             node-version: 22
             abi: 127
 
-          # macOS x64 (Intel)
-          - os: macos-13
+          # macOS x64 (Intel) - 2027年8月まで利用可能
+          - os: macos-15-large
             arch: x64
             platform: darwin
             node-version: 18
             abi: 108
-          - os: macos-13
+          - os: macos-15-large
             arch: x64
             platform: darwin
             node-version: 20
             abi: 115
-          - os: macos-13
+          - os: macos-15-large
             arch: x64
             platform: darwin
             node-version: 22
@@ -115,10 +117,10 @@ jobs:
       - name: Copy duckdb.node with ABI version (Windows)
         if: runner.os == 'Windows'
         run: |
-          mkdir bindings
-          copy node_modules\duckdb\lib\binding\duckdb.node bindings\duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
-          echo "Built for Node.js ${{ matrix.node-version }} (ABI ${{ matrix.abi }})"
-          echo "Output: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node"
+          New-Item -ItemType Directory -Force -Path bindings
+          Copy-Item node_modules\duckdb\lib\binding\duckdb.node bindings\duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
+          Write-Output "Built for Node.js ${{ matrix.node-version }} (ABI ${{ matrix.abi }})"
+          Write-Output "Output: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node"
 
       - uses: actions/upload-artifact@v4
         with:
