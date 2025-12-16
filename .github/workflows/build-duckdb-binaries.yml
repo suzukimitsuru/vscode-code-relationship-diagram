@@ -65,6 +65,8 @@ jobs:
             abi: 140
 
           # Windows x64
+          # Note: DuckDB does not provide prebuilt binaries for Node.js 22/23 on Windows
+          # and source builds fail with MSBuild errors. Only 18/20 are supported.
           - os: windows-2022
             arch: x64
             platform: win32
@@ -75,16 +77,6 @@ jobs:
             platform: win32
             node-version: 20
             abi: 115
-          - os: windows-2022
-            arch: x64
-            platform: win32
-            node-version: 22
-            abi: 127
-          - os: windows-2022
-            arch: x64
-            platform: win32
-            node-version: 23
-            abi: 140
 
     steps:
       - uses: actions/checkout@v4
@@ -105,12 +97,12 @@ jobs:
           cd node_modules/duckdb
           npm run install --build-from-source
 
-      - name: Build DuckDB from source (Windows)
+      - name: Install DuckDB with prebuilt binary (Windows)
         if: runner.os == 'Windows'
         run: |
           npm install
           cd node_modules\duckdb
-          npm run install --build-from-source
+          npm run install
 
       - name: Sign binary (macOS only)
         if: runner.os == 'macOS'
