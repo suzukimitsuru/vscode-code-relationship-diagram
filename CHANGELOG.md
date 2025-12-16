@@ -34,6 +34,17 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
     - D3.js の treemap または sunburst
     - モジュール/パッケージの構造
 
+## 0.1.27 - 2025-12-17
+
+### DuckDB Multi-Platform Support
+
+- **複数環境対応のDuckDBバイナリシステム**
+  - Node.js 18/20/22 (ABI 108/115/127) をサポート
+  - Linux x64、macOS arm64/x64、Windows x64 対応
+  - ランタイムでの自動ABI検出とフォールバック機能
+  - GitHub Actions による自動ビルドワークフロー
+  - Ubuntu 22.04/Node.js 18.18 での途中停止問題を修正
+
 ## 0.1.26 - 2025-12-11
 
 ### コード関係調査

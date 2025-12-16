@@ -6,7 +6,86 @@ import * as SYMBOL from './extruct/symbol';
 import * as codeRelationships from './relationship/codeRelationships';
 
 import * as duckdb from 'duckdb';
-const dynDuckdb = require(path.join(__dirname, '..', 'bindings', `duckdb-${process.platform}-${process.arch}.node`)) as typeof duckdb;
+import * as fs from 'fs';
+import { autoSignBinary } from './bindingsAutoSign';
+
+// Node.jsのABIバージョンを取得
+const getNodeABI = (): string => {
+    // process.versionsからABI番号を取得
+    const modules = process.versions.modules;
+    return modules || '';
+};
+
+// カスタムバインディングをロード（複数のNode.jsバージョンに対応）
+// ランタイムで利用可能なバイナリを検索して読み込む
+const loadDuckDBBinding = (): typeof duckdb => {
+    const bindingsDir = path.join(__dirname, '..', 'bindings');
+    const abi = getNodeABI();
+    const platform = process.platform;
+    const arch = process.arch;
+
+    // ABI特定のバイナリを優先して試す
+    const abiSpecificFilename = `duckdb-${platform}-${arch}-abi${abi}.node`;
+    const abiSpecificPath = path.join(bindingsDir, abiSpecificFilename);
+
+    if (fs.existsSync(abiSpecificPath)) {
+        // macOSでは自動署名を試みる
+        if (platform === 'darwin') {
+            autoSignBinary(abiSpecificPath);
+        }
+
+        try {
+            console.log(`Loading DuckDB binding: ${abiSpecificFilename} (Node.js ${process.version}, ABI ${abi})`);
+            return require(abiSpecificPath) as typeof duckdb;
+        } catch (error) {
+            console.error(`Failed to load ABI-specific DuckDB binding from ${abiSpecificPath}:`, error);
+        }
+    }
+
+    // ABI特定のバイナリが見つからない場合は、利用可能なバイナリを検索
+    if (fs.existsSync(bindingsDir)) {
+        const files = fs.readdirSync(bindingsDir);
+        const matchingFiles = files.filter(file =>
+            file.startsWith(`duckdb-${platform}-${arch}-abi`) && file.endsWith('.node')
+        );
+
+        if (matchingFiles.length > 0) {
+            // 利用可能なABIバージョンをリスト
+            const availableABIs = matchingFiles.map(f => {
+                const match = f.match(/abi(\d+)\.node$/);
+                return match ? match[1] : null;
+            }).filter(Boolean);
+
+            console.warn(`ABI ${abi} binding not found. Available ABIs: ${availableABIs.join(', ')}`);
+            console.warn(`Attempting to use closest compatible ABI binding...`);
+
+            // 最も近いABIバージョンを試す（後方互換性を期待）
+            const sortedFiles = matchingFiles.sort().reverse();
+            for (const file of sortedFiles) {
+                const fallbackPath = path.join(bindingsDir, file);
+
+                // macOSでは自動署名を試みる
+                if (platform === 'darwin') {
+                    autoSignBinary(fallbackPath);
+                }
+
+                try {
+                    console.log(`Attempting to load: ${file}`);
+                    return require(fallbackPath) as typeof duckdb;
+                } catch (error) {
+                    console.error(`Failed to load ${file}:`, error);
+                }
+            }
+        }
+    }
+
+    // カスタムバインディングが見つからない場合は、デフォルトのDuckDBを使用
+    console.warn(`No compatible custom DuckDB binding found, falling back to default DuckDB module`);
+    console.warn(`Node.js: ${process.version}, ABI: ${abi}, Platform: ${platform}-${arch}`);
+    return duckdb;
+};
+
+const dynDuckdb = loadDuckDBBinding();
 
 /** @description データベース操作 */
 export class Db extends vscode.Disposable {
@@ -22,7 +101,7 @@ export class Db extends vscode.Disposable {
      */
     public constructor(dbFile: string) {
         super(() => {
-            this._conn?.close((err?: Error | null) => {});
+            this._conn?.close(() => {});
             this._conn = null as any;
             this._db = null as any;
         });
@@ -34,7 +113,7 @@ export class Db extends vscode.Disposable {
      * @description データベースを破棄する
      */
     public dispose() {
-        this._conn?.close((err?: Error | null) => {});
+        this._conn?.close(() => {});
         this._conn = null as any;
         this._db = null as any;
         super.dispose();    
