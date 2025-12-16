@@ -422,6 +422,15 @@ export class Visualization {
             'FONT_AWWSOME_CSS_URI_PLACEHOLDER': isStandalone
                 ?  'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css'
                 : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'font-awesome', 'css', 'font-awesome.min.css')).toString(),
+            'FONT_AWESOME_WOFF2_URI_PLACEHOLDER': isStandalone
+                ? 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.woff2'
+                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'font-awesome', 'fonts', 'fontawesome-webfont.woff2')).toString(),
+            'FONT_AWESOME_WOFF_URI_PLACEHOLDER': isStandalone
+                ? 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.woff'
+                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'font-awesome', 'fonts', 'fontawesome-webfont.woff')).toString(),
+            'FONT_AWESOME_TTF_URI_PLACEHOLDER': isStandalone
+                ? 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.ttf'
+                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'font-awesome', 'fonts', 'fontawesome-webfont.ttf')).toString(),
             'CYTOSCAPE_URI_PLACEHOLDER':        isStandalone
                 ? 'https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js'
                 : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'cytoscape', 'dist', 'cytoscape.min.js')).toString(),
@@ -431,6 +440,9 @@ export class Visualization {
             'CYTOSCAPE_DAGRE_URI_PLACEHOLDER':  isStandalone
                 ? 'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js'
                 : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'cytoscape-dagre', 'cytoscape-dagre.js')).toString(),
+            'GRAPH_MULTIVIEW_SCRIPT_URI_PLACEHOLDER': isStandalone
+                ? '' // Standalone version should have inline script
+                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'graphMultiview.js')).toString(),
 
             'BACKGROUND_COLOR_PLACEHOLDER':     isDarkTheme ? '#1e1e1e' : '#ffffff',
             'PROGRESS_BG_COLOR_PLACEHOLDER':    isDarkTheme ? '#333' : '#e0e0e0',
