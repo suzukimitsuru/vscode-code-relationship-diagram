@@ -150,7 +150,7 @@ export class Examine {
                 (oldItem) => oldItem.id,
                 (newItem) => newItem.id,
                 (oldItem, newItem) => newItem.id === oldItem.id,
-                (oldItem, newItem) => !newItem.hash.equals(oldItem.hash)  
+                (oldItem, newItem) => !newItem.hash.equals(oldItem.hash)
             );
 
             // 追加シンボルは、定義から関係を調査する
@@ -176,6 +176,16 @@ export class Examine {
             }
 
             // 変更のないシンボルは、既にシンボルテーブルにも関係テーブルにも在るため、何もしない
+            // ただし、位置が変わっている場合は table_symbols のみ更新する
+            let position_changed_count = 0;
+            for (const newSymbol of symbol_notchanges) {
+                const oldSymbol = olds.find(old => old.id === newSymbol.id);
+                if (oldSymbol && newSymbol.isPositionChanged(oldSymbol)) {
+                    this.processes.push(this._db.symbol_update(newSymbol));
+                    position_changed_count++;
+                }
+            }
+
             this._symbol_all[code.relative_path] = news;
 
             // 削除シンボルはDBから削除する
@@ -185,7 +195,7 @@ export class Examine {
             }
 
             // 経過表示
-            this._log(`symbols ${code.relative_path}: (added ${symbol_additions.length}, updated ${symbol_updates.length}, no changed ${symbol_notchanges.length}, removed ${symbol_removes.length})`);
+            this._log(`symbols ${code.relative_path}: (added ${symbol_additions.length}, updated ${symbol_updates.length}, no changed ${symbol_notchanges.length}, removed ${symbol_removes.length}, position changed ${position_changed_count})`);
         }
         return upsert_count;
     }

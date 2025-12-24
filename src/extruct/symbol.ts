@@ -39,4 +39,18 @@ export class SymbolModel {
     public addChild(child: SymbolModel) {
         this.children.push(child);
     }
+
+    /**
+     * 位置情報が変更されたかを判断
+     * @param other 比較対象のシンボル
+     * @returns 位置情報が変更されている場合true
+     */
+    public isPositionChanged(other: SymbolModel): boolean {
+        return this.define.line !== other.define.line ||
+               this.define.character !== other.define.character ||
+               this.start.line !== other.start.line ||
+               this.start.character !== other.start.character ||
+               this.end.line !== other.end.line ||
+               this.end.character !== other.end.character;
+    }
 }

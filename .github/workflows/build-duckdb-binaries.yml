@@ -25,44 +25,36 @@ jobs:
             arch: x64
             platform: linux
             node-version: 18
-            abi: 108
           - os: ubuntu-22.04
             arch: x64
             platform: linux
             node-version: 20
-            abi: 115
           - os: ubuntu-22.04
             arch: x64
             platform: linux
             node-version: 22
-            abi: 127
           - os: ubuntu-22.04
             arch: x64
             platform: linux
             node-version: 23
-            abi: 140
 
           # macOS arm64 (Apple Silicon)
           - os: macos-14
             arch: arm64
             platform: darwin
             node-version: 18
-            abi: 108
           - os: macos-14
             arch: arm64
             platform: darwin
             node-version: 20
-            abi: 115
           - os: macos-14
             arch: arm64
             platform: darwin
             node-version: 22
-            abi: 127
           - os: macos-14
             arch: arm64
             platform: darwin
             node-version: 23
-            abi: 140
 
           # Windows x64
           # Note: DuckDB does not provide prebuilt binaries for Node.js 22/23 on Windows
@@ -71,12 +63,10 @@ jobs:
             arch: x64
             platform: win32
             node-version: 18
-            abi: 108
           - os: windows-2022
             arch: x64
             platform: win32
             node-version: 20
-            abi: 115
 
     steps:
       - uses: actions/checkout@v4
@@ -115,22 +105,20 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p bindings
-          cp node_modules/duckdb/lib/binding/duckdb.node bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
-          ls -lh bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
-          echo "Built for Node.js ${{ matrix.node-version }} (ABI ${{ matrix.abi }})"
-          echo "Output: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node"
+          cp node_modules/duckdb/lib/binding/duckdb.node bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-v${{ matrix.node-version }}.node
+          ls -lh bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-v${{ matrix.node-version }}.node
+          echo "Output: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-v${{ matrix.node-version }}.node"
 
       - name: Copy and verify duckdb.node (Windows)
         if: runner.os == 'Windows'
         run: |
           New-Item -ItemType Directory -Force -Path bindings
-          Copy-Item node_modules\duckdb\lib\binding\duckdb.node bindings\duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
-          Get-Item bindings\duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
-          Write-Output "Built for Node.js ${{ matrix.node-version }} (ABI ${{ matrix.abi }})"
-          Write-Output "Output: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node"
+          Copy-Item node_modules\duckdb\lib\binding\duckdb.node bindings\duckdb-${{ matrix.platform }}-${{ matrix.arch }}-v${{ matrix.node-version }}.node
+          Get-Item bindings\duckdb-${{ matrix.platform }}-${{ matrix.arch }}-v${{ matrix.node-version }}.node
+          Write-Output "Output: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-v${{ matrix.node-version }}.node"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}
-          path: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-abi${{ matrix.abi }}.node
+          name: duckdb-${{ matrix.platform }}-${{ matrix.arch }}-v${{ matrix.node-version }}
+          path: bindings/duckdb-${{ matrix.platform }}-${{ matrix.arch }}-v${{ matrix.node-version }}.node
           retention-days: 90

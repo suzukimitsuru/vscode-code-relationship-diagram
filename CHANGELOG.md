@@ -34,6 +34,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
     - D3.js の treemap または sunburst
     - モジュール/パッケージの構造
 
+## 0.1.28 - 2025-12-25
+
+- シンボルIDの重複をSymbolKind+ハッシュを追加して解消
+- DuckDBのNode.jsバインディングの動的ロードを整備
+
 ## 0.1.27 - 2025-12-17
 
 ### DuckDB Multi-Platform Support

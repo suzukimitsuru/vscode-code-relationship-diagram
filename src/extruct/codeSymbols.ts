@@ -20,11 +20,12 @@ export function extract(filepath: string, document: vscode.TextDocument): Promis
             );
             symbols.push(rootSymbol);
             const sumSymbol = (found: vscode.DocumentSymbol, parent: SYMBOL.SymbolModel) => {
-                const id = `${parent.id}/${found.name}`;
+                const kind = vscode.SymbolKind[found.kind] || 'Unknown';
                 const hash = createHash('sha256').update(document.getText(found.range)).digest();
                 const define = found.selectionRange;
                 const branch = new SYMBOL.SymbolModel(
-                    id, found.name, found.kind, filepath,
+                    `${parent.id}/${kind}.${found.name}@${hash.toString('hex')}`,
+                    found.name, found.kind, filepath,
                     define.start, found.range.start, found.range.end,
                     hash, parent.id
                 );

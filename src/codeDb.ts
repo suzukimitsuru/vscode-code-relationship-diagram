@@ -9,82 +9,50 @@ import * as duckdb from 'duckdb';
 import * as fs from 'fs';
 import { autoSignBinary } from './bindingsAutoSign';
 
-// Node.jsのABIバージョンを取得
-const getNodeABI = (): string => {
-    // process.versionsからABI番号を取得
-    const modules = process.versions.modules;
-    return modules || '';
-};
-
-// カスタムバインディングをロード（複数のNode.jsバージョンに対応）
-// ランタイムで利用可能なバイナリを検索して読み込む
+// DuckDB の Node.js バインディングを読み込む
 const loadDuckDBBinding = (): typeof duckdb => {
     const bindingsDir = path.join(__dirname, '..', 'bindings');
-    const abi = getNodeABI();
-    const platform = process.platform;
-    const arch = process.arch;
+    const platform = process.platform;          // プラットフォーム: 'win32', 'darwin', 'linux', etc.
+    const arch = process.arch;                  // アーキテクチャ: 'x64', 'arm64', etc. 
+    const nodeMajor = process.versions.node.split('.')[0]; // Node.jsのメジャーバージョン: '18', '20', '22', '23', etc.
 
-    // ABI特定のバイナリを優先して試す
-    const abiSpecificFilename = `duckdb-${platform}-${arch}-abi${abi}.node`;
-    const abiSpecificPath = path.join(bindingsDir, abiSpecificFilename);
-
-    if (fs.existsSync(abiSpecificPath)) {
-        // macOSでは自動署名を試みる
-        if (platform === 'darwin') {
-            autoSignBinary(abiSpecificPath);
-        }
-
-        try {
-            console.log(`Loading DuckDB binding: ${abiSpecificFilename} (Node.js ${process.version}, ABI ${abi})`);
-            return require(abiSpecificPath) as typeof duckdb;
-        } catch (error) {
-            console.error(`Failed to load ABI-specific DuckDB binding from ${abiSpecificPath}:`, error);
-        }
-    }
-
-    // ABI特定のバイナリが見つからない場合は、利用可能なバイナリを検索
+    // バインディングのディレクトリが在ったら
+    let loadingMajor = nodeMajor;
     if (fs.existsSync(bindingsDir)) {
+
+        // 利用可能なバインディングをリスト
         const files = fs.readdirSync(bindingsDir);
-        const matchingFiles = files.filter(file =>
-            file.startsWith(`duckdb-${platform}-${arch}-abi`) && file.endsWith('.node')
-        );
+        const availableMajors = files.filter(file => file.startsWith(`duckdb-${platform}-${arch}-v`) && file.endsWith('.node'))
+            .map(file => {
+                const match = file.match(/v(\d+)\.node$/);
+                return match ? match[1] : '';
+            }).filter(Boolean).sort();
+        if (availableMajors.length > 0) {
 
-        if (matchingFiles.length > 0) {
-            // 利用可能なABIバージョンをリスト
-            const availableABIs = matchingFiles.map(f => {
-                const match = f.match(/abi(\d+)\.node$/);
-                return match ? match[1] : null;
-            }).filter(Boolean);
-
-            console.warn(`ABI ${abi} binding not found. Available ABIs: ${availableABIs.join(', ')}`);
-            console.warn(`Attempting to use closest compatible ABI binding...`);
-
-            // 最も近いABIバージョンを試す（後方互換性を期待）
-            const sortedFiles = matchingFiles.sort().reverse();
-            for (const file of sortedFiles) {
-                const fallbackPath = path.join(bindingsDir, file);
-
-                // macOSでは自動署名を試みる
-                if (platform === 'darwin') {
-                    autoSignBinary(fallbackPath);
-                }
-
-                try {
-                    console.log(`Attempting to load: ${file}`);
-                    return require(fallbackPath) as typeof duckdb;
-                } catch (error) {
-                    console.error(`Failed to load ${file}:`, error);
+            // 利用可能な中で最も近いメジャーバージョンを選択
+            loadingMajor = availableMajors[0];
+            for (const availableMajor of availableMajors) {
+                loadingMajor = availableMajor;
+                if (nodeMajor.localeCompare(availableMajor) <= 0) {
+                    break;
                 }
             }
         }
     }
 
-    // カスタムバインディングが見つからない場合は、デフォルトのDuckDBを使用
-    console.warn(`No compatible custom DuckDB binding found, falling back to default DuckDB module`);
-    console.warn(`Node.js: ${process.version}, ABI: ${abi}, Platform: ${platform}-${arch}`);
-    return duckdb;
+    // バインディングのパスを構築
+    const abiSpecificPath = path.join(bindingsDir, `duckdb-${platform}-${arch}-v${loadingMajor}.node`);
+
+    // macOSでは自動署名を試みる
+    if (platform === 'darwin') {
+        autoSignBinary(abiSpecificPath);
+    }
+
+    // DuckDB の Node.js バインディングを返す
+    return require(abiSpecificPath) as typeof duckdb;
 };
 
+//const dynDuckdb = require(path.join(__dirname, '..', 'bindings', `duckdb-${process.platform}-${process.arch}.node`)) as typeof duckdb;
 const dynDuckdb = loadDuckDBBinding();
 
 /** @description データベース操作 */
@@ -305,8 +273,8 @@ export class Db extends vscode.Disposable {
                     );
                 }
                 this._conn.prepare(
-                    'INSERT INTO table_symbols ' + 
-                    '(id, parent_id, name, kind, path, define_line, define_character, start_line, start_character, end_line, end_character, hash) ' + 
+                    'INSERT INTO table_symbols ' +
+                    '(id, parent_id, name, kind, path, define_line, define_character, start_line, start_character, end_line, end_character, hash) ' +
                     `VALUES ${placeholders.join(', ')};`).run(
                     ...values,
                     (err: Error | null) => {
@@ -320,6 +288,39 @@ export class Db extends vscode.Disposable {
             } else {
                 resolve();
             }
+        });
+    }
+
+    /**
+     * @description シンボルのID以外の情報を更新（内容は変わらないが位置が変わった場合など）
+     * @param symbol シンボル
+     * @returns 完了
+     */
+    public symbol_update(symbol: SYMBOL.SymbolModel): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this._conn.prepare(
+                'UPDATE table_symbols SET ' +
+                'parent_id = ?, name = ?, kind = ?, path = ?, ' +
+                'define_line = ?, define_character = ?, ' +
+                'start_line = ?, start_character = ?, ' +
+                'end_line = ?, end_character = ?, ' +
+                'hash = ? ' +
+                'WHERE id = ?;'
+            ).run(
+                symbol.parentId, symbol.name, symbol.kind, symbol.path,
+                symbol.define.line, symbol.define.character,
+                symbol.start.line, symbol.start.character,
+                symbol.end.line, symbol.end.character,
+                symbol.hash.toString('hex'),
+                symbol.id,
+                (err: Error | null) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve();
+                    }
+                }
+            );
         });
     }
 
