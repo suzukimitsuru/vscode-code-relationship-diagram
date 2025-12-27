@@ -10,30 +10,29 @@ import * as fs from 'fs';
 import { autoSignBinary } from './bindingsAutoSign';
 
 // DuckDB の Node.js バインディングを読み込む
-const loadDuckDBBinding = (): typeof duckdb => {
-    const bindingsDir = path.join(__dirname, '..', 'bindings');
+const loadDuckDBBinding = (bindingsDir: string): string => {
     const platform = process.platform;          // プラットフォーム: 'win32', 'darwin', 'linux', etc.
     const arch = process.arch;                  // アーキテクチャ: 'x64', 'arm64', etc. 
-    const nodeMajor = process.versions.node.split('.')[0]; // Node.jsのメジャーバージョン: '18', '20', '22', '23', etc.
+    const node_major = process.versions.node.split('.')[0]; // Node.jsのメジャーバージョン: '18', '20', '22', '23', etc.
 
     // バインディングのディレクトリが在ったら
-    let loadingMajor = nodeMajor;
+    let loading_major = node_major;
     if (fs.existsSync(bindingsDir)) {
 
         // 利用可能なバインディングをリスト
         const files = fs.readdirSync(bindingsDir);
-        const availableMajors = files.filter(file => file.startsWith(`duckdb-${platform}-${arch}-v`) && file.endsWith('.node'))
+        const available_majors = files.filter(file => file.startsWith(`duckdb-${platform}-${arch}-v`) && file.endsWith('.node'))
             .map(file => {
                 const match = file.match(/v(\d+)\.node$/);
                 return match ? match[1] : '';
             }).filter(Boolean).sort();
-        if (availableMajors.length > 0) {
+        if (available_majors.length > 0) {
 
             // 利用可能な中で最も近いメジャーバージョンを選択
-            loadingMajor = availableMajors[0];
-            for (const availableMajor of availableMajors) {
-                loadingMajor = availableMajor;
-                if (nodeMajor.localeCompare(availableMajor) <= 0) {
+            loading_major = available_majors[0];
+            for (const availableMajor of available_majors) {
+                loading_major = availableMajor;
+                if (node_major.localeCompare(availableMajor) <= 0) {
                     break;
                 }
             }
@@ -41,19 +40,27 @@ const loadDuckDBBinding = (): typeof duckdb => {
     }
 
     // バインディングのパスを構築
-    const abiSpecificPath = path.join(bindingsDir, `duckdb-${platform}-${arch}-v${loadingMajor}.node`);
+    const specific_path = path.join(bindingsDir, `duckdb-${platform}-${arch}-v${loading_major}.node`);
 
     // macOSでは自動署名を試みる
     if (platform === 'darwin') {
-        autoSignBinary(abiSpecificPath);
+        autoSignBinary(specific_path);
     }
 
     // DuckDB の Node.js バインディングを返す
-    return require(abiSpecificPath) as typeof duckdb;
+    return specific_path;
 };
 
 //const dynDuckdb = require(path.join(__dirname, '..', 'bindings', `duckdb-${process.platform}-${process.arch}.node`)) as typeof duckdb;
-const dynDuckdb = loadDuckDBBinding();
+let dynDuckdb: typeof duckdb;
+const duckdb_path = loadDuckDBBinding(path.join(__dirname, '..', 'bindings'));
+try {
+    dynDuckdb = require(duckdb_path) as typeof duckdb;
+    console.log(`✓ DuckDB binding loaded ${path.basename(duckdb_path)} successfully`);
+} catch (error) {
+    console.error(`✗ CRITICAL: Failed to initialize DuckDB binding ${path.basename(duckdb_path)}`, error);
+    throw error;
+}
 
 /** @description データベース操作 */
 export class Db extends vscode.Disposable {
@@ -410,16 +417,32 @@ export class Db extends vscode.Disposable {
                         reject(err);
                     } else {
                         const symbols: SYMBOL.SymbolModel[] = [];
+                        const symbolMap = new Map<string, SYMBOL.SymbolModel>();
+
+                        // 全シンボルを作成してMapに登録
                         for (const row of rows) {
                             const hash = Buffer.from(row.hash, 'hex');
-                            symbols.push(new SYMBOL.SymbolModel(
+                            const symbol = new SYMBOL.SymbolModel(
                                 row.id, row.name, row.kind, row.path,
                                 new vscode.Position(row.define_line, row.define_character),
                                 new vscode.Position(row.start_line, row.start_character),
                                 new vscode.Position(row.end_line, row.end_character),
                                 hash, row.parent_id,
-                            ));
+                            );
+                            symbols.push(symbol);
+                            symbolMap.set(symbol.id, symbol);
                         }
+
+                        // 親子関係を構築（parent_idを使ってchildren配列を構築）
+                        for (const symbol of symbols) {
+                            if (symbol.parentId) {
+                                const parent = symbolMap.get(symbol.parentId);
+                                if (parent) {
+                                    parent.addChild(symbol);
+                                }
+                            }
+                        }
+
                         resolve(symbols);
                     }
                 }

@@ -26,108 +26,145 @@ export class Visualization {
 
     public async showDiagram(symbols: SYMBOL.SymbolModel[], relationships: codeRelationships.Relationship[]) {
         const startTime = performance.now();
-        
+
+        // Webviewの初期化完了を待つためのPromise
+        let webviewReadyResolve: (() => void) | null = null;
+        const webviewReadyPromise = new Promise<void>(resolve => {
+            webviewReadyResolve = resolve;
+        });
+
         try {
             this.logs.log('[0.000s][  0.00%] Starting code relationship diagram generation...');
             this.logs.log(`[0.000s][  0.00%] Input: ${symbols.length} symbols, ${relationships.length} relationships`);
-            
+
             // 入力データの詳細ログ
             if (symbols.length === 0) {
                 this.logs.error('No symbols provided to showDiagram - this may indicate a problem with data loading');
                 return;
             }
-            
+
             // 最初の数個のシンボルをログ出力
             for (let i = 0; i < Math.min(3, symbols.length); i++) {
                 this.logs.log(`[0.000s][  0.00%] Symbol ${i + 1}: ${symbols[i].name} (${vscode.SymbolKind[symbols[i].kind]}) in ${symbols[i].path}`);
             }
-        
-        if (this.panel) {
-            this.panel.dispose();
-            const elapsed = (performance.now() - startTime) / 1000;
-            this.logs.log(`${elapsed.toFixed(3)}s   5.00%: Disposed existing webview panel`);
-        }
 
-        try {
-            this.panel = vscode.window.createWebviewPanel(
-                'codeRelationshipDiagram',
-                locale('window-title'),
-                vscode.ViewColumn.One,
-                {
-                    enableScripts: true,
-                    retainContextWhenHidden: true
-                }
-            );
+            if (this.panel) {
+                this.panel.dispose();
+                const elapsed = (performance.now() - startTime) / 1000;
+                this.logs.log(`${elapsed.toFixed(3)}s   5.00%: Disposed existing webview panel`);
+            }
 
-            // Webviewからのメッセージを受信
-            this.panel.webview.onDidReceiveMessage(
-                async (message) => {
-                    switch (message.type) {
-                        case 'openFile':
-                            try {
-                                // ファイルを開く
-                                const absolute_uri = vscode.Uri.file(path.join(this.wsFolder, message.path));
-                                const document = await vscode.workspace.openTextDocument(absolute_uri);
-
-                                // 行番号が指定されている場合は該当行に移動
-                                const options: vscode.TextDocumentShowOptions = {};
-                                if (message.line) {
-                                    options.selection = new vscode.Range(message.line, 0, message.line, 0);
-                                }
-
-                                await vscode.window.showTextDocument(document, options);
-                                this.logs.log(`Opened file: ${message.path}${message.line ? `:${message.line}` : ''}`);
-                            } catch (error) {
-                                this.logs.error(`Failed to open file ${message.path}: ${error instanceof Error ? error.message : error}`);
-                            }
-                            break;
-                        case 'exportHTML':
-                            try {
-                                await this.exportStandaloneHTML(path.join(this.wsFolder, this.htmlFilename), message.data);
-                                this.logs.log('HTML exported successfully');
-                            } catch (error) {
-                                this.logs.error(`Failed to export HTML: ${error instanceof Error ? error.message : error}`);
-                            }
-                            break;
+            try {
+                this.panel = vscode.window.createWebviewPanel(
+                    'codeRelationshipDiagram',
+                    locale('window-title'),
+                    vscode.ViewColumn.One,
+                    {
+                        enableScripts: true,
+                        retainContextWhenHidden: true
                     }
-                },
-                undefined,
-                this.subscriptions
-            );
+                );
 
-            const panelElapsed = (performance.now() - startTime) / 1000;
-            this.logs.log(`${panelElapsed.toFixed(3)}s  10.00%: Created new webview panel`);
-        } catch (panelError) {
-            this.logs.error(`Failed to create webview panel: ${panelError instanceof Error ? panelError.message : panelError}`);
-            console.error('Panel creation error:', panelError);
-            return;
-        }
+                // Webviewからのメッセージを受信
+                this.panel.webview.onDidReceiveMessage(
+                    async (message) => {
+                        switch (message.type) {
+                            case 'webviewReady':
+                                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  62.00%: Webview initialization complete (received ready signal)`);
+                                if (webviewReadyResolve) {
+                                    webviewReadyResolve();
+                                }
+                                break;
+                            case 'openFile':
+                                try {
+                                    // ファイルを開く
+                                    const absolute_uri = vscode.Uri.file(path.join(this.wsFolder, message.path));
+                                    const document = await vscode.workspace.openTextDocument(absolute_uri);
 
-        // 初期HTML（ローディング状態）を表示
-        const html_loading = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'loading.html'));
-        this.panel.webview.html = this.replacePlaceholders(html_loading, locale('window-title'), { nodes: [], edges: [] });
-        const loadingElapsed = (performance.now() - startTime) / 1000;
-        this.logs.log(`${loadingElapsed.toFixed(3)}s  15.00%: Generated loading content`);
-        
-        // 進捗を段階的に更新
-        await this.updateProgress(20, 'Processing symbols...');
-        
-        const elementsStartTime = performance.now();
-        const elements = this.createGraphElements(symbols, relationships, startTime);
-        const elementsEndTime = performance.now();
-        const elementsElapsed = (elementsEndTime - startTime) / 1000;
-        this.logs.log(`${elementsElapsed.toFixed(3)}s  60.00%: Created graph elements: ${elements.nodes.length} nodes, ${elements.edges.length} edges (${(elementsEndTime - elementsStartTime).toFixed(3)}ms)`);
-        
-        await this.updateProgress(50, 'Generating graph...');
-        
-        // 最終的なHTMLを設定（マルチビュー対応）
-        const htmlStartTime = performance.now();
-        const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-multiview.html'));
-        this.panel.webview.html = this.replacePlaceholders(html_load, locale('window-title'), elements);
-        const htmlEndTime = performance.now();
-        const htmlElapsed = (htmlEndTime - startTime) / 1000;
-        this.logs.log(`${htmlElapsed.toFixed(3)}s  90.00%: Generated webview content (multi-view) (${(htmlEndTime - htmlStartTime).toFixed(3)}ms)`);
-        
+                                    // 行番号が指定されている場合は該当行に移動
+                                    const options: vscode.TextDocumentShowOptions = {};
+                                    if (message.line) {
+                                        options.selection = new vscode.Range(message.line, 0, message.line, 0);
+                                    }
+
+                                    await vscode.window.showTextDocument(document, options);
+                                    this.logs.log(`Opened file: ${message.path}${message.line ? `:${message.line}` : ''}`);
+                                } catch (error) {
+                                    this.logs.error(`Failed to open file ${message.path}: ${error instanceof Error ? error.message : error}`);
+                                }
+                                break;
+                            case 'exportHTML':
+                                try {
+                                    await this.exportStandaloneHTML(path.join(this.wsFolder, this.htmlFilename), message.data);
+                                    this.logs.log('HTML exported successfully');
+                                } catch (error) {
+                                    this.logs.error(`Failed to export HTML: ${error instanceof Error ? error.message : error}`);
+                                }
+                                break;
+                        }
+                    },
+                    undefined,
+                    this.subscriptions
+                );
+
+                const panelElapsed = (performance.now() - startTime) / 1000;
+                this.logs.log(`${panelElapsed.toFixed(3)}s  10.00%: Created new webview panel`);
+            } catch (panelError) {
+                this.logs.error(`Failed to create webview panel: ${panelError instanceof Error ? panelError.message : panelError}`);
+                console.error('Panel creation error:', panelError);
+                return;
+            }
+
+            // 初期HTML（ローディング状態）を表示
+            const html_loading = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'loading.html'));
+            this.panel.webview.html = this.replacePlaceholders(html_loading, locale('window-title'), { nodes: [], edges: [] });
+            const loadingElapsed = (performance.now() - startTime) / 1000;
+            this.logs.log(`${loadingElapsed.toFixed(3)}s  15.00%: Generated loading content`);
+
+            // 進捗を段階的に更新
+            await this.updateProgress(20, 'Processing symbols...');
+
+            const elementsStartTime = performance.now();
+            const elements = this.createGraphElements(symbols, relationships, startTime);
+            const elementsEndTime = performance.now();
+            const elementsElapsed = (elementsEndTime - startTime) / 1000;
+            this.logs.log(`${elementsElapsed.toFixed(3)}s  60.00%: Created graph elements: ${elements.nodes.length} nodes, ${elements.edges.length} edges (${(elementsEndTime - elementsStartTime).toFixed(3)}ms)`);
+
+            await this.updateProgress(50, 'Generating graph...');
+
+            // 最終的なHTMLを設定（空のデータで初期化）
+            const htmlStartTime = performance.now();
+            const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-multiview.html'));
+            const emptyElements = { nodes: [], edges: [] };
+            this.panel.webview.html = this.replacePlaceholders(html_load, locale('window-title'), emptyElements);
+            const htmlEndTime = performance.now();
+            const htmlElapsed = (htmlEndTime - startTime) / 1000;
+            this.logs.log(`${htmlElapsed.toFixed(3)}s  70.00%: Generated webview content (multi-view) (${(htmlEndTime - htmlStartTime).toFixed(3)}ms)`);
+
+            await this.updateProgress(60, 'Sending graph data...');
+
+            // Webviewの初期化完了を待つ（webviewReady メッセージの受信を待機）
+            this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  61.00%: Waiting for webview initialization...`);
+
+            // タイムアウト付きで待機（最大10秒）
+            const timeoutPromise = new Promise<void>((_, reject) => {
+                setTimeout(() => reject(new Error('Webview initialization timeout')), 10000);
+            });
+
+            try {
+                await Promise.race([webviewReadyPromise, timeoutPromise]);
+                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  63.00%: Webview ready confirmed, starting data transmission...`);
+            } catch (error) {
+                this.logs.error(`Webview initialization timeout - proceeding anyway: ${error instanceof Error ? error.message : error}`);
+            }
+
+            // データをpostMessageで送信（大規模データの場合はチャンク分割）
+            const sendStartTime = performance.now();
+            await this.sendGraphDataToWebview(elements, startTime);
+            const sendEndTime = performance.now();
+            const sendElapsed = (sendEndTime - startTime) / 1000;
+            this.logs.log(`${sendElapsed.toFixed(3)}s  90.00%: Sent graph data to webview (${(sendEndTime - sendStartTime).toFixed(3)}ms)`);
+
             const totalTime = (performance.now() - startTime) / 1000;
             this.logs.log(`${totalTime.toFixed(3)}s 100.00%: Code relationship diagram generation completed in ${totalTime.toFixed(3)}s`);
         } catch (error) {
@@ -167,6 +204,80 @@ export class Visualization {
         }
     }
 
+    private async sendGraphDataToWebview(elements: any, startTime: number): Promise<void> {
+        if (!this.panel) {
+            this.logs.error('Cannot send data: panel is null');
+            return;
+        }
+
+        const totalElements = elements.nodes.length + elements.edges.length;
+        const CHUNK_SIZE = 5000; // チャンクサイズ
+
+        this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 61.00%] Sending ${totalElements} elements in chunks of ${CHUNK_SIZE}...`);
+
+        try {
+            // ノードをチャンクに分割して送信
+            for (let i = 0; i < elements.nodes.length; i += CHUNK_SIZE) {
+                const chunk = elements.nodes.slice(i, i + CHUNK_SIZE);
+                const chunkIndex = Math.floor(i / CHUNK_SIZE);
+                const totalChunks = Math.ceil(elements.nodes.length / CHUNK_SIZE);
+
+                await this.panel.webview.postMessage({
+                    type: 'graphData',
+                    dataType: 'nodes',
+                    chunk: chunk,
+                    chunkIndex: chunkIndex,
+                    totalChunks: totalChunks,
+                    isLastChunk: i + CHUNK_SIZE >= elements.nodes.length
+                });
+
+                // UI更新のための小さな待機
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                if (chunkIndex === 0 || chunkIndex % 5 === 0 || i + CHUNK_SIZE >= elements.nodes.length) {
+                    this.logs.log(`[${(performance.now() - startTime) / 1000}s][ ${(61 + (i / elements.nodes.length) * 10).toFixed(2)}%] Sent nodes chunk ${chunkIndex + 1}/${totalChunks} (${chunk.length} nodes)`);
+                }
+            }
+
+            // エッジをチャンクに分割して送信
+            for (let i = 0; i < elements.edges.length; i += CHUNK_SIZE) {
+                const chunk = elements.edges.slice(i, i + CHUNK_SIZE);
+                const chunkIndex = Math.floor(i / CHUNK_SIZE);
+                const totalChunks = Math.ceil(elements.edges.length / CHUNK_SIZE);
+
+                await this.panel.webview.postMessage({
+                    type: 'graphData',
+                    dataType: 'edges',
+                    chunk: chunk,
+                    chunkIndex: chunkIndex,
+                    totalChunks: totalChunks,
+                    isLastChunk: i + CHUNK_SIZE >= elements.edges.length
+                });
+
+                // UI更新のための小さな待機
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                if (chunkIndex === 0 || chunkIndex % 10 === 0 || i + CHUNK_SIZE >= elements.edges.length) {
+                    this.logs.log(`[${(performance.now() - startTime) / 1000}s][ ${(71 + (i / elements.edges.length) * 15).toFixed(2)}%] Sent edges chunk ${chunkIndex + 1}/${totalChunks} (${chunk.length} edges)`);
+                }
+            }
+
+            // 完了通知
+            await this.panel.webview.postMessage({
+                type: 'graphDataComplete',
+                totalNodes: elements.nodes.length,
+                totalEdges: elements.edges.length
+            });
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s][ 86.00%] Data transmission complete`);
+
+        } catch (error) {
+            this.logs.error(`Failed to send graph data: ${error instanceof Error ? error.message : error}`);
+            console.error('Data send error:', error);
+            throw error;
+        }
+    }
+
     private createGraphElements(symbols: SYMBOL.SymbolModel[], relationships: codeRelationships.Relationship[], startTime: number) {
         const currentElapsed = (performance.now() - startTime) / 1000;
         this.logs.log(`${currentElapsed.toFixed(3)}s  20.00%: Creating graph elements from symbols and relationships (multi-view)...`);
@@ -189,6 +300,7 @@ export class Visualization {
         let totalNodeCount = 0;
 
         // フラットな配列から全シンボルノードを作成
+        let nodesWithParent = 0;
         symbols.forEach(symbol => {
             const nodeData: any = {
                 id: symbol.id,
@@ -201,6 +313,7 @@ export class Visualization {
             // 親IDがある場合は設定（階層構造ビュー用）
             if (symbol.parentId) {
                 nodeData.parent = symbol.parentId;
+                nodesWithParent++;
             }
 
             // ファイルノードの場合はシンボル数を追加
@@ -217,6 +330,7 @@ export class Visualization {
 
         const nodesElapsed = (performance.now() - startTime) / 1000;
         this.logs.log(`${nodesElapsed.toFixed(3)}s  30.00%: Created ${fileSymbolCount} file nodes and ${totalNodeCount} total symbol nodes`);
+        this.logs.log(`${nodesElapsed.toFixed(3)}s  30.50%: Nodes with parent: ${nodesWithParent} (${(nodesWithParent / totalNodeCount * 100).toFixed(2)}%)`);
 
         // シンボルIDのインデックスを作成してパフォーマンスを向上
         const symbolIndex = new Map<string, SYMBOL.SymbolModel>();
@@ -413,6 +527,35 @@ export class Visualization {
         }
     }
 
+    private createExportButton(viewName: string, isStandalone: boolean): string {
+        if (isStandalone) {
+            return `
+                <div class="export-dropdown">
+                    <button onclick="exportPNG()" title="Export PNG">Export PNG</button>
+                </div>`;
+        } else {
+            return `
+                <div class="export-dropdown">
+                    <button class="export-main" title="Export File">
+                        <i class="fa fa-floppy-o" aria-hidden="true"></i>
+                    </button>
+                    <button class="export-toggle" onclick="toggleExportMenu('${viewName}')" title="More export options">
+                        <i class="fa fa-chevron-down" aria-hidden="true"></i>
+                    </button>
+                    <div class="export-menu" id="export-menu-${viewName}">
+                        <button onclick="exportHTML(); closeExportMenu('${viewName}');" title="Export HTML">
+                            <i class="fa fa-code" aria-hidden="true"></i>
+                            <span>HTML</span>
+                        </button>
+                        <button onclick="exportPNG(); closeExportMenu('${viewName}');" title="Export PNG">
+                            <i class="fa fa-picture-o" aria-hidden="true"></i>
+                            <span>PNG</span>
+                        </button>
+                    </div>
+                </div>`;
+        }
+    }
+
     private replacePlaceholders(template: string, title: string, elements: any, isStandalone: boolean = false): string {
         // VSCodeのテーマ色を取得
         const isDarkTheme = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
@@ -459,28 +602,9 @@ export class Visualization {
             'ELEMENTS_NODES_LENGTH_PLACEHOLDER': elements.nodes.length.toString(),
             'ELEMENTS_EDGES_LENGTH_PLACEHOLDER': elements.edges.length.toString(),
 
-            'EXPORT_BUTTON_PLACEHOLDER':         isStandalone ? `
-                <div class="export-dropdown">
-                    <button onclick="exportPNG()" title="Export PNG">Export PNG</button>
-                </div>` : `
-                <div class="export-dropdown">
-                    <button class="export-main" title="Export File">
-                        <i class="fa fa-floppy-o" aria-hidden="true"></i>
-                    </button>
-                    <button class="export-toggle" onclick="toggleExportMenu()" title="More export options">
-                        <i class="fa fa-chevron-down" aria-hidden="true"></i>
-                    </button>
-                    <div class="export-menu" id="export-menu">
-                        <button onclick="exportHTML(); closeExportMenu();" title="Export HTML">
-                            <i class="fa fa-code" aria-hidden="true"></i>
-                            <span>HTML</span>
-                        </button>
-                        <button onclick="exportPNG(); closeExportMenu();" title="Export PNG">
-                            <i class="fa fa-picture-o" aria-hidden="true"></i>
-                            <span>PNG</span>
-                        </button>
-                    </div>
-                </div>`
+            'EXPORT_BUTTON_FILE_DEPS_PLACEHOLDER': this.createExportButton('file-deps', isStandalone),
+            'EXPORT_BUTTON_HIERARCHY_PLACEHOLDER': this.createExportButton('hierarchy', isStandalone),
+            'EXPORT_BUTTON_CALL_GRAPH_PLACEHOLDER': this.createExportButton('call-graph', isStandalone)
         };
 
         let result = template;

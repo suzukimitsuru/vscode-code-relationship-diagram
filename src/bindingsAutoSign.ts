@@ -9,29 +9,23 @@ import * as path from 'path';
  * @returns true if signing is needed
  */
 function needsSigning(binaryPath: string): boolean {
-    if (process.platform !== 'darwin') {
-        return false;
-    }
+    let is_needs = false;
+    if (process.platform === 'darwin') {
+        if (fs.existsSync(binaryPath)) {
+            try {
+                // Check if binary is already signed and valid
+                execSync(`codesign -v "${binaryPath}"`, { stdio: 'pipe' });
 
-    if (!fs.existsSync(binaryPath)) {
-        return false;
-    }
-
-    try {
-        // Check if binary is already signed and valid
-        execSync(`codesign -v "${binaryPath}"`, { stdio: 'pipe' });
-
-        // Check for quarantine attributes
-        const xattr = execSync(`xattr "${binaryPath}" 2>/dev/null`, { encoding: 'utf8' });
-        if (xattr.includes('com.apple.quarantine')) {
-            return true; // Needs quarantine removal
+                // Check for quarantine attributes
+                const xattr = execSync(`xattr "${binaryPath}" 2>/dev/null`, { encoding: 'utf8' });
+                is_needs = xattr.includes('com.apple.quarantine');
+            } catch (error) {
+                // Signature verification failed or quarantine exists
+                is_needs = true;
+            }
         }
-
-        return false; // Already signed and no quarantine
-    } catch (error) {
-        // Signature verification failed or quarantine exists
-        return true;
     }
+    return is_needs;
 }
 
 /**
@@ -40,39 +34,34 @@ function needsSigning(binaryPath: string): boolean {
  * @returns true if signing succeeded, false otherwise
  */
 export function autoSignBinary(binaryPath: string): boolean {
-    if (process.platform !== 'darwin') {
-        return true; // No signing needed on non-macOS
-    }
+    let success = true;
+    if (process.platform === 'darwin') {
+        if (needsSigning(binaryPath)) {
+            try {
+                console.log(`Auto-signing binary: ${path.basename(binaryPath)}...`);
 
-    if (!needsSigning(binaryPath)) {
-        console.log(`Binary already signed: ${path.basename(binaryPath)}`);
-        return true;
-    }
+                // Step 1: Remove quarantine attribute if present
+                try {
+                    execSync(`xattr -d com.apple.quarantine "${binaryPath}" 2>/dev/null`, { stdio: 'pipe' });
+                    console.log('  ✓ Removed quarantine attribute');
+                } catch (error) {
+                    // Quarantine attribute might not exist, that's OK
+                }
 
-    try {
-        console.log(`Auto-signing binary: ${path.basename(binaryPath)}...`);
+                // Step 2: Apply ad-hoc signature
+                execSync(`codesign -s - -f "${binaryPath}"`, { stdio: 'pipe' });
+                console.log('  ✓ Applied ad-hoc signature');
 
-        // Step 1: Remove quarantine attribute if present
-        try {
-            execSync(`xattr -d com.apple.quarantine "${binaryPath}" 2>/dev/null`, { stdio: 'pipe' });
-            console.log('  ✓ Removed quarantine attribute');
-        } catch (error) {
-            // Quarantine attribute might not exist, that's OK
+                // Step 3: Verify signature
+                execSync(`codesign -v "${binaryPath}"`, { stdio: 'pipe' });
+                console.log('  ✓ Signature verified');
+            } catch (error: any) {
+                console.error(`Failed to sign binary ${path.basename(binaryPath)}:`, error.message);
+                success = false;
+            }
         }
-
-        // Step 2: Apply ad-hoc signature
-        execSync(`codesign -s - -f "${binaryPath}"`, { stdio: 'pipe' });
-        console.log('  ✓ Applied ad-hoc signature');
-
-        // Step 3: Verify signature
-        execSync(`codesign -v "${binaryPath}"`, { stdio: 'pipe' });
-        console.log('  ✓ Signature verified');
-
-        return true;
-    } catch (error: any) {
-        console.error(`Failed to sign binary ${path.basename(binaryPath)}:`, error.message);
-        return false;
     }
+    return success;
 }
 
 /**

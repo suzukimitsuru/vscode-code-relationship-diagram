@@ -3,6 +3,9 @@
  * @description Webview script for displaying multi-view code relationship diagrams
  */
 
+const HierarchyView_LIMIT_ONLY_FILE = 5000; // 階層構造ビューでファイルレベルのみ表示する閾値
+const CallGraphView_LIMIT_ONLY_FILE = 5000; // 呼び出しグラフビューでファイルレベルのみ表示する閾値
+
 // Type declarations for global variables injected by HTML template
 declare const cytoscape: any;
 declare const cytoscapeDagre: any;
@@ -59,9 +62,9 @@ function getRelativeLuminance(color: string): number {
     let r: number, g: number, b: number;
     if (color.startsWith('#')) {
         // #RRGGBB形式
-        r = parseInt(color.substr(1, 2), 16);
-        g = parseInt(color.substr(3, 2), 16);
-        b = parseInt(color.substr(5, 2), 16);
+        r = parseInt(color.substring(1, 3), 16);
+        g = parseInt(color.substring(3, 5), 16);
+        b = parseInt(color.substring(5, 7), 16);
     } else if (color.startsWith('rgb')) {
         // rgb(r, g, b)形式
         const match = color.match(/\d+/g);
@@ -106,6 +109,7 @@ function getContrastColor(backgroundColor: string): string {
 function getSymbolKindColor(kind: number): string {
     // VSCode標準のシンボルアイコンカラー
     switch(kind) {
+        case -1: return '#8faadc'; // Directory
         case 0:  return '#519aba'; // File
         case 1:  return '#4d9fd1'; // Module
         case 2:  return '#4d9fd1'; // Namespace
@@ -146,6 +150,69 @@ function measureTextWidth(text: string, fontSize: number, fontWeight: string = '
     return metrics.width;
 }
 
+// ディレクトリツリーを構築する関数
+function buildDirectoryTree(filePaths: string[]): Map<string, string | null> {
+    // Map<ディレクトリパス, 親ディレクトリパス>
+    const directoryMap = new Map<string, string | null>();
+
+    filePaths.forEach(filePath => {
+        // ファイルパスをディレクトリ部分に分割
+        const parts = filePath.split('/');
+
+        // ファイル名を除く（最後の要素）
+        parts.pop();
+
+        // 各ディレクトリレベルを処理
+        let currentPath = '';
+        for (let i = 0; i < parts.length; i++) {
+            const parentPath = currentPath;
+            currentPath = currentPath ? `${currentPath}/${parts[i]}` : parts[i];
+
+            if (!directoryMap.has(currentPath)) {
+                directoryMap.set(currentPath, parentPath || null);
+            }
+        }
+    });
+
+    return directoryMap;
+}
+
+// ディレクトリノードを生成する関数
+function createDirectoryNodes(filePaths: string[]): any[] {
+    const directoryTree = buildDirectoryTree(filePaths);
+    const directoryNodes: any[] = [];
+
+    directoryTree.forEach((parent, dirPath) => {
+        const parts = dirPath.split('/');
+        const label = parts[parts.length - 1]; // 最後のディレクトリ名のみ
+
+        const dirNode: any = {
+            data: {
+                id: `dir:${dirPath}`,
+                label: label,
+                kind: -1, // ディレクトリ
+                path: dirPath,
+                isDirectory: true
+            }
+        };
+
+        if (parent) {
+            dirNode.data.parent = `dir:${parent}`;
+        }
+
+        directoryNodes.push(dirNode);
+    });
+
+    return directoryNodes;
+}
+
+// ファイルパスからディレクトリパスを取得する関数
+function getDirectoryPath(filePath: string): string | null {
+    const parts = filePath.split('/');
+    parts.pop(); // ファイル名を除く
+    return parts.length > 0 ? parts.join('/') : null;
+}
+
 // ========================================
 // Global State
 // ========================================
@@ -153,6 +220,13 @@ function measureTextWidth(text: string, fontSize: number, fontWeight: string = '
 let currentView: string = 'file-deps';
 let cyInstances: Record<string, any> = {};
 let callGraphOrientation: string = 'TB'; // TB (Top-Bottom) or LR (Left-Right)
+
+// ディレクトリグループ化の状態（各ビューごと）
+let showDirectoryGroups: Record<string, boolean> = {
+    'file-deps': false,
+    'hierarchy': false,
+    'call-graph': false
+};
 
 // Progress elements
 const progressBar = document.getElementById('progress-bar') as HTMLElement;
@@ -206,11 +280,60 @@ function updateProgress(percent: number, message: string): void {
     }
 }
 
+// Webview初期化完了を通知
+if (!window.IS_STANDALONE && vscode) {
+    console.log('Sending webviewReady message to extension...');
+    vscode.postMessage({ type: 'webviewReady' });
+}
+
 // VSCode Extension からのメッセージ受信
 window.addEventListener('message', event => {
     const message = event.data;
     if (message.type === 'progress') {
         updateProgress(message.percent, message.message);
+    } else if (message.type === 'graphData') {
+        // チャンクデータを受信
+        const { dataType, chunk, chunkIndex, totalChunks } = message;
+
+        if (dataType === 'nodes') {
+            allNodes.push(...chunk);
+            const percent = 20 + (chunkIndex / totalChunks) * 20;
+            updateProgress(percent, `Loading nodes... ${chunkIndex + 1}/${totalChunks}`);
+            console.log(`Received nodes chunk ${chunkIndex + 1}/${totalChunks}: ${chunk.length} nodes (total: ${allNodes.length})`);
+        } else if (dataType === 'edges') {
+            allEdges.push(...chunk);
+            const percent = 40 + (chunkIndex / totalChunks) * 30;
+            updateProgress(percent, `Loading edges... ${chunkIndex + 1}/${totalChunks}`);
+            console.log(`Received edges chunk ${chunkIndex + 1}/${totalChunks}: ${chunk.length} edges (total: ${allEdges.length})`);
+        }
+    } else if (message.type === 'graphDataComplete') {
+        // データ受信完了
+        console.log('=== Graph Data Loading Complete ===');
+        console.log('Total nodes received:', allNodes.length);
+        console.log('Total edges received:', allEdges.length);
+        console.log('Expected nodes:', message.totalNodes);
+        console.log('Expected edges:', message.totalEdges);
+
+        isDataLoaded = true;
+        updateProgress(70, 'Initializing visualization...');
+
+        // データが揃ったのでビューを初期化
+        if (allNodes.length > 0) {
+            console.log('Sample node:', allNodes[0]);
+            const fileNodes = allNodes.filter(n => n.data.kind === 0);
+            const symbolNodes = allNodes.filter(n => n.data.kind !== 0);
+            console.log('File nodes:', fileNodes.length);
+            console.log('Symbol nodes:', symbolNodes.length);
+        }
+        if (allEdges.length > 0) {
+            console.log('Sample edge:', allEdges[0]);
+        }
+
+        // 初期ビューを初期化
+        (async () => {
+            await initializeView('file-deps');
+            updateProgress(100, 'Complete!');
+        })();
     }
 });
 
@@ -221,23 +344,36 @@ window.addEventListener('message', event => {
 updateProgress(10, 'Initializing graph...');
 console.log('Initializing Multi-View with', window.GRAPH_NODES_COUNT, 'nodes and', window.GRAPH_EDGES_COUNT, 'edges');
 
-const allElements = window.GRAPH_ELEMENTS;
-const allNodes = allElements.filter(el => !el.data.source);
-const allEdges = allElements.filter(el => el.data.source);
+// データをチャンクで受信するための変数
+let allNodes: any[] = [];
+let allEdges: any[] = [];
+let isDataLoaded = false;
 
-console.log('Total elements:', allElements.length);
-console.log('Total nodes:', allNodes.length);
-console.log('Total edges:', allEdges.length);
-console.log('Sample node:', allNodes[0]);
-console.log('Sample edge:', allEdges[0]);
+// 初期データをチェック（後方互換性のため）
+if (window.GRAPH_ELEMENTS && window.GRAPH_ELEMENTS.length > 0) {
+    console.log('Using embedded graph data (legacy mode)');
+    const allElements = window.GRAPH_ELEMENTS;
+    allNodes = allElements.filter(el => !el.data.source);
+    allEdges = allElements.filter(el => el.data.source);
+    isDataLoaded = true;
 
-if (allNodes.length > 0) {
-    const fileNodes = allNodes.filter(n => n.data.kind === 0);
-    const symbolNodes = allNodes.filter(n => n.data.kind !== 0);
-    console.log('File nodes:', fileNodes.length);
-    console.log('Symbol nodes:', symbolNodes.length);
-    console.log('Sample file node:', fileNodes[0]);
-    console.log('Sample symbol node:', symbolNodes[0]);
+    console.log('Total elements:', allElements.length);
+    console.log('Total nodes:', allNodes.length);
+    console.log('Total edges:', allEdges.length);
+
+    if (allNodes.length > 0) {
+        console.log('Sample node:', allNodes[0]);
+        const fileNodes = allNodes.filter(n => n.data.kind === 0);
+        const symbolNodes = allNodes.filter(n => n.data.kind !== 0);
+        console.log('File nodes:', fileNodes.length);
+        console.log('Symbol nodes:', symbolNodes.length);
+    }
+    if (allEdges.length > 0) {
+        console.log('Sample edge:', allEdges[0]);
+    }
+} else {
+    console.log('Waiting for graph data via postMessage...');
+    updateProgress(20, 'Waiting for data...');
 }
 
 // ========================================
@@ -278,7 +414,9 @@ function switchView(viewName: string): void {
 
     // ビューがまだ初期化されていない場合は初期化
     if (!cyInstances[viewName]) {
-        initializeView(viewName);
+        (async () => {
+            await initializeView(viewName);
+        })();
     } else {
         // 既存のビューをリフレッシュ
         cyInstances[viewName].resize();
@@ -286,7 +424,7 @@ function switchView(viewName: string): void {
     }
 }
 
-function initializeView(viewName: string): void {
+async function initializeView(viewName: string): Promise<void> {
     console.log('Initializing view:', viewName);
     updateProgress(30 + (viewName === 'file-deps' ? 0 : 20), `Initializing ${viewName} view...`);
 
@@ -296,10 +434,10 @@ function initializeView(viewName: string): void {
                 initFileDepView();
                 break;
             case 'hierarchy':
-                initHierarchyView();
+                await initHierarchyView();
                 break;
             case 'call-graph':
-                initCallGraphView();
+                await initCallGraphView();
                 break;
         }
         console.log(`View ${viewName} initialized successfully`);
@@ -318,7 +456,7 @@ function initializeView(viewName: string): void {
 function initFileDepView(): void {
     try {
         console.log('=== initFileDepView START ===');
-        const fileNodes = allNodes.filter(node => node.data.kind === 0);
+        let fileNodes = allNodes.filter(node => node.data.kind === 0);
         const fileEdges = allEdges.filter(edge => edge.data.relationshipType === 'file-relationship');
 
         console.log('initFileDepView - File nodes:', fileNodes.length);
@@ -329,12 +467,72 @@ function initFileDepView(): void {
             return;
         }
 
+        // ディレクトリグループ化が有効な場合、ディレクトリノードを追加し、ファイルノードにparent属性を設定
+        const elements: any[] = [];
+        if (showDirectoryGroups['file-deps']) {
+            updateProgress(35, 'Creating directory nodes...');
+            console.log('initFileDepView - Directory grouping enabled');
+            const filePaths = fileNodes.map(node => node.data.path);
+            const directoryNodes = createDirectoryNodes(filePaths);
+            elements.push(...directoryNodes);
+            console.log('initFileDepView - Directory nodes:', directoryNodes.length);
+
+            updateProgress(40, 'Setting parent relationships...');
+            // ファイルノードにparent属性を追加
+            fileNodes = fileNodes.map(node => {
+                const dirPath = getDirectoryPath(node.data.path);
+                if (dirPath) {
+                    return {
+                        ...node,
+                        data: {
+                            ...node.data,
+                            parent: `dir:${dirPath}`
+                        }
+                    };
+                }
+                return node;
+            });
+            console.log('initFileDepView - File nodes with parent:', fileNodes.filter(n => n.data.parent).length);
+        } else {
+            console.log('initFileDepView - Directory grouping disabled');
+        }
+        elements.push(...fileNodes, ...fileEdges);
+
+        updateProgress(45, 'Rendering graph...');
         cyInstances['file-deps'] = cytoscape({
             container: document.getElementById('cy-file-deps'),
-            elements: [...fileNodes, ...fileEdges],
+            elements: elements,
             style: [
                 {
-                    selector: 'node',
+                    selector: 'node[kind=-1]', // ディレクトリノード
+                    style: {
+                        'background-color': function(ele: any) {
+                            return getSymbolKindColor(ele.data('kind'));
+                        },
+                        'label': 'data(label)',
+                        'text-valign': 'center',
+                        'text-halign': 'center',
+                        'color': function(ele: any) {
+                            const bgColor = ele.style('background-color');
+                            return getContrastColor(bgColor);
+                        },
+                        'font-size': '16px',
+                        'font-weight': 'bold',
+                        'shape': 'roundrectangle',
+                        'width': function(ele: any) {
+                            const label = ele.data('label');
+                            const textWidth = measureTextWidth(label, 16, 'bold');
+                            return Math.max(120, textWidth + 50) + 'px';
+                        },
+                        'height': '60px',
+                        'text-wrap': 'none',
+                        'border-width': '3px',
+                        'border-color': '#6B8BB8',
+                        'background-opacity': 0.3
+                    }
+                },
+                {
+                    selector: 'node[kind!=-1]', // ファイルノード
                     style: {
                         'background-color': function(ele: any) {
                             return getSymbolKindColor(ele.data('kind'));
@@ -433,7 +631,7 @@ function initFileDepView(): void {
         });
 
         setupCommonEventHandlers('file-deps');
-        updateProgress(60, 'File dependency view initialized');
+        updateProgress(90, 'File dependencies view ready');
         console.log('=== initFileDepView COMPLETE ===');
     } catch (error) {
         console.error('initFileDepView - ERROR:', error);
@@ -447,7 +645,7 @@ function initFileDepView(): void {
 // View 2: Hierarchy
 // ========================================
 
-function initHierarchyView(): void {
+async function initHierarchyView(): Promise<void> {
     try {
         console.log('=== initHierarchyView START ===');
         const hierarchyElements = createHierarchyElements();
@@ -459,12 +657,117 @@ function initHierarchyView(): void {
             return;
         }
 
+        // ノード数とエッジ数をカウント
+        const nodeCount = hierarchyElements.filter((el: any) => !el.data.source).length;
+        const edgeCount = hierarchyElements.filter((el: any) => el.data.source).length;
+
+        console.log(`initHierarchyView - Dataset: ${nodeCount} nodes, ${edgeCount} edges`);
+
+        // 大規模データセットの場合はプリセットレイアウトで座標を事前計算
+        // 元データが大規模かエッジ数が多い場合はcoseレイアウトを使用（dagreは重い）
+        const isLargeDataset = allNodes.length > HierarchyView_LIMIT_ONLY_FILE || edgeCount > 5000;
+        let positions: Map<string, {x: number, y: number}> | null = null;
+
+        if (isLargeDataset) {
+            console.log('initHierarchyView - Large dataset detected. Pre-calculating positions with cose layout...');
+            updateProgress(65, 'Calculating layout positions...');
+
+            // 大規模データの場合はcoseレイアウトで座標計算（dagreより高速）
+            positions = await calculateLayoutPositions(hierarchyElements, 'cose', {
+                nodeRepulsion: 200000,
+                idealEdgeLength: 300,
+                edgeElasticity: 100,
+                gravity: 30,
+                numIter: 1000,
+                randomize: false
+            });
+        } else {
+            console.log('initHierarchyView - Small dataset. Pre-calculating positions with dagre layout...');
+            updateProgress(65, 'Calculating layout positions...');
+
+            // 小規模データの場合はdagreで階層構造を計算
+            positions = await calculateLayoutPositions(hierarchyElements, 'dagre', {
+                rankDir: 'TB',
+                nodeSep: 50,
+                rankSep: 100
+            });
+        }
+
+        // ノードに座標を設定（親ノードを除く - 親ノードの位置は子ノードから自動計算される）
+        if (positions && positions.size > 0) {
+            updateProgress(75, 'Applying layout positions...');
+            console.log(`initHierarchyView - Positions map size: ${positions.size}`);
+            let appliedCount = 0;
+            let skippedParentCount = 0;
+            let notFoundCount = 0;
+            hierarchyElements.forEach((el: any) => {
+                if (!el.data.source) { // ノードのみ
+                    // 親ノード（ディレクトリ）はスキップ - 位置は子ノードから自動計算される
+                    if (el.data.kind === -1) {
+                        skippedParentCount++;
+                        return;
+                    }
+
+                    const pos = positions!.get(el.data.id);
+                    if (pos && !isNaN(pos.x) && !isNaN(pos.y)) {
+                        el.position = { x: pos.x, y: pos.y };
+                        appliedCount++;
+                    } else {
+                        notFoundCount++;
+                        if (notFoundCount <= 5) {
+                            console.warn(`initHierarchyView - Invalid position for node: ${el.data.id} -> (${pos?.x}, ${pos?.y})`);
+                        }
+                    }
+                }
+            });
+            console.log(`initHierarchyView - Applied positions: ${appliedCount}, Skipped parent nodes: ${skippedParentCount}, Invalid: ${notFoundCount}`);
+            if (appliedCount > 0) {
+                // サンプルノードの座標を表示
+                const sampleNode = hierarchyElements.find((el: any) => !el.data.source && el.position && el.data.kind !== -1);
+                if (sampleNode) {
+                    console.log(`initHierarchyView - Sample position: ${sampleNode.data.id} -> (${sampleNode.position.x}, ${sampleNode.position.y})`);
+                }
+            }
+        } else {
+            console.warn('initHierarchyView - No positions to apply!');
+        }
+
+        updateProgress(80, 'Rendering hierarchy view...');
+        console.log(`initHierarchyView - Creating Cytoscape instance with ${hierarchyElements.length} elements`);
         cyInstances['hierarchy'] = cytoscape({
             container: document.getElementById('cy-hierarchy'),
             elements: hierarchyElements,
             style: [
                 {
-                    selector: 'node[kind=0]',
+                    selector: 'node[kind=-1]', // ディレクトリノード
+                    style: {
+                        'background-color': function(ele: any) {
+                            return getSymbolKindColor(ele.data('kind'));
+                        },
+                        'label': 'data(label)',
+                        'text-valign': 'top',
+                        'text-halign': 'center',
+                        'color': function(ele: any) {
+                            const bgColor = ele.style('background-color');
+                            return getContrastColor(bgColor);
+                        },
+                        'font-size': '16px',
+                        'font-weight': 'bold',
+                        'shape': 'roundrectangle',
+                        'padding': '25px',
+                        'min-width': function(ele: any) {
+                            const label = ele.data('label');
+                            const textWidth = measureTextWidth(label, 16, 'bold');
+                            return Math.max(180, textWidth + 70) + 'px';
+                        },
+                        'text-wrap': 'none',
+                        'border-width': '4px',
+                        'border-color': '#6B8BB8',
+                        'background-opacity': 0.2
+                    }
+                },
+                {
+                    selector: 'node[kind=0]', // ファイルノード
                     style: {
                         'background-color': function(ele: any) {
                             return getSymbolKindColor(ele.data('kind'));
@@ -492,7 +795,7 @@ function initHierarchyView(): void {
                     }
                 },
                 {
-                    selector: 'node[kind!=0]',
+                    selector: 'node[kind>0]', // シンボルノード
                     style: {
                         'background-color': function(ele: any) {
                             return getSymbolKindColor(ele.data('kind'));
@@ -528,26 +831,65 @@ function initHierarchyView(): void {
                 {
                     selector: 'edge',
                     style: {
-                        'width': 2,
-                        'line-color': '#7F8C8D',
-                        'target-arrow-color': '#7F8C8D',
+                        'width': function(ele: any) {
+                            // 大規模データセットの場合、relationshipCountを考慮
+                            const relationshipCount = ele.data('relationshipCount') || 1;
+                            if (nodeCount <= HierarchyView_LIMIT_ONLY_FILE) {
+                                return 2;
+                            } else {
+                                return Math.min(Math.max(relationshipCount * 0.5, 1), 8);
+                            }
+                        },
+                        'line-color': function(ele: any) {
+                            if (nodeCount <= HierarchyView_LIMIT_ONLY_FILE) {
+                                return '#7F8C8D';
+                            } else {
+                                const relationshipCount = ele.data('relationshipCount') || 1;
+                                const intensity = Math.min(relationshipCount / 10, 1);
+                                const red = Math.floor(127 + (231 - 127) * intensity);
+                                const green = Math.floor(140 + (76 - 140) * intensity);
+                                const blue = Math.floor(141 + (60 - 141) * intensity);
+                                return `rgb(${red}, ${green}, ${blue})`;
+                            }
+                        },
+                        'target-arrow-color': function(ele: any) {
+                            if (nodeCount <= HierarchyView_LIMIT_ONLY_FILE) {
+                                return '#7F8C8D';
+                            } else {
+                                const relationshipCount = ele.data('relationshipCount') || 1;
+                                const intensity = Math.min(relationshipCount / 10, 1);
+                                const red = Math.floor(127 + (231 - 127) * intensity);
+                                const green = Math.floor(140 + (76 - 140) * intensity);
+                                const blue = Math.floor(141 + (60 - 141) * intensity);
+                                return `rgb(${red}, ${green}, ${blue})`;
+                            }
+                        },
                         'target-arrow-shape': 'triangle',
-                        'curve-style': 'bezier'
+                        'curve-style': 'bezier',
+                        'opacity': function(ele: any) {
+                            if (nodeCount <= HierarchyView_LIMIT_ONLY_FILE) {
+                                return 0.8;
+                            } else {
+                                const relationshipCount = ele.data('relationshipCount') || 1;
+                                return Math.min(0.5 + relationshipCount * 0.05, 1.0);
+                            }
+                        }
                     }
                 }
             ],
             layout: {
-                name: 'dagre',
-                rankDir: 'TB',
-                nodeSep: 50,
-                rankSep: 100,
+                name: 'preset',
+                fit: true,
+                padding: 50,
                 animate: true,
-                animationDuration: 1000
+                animationDuration: 500
             }
         });
 
+        console.log(`initHierarchyView - Cytoscape created: ${cyInstances['hierarchy'].nodes().length} nodes, ${cyInstances['hierarchy'].edges().length} edges`);
+
         setupCommonEventHandlers('hierarchy');
-        updateProgress(70, 'Hierarchy view initialized');
+        updateProgress(90, 'Hierarchy view ready');
         console.log('=== initHierarchyView COMPLETE ===');
     } catch (error) {
         console.error('initHierarchyView - ERROR:', error);
@@ -563,9 +905,38 @@ function createHierarchyElements(): any[] {
 
     console.log('createHierarchyElements - Starting with', allNodes.length, 'nodes');
 
+    // 大規模データセットの場合、ファイルレベルのみを表示
+    const totalNodes = allNodes.length;
+    const showOnlyFiles = totalNodes > HierarchyView_LIMIT_ONLY_FILE;
+
+    if (showOnlyFiles) {
+        console.log('createHierarchyElements - Large dataset detected. Showing file-level hierarchy only.');
+    }
+
+    // ディレクトリグループ化が有効な場合、ディレクトリノードを生成
+    const useDirectoryGroups = showDirectoryGroups['hierarchy'] && showOnlyFiles;
+    if (useDirectoryGroups) {
+        console.log('createHierarchyElements - Directory grouping enabled');
+        updateProgress(35, 'Creating directory nodes...');
+        const filePaths = allNodes
+            .filter(node => node.data.kind === 0)
+            .map(node => node.data.path);
+        const directoryNodes = createDirectoryNodes(filePaths);
+        elements.push(...directoryNodes);
+        console.log('createHierarchyElements - Directory nodes:', directoryNodes.length);
+    } else {
+        console.log('createHierarchyElements - Directory grouping disabled');
+    }
+
     let nodesWithParent = 0;
+    let fileNodeCount = 0;
     allNodes.forEach(node => {
         if (!processedIds.has(node.data.id)) {
+            // 大規模データセットの場合、ファイルノードのみを表示
+            if (showOnlyFiles && node.data.kind !== 0) {
+                return; // スキップ
+            }
+
             const element: any = {
                 data: {
                     id: node.data.id,
@@ -576,33 +947,65 @@ function createHierarchyElements(): any[] {
                 }
             };
 
+            // 元々のparent属性を保持
             if (node.data.parent) {
                 element.data.parent = node.data.parent;
                 nodesWithParent++;
             }
+            // ディレクトリグループ化が有効な場合、ファイルノードに親ディレクトリを設定
+            else if (useDirectoryGroups && node.data.kind === 0) {
+                const dirPath = getDirectoryPath(node.data.path);
+                if (dirPath) {
+                    element.data.parent = `dir:${dirPath}`;
+                    nodesWithParent++;
+                }
+            }
 
             elements.push(element);
             processedIds.add(node.data.id);
+
+            if (node.data.kind === 0) {
+                fileNodeCount++;
+            }
         }
     });
 
+    console.log('createHierarchyElements - File nodes:', fileNodeCount);
     console.log('createHierarchyElements - Nodes with parent:', nodesWithParent);
 
     let symbolEdgeCount = 0;
-    allEdges.forEach(edge => {
-        if (edge.data.relationshipType !== 'file-relationship') {
-            elements.push({
-                data: {
-                    id: edge.data.id,
-                    source: edge.data.source,
-                    target: edge.data.target
-                }
-            });
-            symbolEdgeCount++;
-        }
-    });
+    if (!showOnlyFiles) {
+        allEdges.forEach(edge => {
+            if (edge.data.relationshipType !== 'file-relationship') {
+                elements.push({
+                    data: {
+                        id: edge.data.id,
+                        source: edge.data.source,
+                        target: edge.data.target
+                    }
+                });
+                symbolEdgeCount++;
+            }
+        });
+    } else {
+        // ファイルレベルのエッジのみを追加
+        allEdges.forEach(edge => {
+            if (edge.data.relationshipType === 'file-relationship') {
+                elements.push({
+                    data: {
+                        id: edge.data.id,
+                        source: edge.data.source,
+                        target: edge.data.target,
+                        relationshipCount: edge.data.relationshipCount,
+                        relationshipDetails: edge.data.relationshipDetails
+                    }
+                });
+                symbolEdgeCount++;
+            }
+        });
+    }
 
-    console.log('createHierarchyElements - Symbol edges:', symbolEdgeCount);
+    console.log('createHierarchyElements - Edges:', symbolEdgeCount);
     console.log('createHierarchyElements - Total elements:', elements.length);
 
     return elements;
@@ -612,26 +1015,175 @@ function createHierarchyElements(): any[] {
 // View 3: Call Graph
 // ========================================
 
-function initCallGraphView(): void {
+async function initCallGraphView(): Promise<void> {
     try {
         console.log('=== initCallGraphView START ===');
-        const symbolNodes = allNodes.filter(node => node.data.kind !== 0);
-        const symbolEdges = allEdges.filter(edge => edge.data.relationshipType !== 'file-relationship');
 
-        console.log('initCallGraphView - Symbol nodes:', symbolNodes.length);
-        console.log('initCallGraphView - Symbol edges:', symbolEdges.length);
+        // 大規模データセットの場合、ファイルレベルのみを表示
+        const totalNodes = allNodes.length;
+        const showOnlyFiles = totalNodes > CallGraphView_LIMIT_ONLY_FILE;
 
-        if (symbolNodes.length === 0) {
-            console.error('initCallGraphView - ERROR: No symbol nodes found!');
+        let callGraphElements: any[];
+        let nodeCount: number;
+        let edgeCount: number;
+
+        if (showOnlyFiles) {
+            console.log('initCallGraphView - Large dataset detected. Showing file-level only.');
+            let fileNodes = allNodes.filter(node => node.data.kind === 0);
+            const fileEdges = allEdges.filter(edge => edge.data.relationshipType === 'file-relationship');
+
+            callGraphElements = [];
+
+            // ディレクトリグループ化が有効な場合、ディレクトリノードを追加し、ファイルノードにparent属性を設定
+            if (showDirectoryGroups['call-graph']) {
+                console.log('initCallGraphView - Directory grouping enabled');
+                updateProgress(35, 'Creating directory nodes...');
+                const filePaths = fileNodes.map(node => node.data.path);
+                const directoryNodes = createDirectoryNodes(filePaths);
+                callGraphElements.push(...directoryNodes);
+                console.log('initCallGraphView - Directory nodes:', directoryNodes.length);
+
+                updateProgress(40, 'Setting parent relationships...');
+                // ファイルノードにparent属性を追加
+                fileNodes = fileNodes.map(node => {
+                    const dirPath = getDirectoryPath(node.data.path);
+                    if (dirPath) {
+                        return {
+                            ...node,
+                            data: {
+                                ...node.data,
+                                parent: `dir:${dirPath}`
+                            }
+                        };
+                    }
+                    return node;
+                });
+                console.log('initCallGraphView - File nodes with parent:', fileNodes.filter(n => n.data.parent).length);
+            } else {
+                console.log('initCallGraphView - Directory grouping disabled');
+            }
+
+            callGraphElements.push(...fileNodes, ...fileEdges);
+            nodeCount = fileNodes.length;
+            edgeCount = fileEdges.length;
+        } else {
+            console.log('initCallGraphView - Small dataset. Showing symbol-level.');
+            const symbolNodes = allNodes.filter(node => node.data.kind !== 0);
+            const symbolEdges = allEdges.filter(edge => edge.data.relationshipType !== 'file-relationship');
+            callGraphElements = [...symbolNodes, ...symbolEdges];
+            nodeCount = symbolNodes.length;
+            edgeCount = symbolEdges.length;
+        }
+
+        console.log(`initCallGraphView - Dataset: ${nodeCount} nodes, ${edgeCount} edges`);
+
+        if (nodeCount === 0) {
+            console.error('initCallGraphView - ERROR: No nodes found!');
             return;
         }
 
+        // プリセットレイアウトで座標を事前計算
+        console.log('initCallGraphView - Pre-calculating positions...');
+        updateProgress(75, 'Calculating layout positions...');
+
+        let positions: Map<string, {x: number, y: number}> | null = null;
+
+        // エッジ数が多い場合もcoseレイアウトを使用（dagreは重い）
+        const useCoseLayout = showOnlyFiles || edgeCount > 5000;
+
+        if (useCoseLayout) {
+            // ファイルレベルまたは大規模データの場合はcoseレイアウト
+            positions = await calculateLayoutPositions(callGraphElements, 'cose', {
+                nodeRepulsion: 200000,
+                idealEdgeLength: 300,
+                edgeElasticity: 100,
+                gravity: 30,
+                numIter: 1000,
+                randomize: false
+            });
+        } else {
+            // 小規模シンボルレベルの場合はdagreレイアウト
+            positions = await calculateLayoutPositions(callGraphElements, 'dagre', {
+                rankDir: callGraphOrientation,
+                nodeSep: 40,
+                rankSep: 80
+            });
+        }
+
+        // ノードに座標を設定（親ノードを除く - 親ノードの位置は子ノードから自動計算される）
+        if (positions && positions.size > 0) {
+            updateProgress(75, 'Applying layout positions...');
+            console.log(`initCallGraphView - Positions map size: ${positions.size}`);
+            let appliedCount = 0;
+            let skippedParentCount = 0;
+            let notFoundCount = 0;
+            callGraphElements.forEach((el: any) => {
+                if (!el.data.source) { // ノードのみ
+                    // 親ノード（ディレクトリ）はスキップ - 位置は子ノードから自動計算される
+                    if (el.data.kind === -1) {
+                        skippedParentCount++;
+                        return;
+                    }
+
+                    const pos = positions!.get(el.data.id);
+                    if (pos && !isNaN(pos.x) && !isNaN(pos.y)) {
+                        el.position = { x: pos.x, y: pos.y };
+                        appliedCount++;
+                    } else {
+                        notFoundCount++;
+                        if (notFoundCount <= 5) {
+                            console.warn(`initCallGraphView - Invalid position for node: ${el.data.id} -> (${pos?.x}, ${pos?.y})`);
+                        }
+                    }
+                }
+            });
+            console.log(`initCallGraphView - Applied positions: ${appliedCount}, Skipped parent nodes: ${skippedParentCount}, Invalid: ${notFoundCount}`);
+            if (appliedCount > 0) {
+                // サンプルノードの座標を表示
+                const sampleNode = callGraphElements.find((el: any) => !el.data.source && el.position && el.data.kind !== -1);
+                if (sampleNode) {
+                    console.log(`initCallGraphView - Sample position: ${sampleNode.data.id} -> (${sampleNode.position.x}, ${sampleNode.position.y})`);
+                }
+            }
+        } else {
+            console.warn('initCallGraphView - No positions to apply!');
+        }
+
+        updateProgress(80, 'Rendering call graph view...');
         cyInstances['call-graph'] = cytoscape({
             container: document.getElementById('cy-call-graph'),
-            elements: [...symbolNodes, ...symbolEdges],
+            elements: callGraphElements,
             style: [
                 {
-                    selector: 'node',
+                    selector: 'node[kind=-1]', // ディレクトリノード
+                    style: {
+                        'background-color': function(ele: any) {
+                            return getSymbolKindColor(ele.data('kind'));
+                        },
+                        'label': 'data(label)',
+                        'text-valign': 'center',
+                        'text-halign': 'center',
+                        'color': function(ele: any) {
+                            const bgColor = ele.style('background-color');
+                            return getContrastColor(bgColor);
+                        },
+                        'font-size': '15px',
+                        'font-weight': 'bold',
+                        'shape': 'roundrectangle',
+                        'width': function(ele: any) {
+                            const label = ele.data('label');
+                            const textWidth = measureTextWidth(label, 15, 'bold');
+                            return Math.max(110, textWidth + 50) + 'px';
+                        },
+                        'height': '60px',
+                        'text-wrap': 'none',
+                        'border-width': '3px',
+                        'border-color': '#6B8BB8',
+                        'background-opacity': 0.3
+                    }
+                },
+                {
+                    selector: 'node[kind!=-1]', // ファイル・シンボルノード
                     style: {
                         'background-color': function(ele: any) {
                             return getSymbolKindColor(ele.data('kind'));
@@ -676,23 +1228,141 @@ function initCallGraphView(): void {
                 }
             ],
             layout: {
-                name: 'dagre',
-                rankDir: callGraphOrientation,
-                nodeSep: 40,
-                rankSep: 80,
+                name: 'preset',
+                fit: true,
+                padding: 50,
                 animate: true,
-                animationDuration: 1000
+                animationDuration: 500
             }
         });
 
+        console.log(`initCallGraphView - Cytoscape created: ${cyInstances['call-graph'].nodes().length} nodes, ${cyInstances['call-graph'].edges().length} edges`);
+
         setupCommonEventHandlers('call-graph');
-        updateProgress(80, 'Call graph view initialized');
+        updateProgress(90, 'Call graph view ready');
         console.log('=== initCallGraphView COMPLETE ===');
     } catch (error) {
         console.error('initCallGraphView - ERROR:', error);
         if (error instanceof Error) {
             console.error('Error stack:', error.stack);
         }
+    }
+}
+
+// ========================================
+// Layout Position Calculation Helper
+// ========================================
+
+/**
+ * 事前にレイアウト計算を行い、各ノードの座標を返す（非同期）
+ * @param elements - ノードとエッジの配列
+ * @param layoutName - 使用するレイアウト名（'cose' または 'dagre'）
+ * @param layoutOptions - レイアウトオプション
+ * @returns 各ノードIDと座標のマップ
+ */
+async function calculateLayoutPositions(elements: any[], layoutName: string, layoutOptions: any): Promise<Map<string, {x: number, y: number}>> {
+    console.log(`calculateLayoutPositions - Computing ${layoutName} layout for ${elements.length} elements...`);
+    updateProgress(50, `Calculating ${layoutName} layout...`);
+
+    // 一時的なコンテナを作成（適切なサイズで）
+    const tempContainer = document.createElement('div');
+    tempContainer.style.width = '1000px';
+    tempContainer.style.height = '1000px';
+    tempContainer.style.position = 'absolute';
+    tempContainer.style.left = '-9999px';
+    tempContainer.style.top = '-9999px';
+    tempContainer.id = 'temp-layout-container';
+    document.body.appendChild(tempContainer);
+
+    try {
+        updateProgress(55, 'Creating temporary graph...');
+        // 一時的なCytoscapeインスタンスでレイアウトを計算
+        const tempCy = cytoscape({
+            container: tempContainer,
+            elements: elements,
+            headless: false, // headless=falseでレイアウト計算が正常に動作
+            styleEnabled: false // スタイル計算を無効化して高速化
+        });
+
+        console.log(`calculateLayoutPositions - Created temp cytoscape with ${tempCy.nodes().length} nodes`);
+
+        updateProgress(60, `Running ${layoutName} layout algorithm...`);
+        // レイアウトを実行して完了を待つ
+        const layout = tempCy.layout({
+            ...layoutOptions,
+            name: layoutName,
+            animate: false, // アニメーション無効
+            fit: true
+        });
+
+        // レイアウト完了を待つPromiseを作成
+        await new Promise<void>((resolve, reject) => {
+            let completed = false;
+            let startTime = Date.now();
+
+            // 進捗更新タイマー
+            const progressTimer = setInterval(() => {
+                if (!completed) {
+                    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                    updateProgress(65, `Layout calculation in progress... (${elapsed}s)`);
+                }
+            }, 500);
+
+            const timeout = setTimeout(() => {
+                if (!completed) {
+                    clearInterval(progressTimer);
+                    console.error('calculateLayoutPositions - Layout timeout!');
+                    reject(new Error('Layout calculation timeout'));
+                }
+            }, 60000); // 60秒のタイムアウト
+
+            layout.on('layoutstop', () => {
+                completed = true;
+                clearTimeout(timeout);
+                clearInterval(progressTimer);
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                console.log(`calculateLayoutPositions - Layout completed in ${elapsed}s`);
+                updateProgress(70, 'Layout calculation complete');
+                resolve();
+            });
+
+            layout.run();
+            console.log('calculateLayoutPositions - Layout started...');
+        });
+
+        // 座標を取得
+        const positions = new Map<string, {x: number, y: number}>();
+        tempCy.nodes().forEach((node: any) => {
+            const pos = node.position();
+            positions.set(node.id(), { x: pos.x, y: pos.y });
+        });
+
+        console.log(`calculateLayoutPositions - Calculated positions for ${positions.size} nodes`);
+
+        // サンプル座標を表示（最初の5つ）
+        let sampleCount = 0;
+        positions.forEach((pos, id) => {
+            if (sampleCount < 5) {
+                console.log(`  Sample: ${id} -> (${pos.x.toFixed(2)}, ${pos.y.toFixed(2)})`);
+                sampleCount++;
+            }
+        });
+
+        // 一時インスタンスを破棄
+        tempCy.destroy();
+        document.body.removeChild(tempContainer);
+
+        return positions;
+    } catch (error) {
+        console.error('calculateLayoutPositions - ERROR:', error);
+        if (error instanceof Error) {
+            console.error('Error details:', error.message);
+            console.error('Error stack:', error.stack);
+        }
+        if (document.body.contains(tempContainer)) {
+            document.body.removeChild(tempContainer);
+        }
+        return new Map();
     }
 }
 
@@ -855,37 +1525,110 @@ function toggleOrientation(): void {
     }
 }
 
+function toggleDirectoryGroups(viewName: string): void {
+    // 状態をトグル
+    showDirectoryGroups[viewName] = !showDirectoryGroups[viewName];
+
+    // ラベルを更新
+    const label = document.getElementById(`dir-label-${viewName}`);
+    if (label) {
+        label.textContent = showDirectoryGroups[viewName] ? 'Dir: ON' : 'Dir: OFF';
+    }
+
+    console.log(`toggleDirectoryGroups - ${viewName}: ${showDirectoryGroups[viewName]}`);
+
+    // ビューを再初期化
+    (async () => {
+        // プログレスバーを再表示
+        progressContainer.style.display = 'block';
+        progressContainer.style.opacity = '1';
+        progressText.style.display = 'block';
+        progressText.style.opacity = '1';
+
+        updateProgress(10, showDirectoryGroups[viewName] ? 'Enabling directory grouping...' : 'Disabling directory grouping...');
+
+        // 既存のインスタンスを破棄
+        if (cyInstances[viewName]) {
+            updateProgress(20, 'Destroying previous view...');
+            cyInstances[viewName].destroy();
+            delete cyInstances[viewName];
+        }
+
+        updateProgress(30, 'Rebuilding view...');
+
+        // ビューを再初期化
+        await initializeView(viewName);
+
+        updateProgress(100, 'Complete!');
+    })();
+}
+
 // ========================================
 // Export Functions
 // ========================================
 
-function toggleExportMenu(): void {
-    const menu = document.getElementById('export-menu');
+// 現在開いているメニューのビュー名を保持
+let currentOpenMenuView: string | null = null;
+
+function toggleExportMenu(viewName: string): void {
+    const menu = document.getElementById(`export-menu-${viewName}`);
     if (menu) {
+        const isOpening = !menu.classList.contains('show');
+
+        // 他のメニューを閉じる
+        ['file-deps', 'hierarchy', 'call-graph'].forEach(view => {
+            const otherMenu = document.getElementById(`export-menu-${view}`);
+            if (otherMenu && view !== viewName) {
+                otherMenu.classList.remove('show');
+            }
+        });
+
         menu.classList.toggle('show');
-        if (menu.classList.contains('show')) {
+        if (isOpening) {
+            currentOpenMenuView = viewName;
             setTimeout(() => {
                 document.addEventListener('click', closeExportMenuOnOutsideClick, true);
             }, 0);
         } else {
+            currentOpenMenuView = null;
             document.removeEventListener('click', closeExportMenuOnOutsideClick, true);
         }
     }
 }
 
-function closeExportMenu(): void {
-    const menu = document.getElementById('export-menu');
+function closeExportMenu(viewName: string): void {
+    const menu = document.getElementById(`export-menu-${viewName}`);
     if (menu) {
         menu.classList.remove('show');
+        currentOpenMenuView = null;
         document.removeEventListener('click', closeExportMenuOnOutsideClick, true);
     }
 }
 
 function closeExportMenuOnOutsideClick(event: Event): void {
-    const dropdown = document.querySelector('.export-dropdown');
-    const menu = document.getElementById('export-menu');
-    if (dropdown && menu && !dropdown.contains(event.target as Node)) {
-        closeExportMenu();
+    if (currentOpenMenuView === null) {
+        return;
+    }
+
+    const menu = document.getElementById(`export-menu-${currentOpenMenuView}`);
+    if (!menu) {
+        return;
+    }
+
+    // クリックされた要素がメニューまたはその親要素内かチェック
+    let target = event.target as Node;
+    let isInside = false;
+
+    while (target) {
+        if (target === menu || (target as Element).classList?.contains('export-dropdown')) {
+            isInside = true;
+            break;
+        }
+        target = target.parentNode as Node;
+    }
+
+    if (!isInside) {
+        closeExportMenu(currentOpenMenuView);
     }
 }
 
@@ -922,6 +1665,7 @@ function exportHTML(): void {
 (window as any).expandAll = expandAll;
 (window as any).collapseAll = collapseAll;
 (window as any).toggleOrientation = toggleOrientation;
+(window as any).toggleDirectoryGroups = toggleDirectoryGroups;
 (window as any).toggleExportMenu = toggleExportMenu;
 (window as any).exportPNG = exportPNG;
 (window as any).exportHTML = exportHTML;
@@ -930,5 +1674,14 @@ function exportHTML(): void {
 // Initialize
 // ========================================
 
-initializeView('file-deps');
-updateProgress(100, 'Complete!');
+// データが既にロード済みの場合（埋め込みデータ）のみ初期化
+// postMessageでデータが送られる場合は、graphDataCompleteハンドラーで初期化される
+if (isDataLoaded) {
+    console.log('Initializing with embedded data...');
+    (async () => {
+        await initializeView('file-deps');
+        updateProgress(100, 'Complete!');
+    })();
+} else {
+    console.log('Waiting for data from extension...');
+}

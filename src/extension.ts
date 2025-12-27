@@ -89,204 +89,212 @@ const _interval_processe = new IntervalProcess();
  * @param context extention contexest
  */
 export function activate(context: vscode.ExtensionContext) {
+	try {
+		// 拡張機能情報
+		const package_json = context.extension.packageJSON;
+		const short_name = package_json?.shortName || '';
+		const version = package_json?.version || '';
 
-	// 拡張機能情報
-	const package_json = context.extension.packageJSON;
-	const short_name = package_json?.shortName || '';
-	const version = package_json?.version || '';
+		// ワークスペース情報
+		const workspace_file = vscode.workspace.workspaceFile ? vscode.workspace.workspaceFile.fsPath : undefined;
+		const workspace_folder = workspace_file ? path.dirname(workspace_file) : undefined;
+		const workspace_basename = workspace_file ? path.basename(workspace_file, path.extname(workspace_file)) : undefined;
 
-	// ワークスペース情報
-	const workspace_file = vscode.workspace.workspaceFile ? vscode.workspace.workspaceFile.fsPath : undefined;
-	const workspace_folder = workspace_file ? path.dirname(workspace_file) : undefined;
-	const workspace_basename = workspace_file ? path.basename(workspace_file, path.extname(workspace_file)) : undefined;
+		// ファイルの関連付け設定
+		const readSetting = (setting: object | undefined): object => setting ? setting : {};
+		const associations = readSetting(vscode.workspace.getConfiguration("files").get<object>("associations"));
 
-	// ファイルの関連付け設定
-	const readSetting = (setting: object | undefined): object => setting ? setting : {};
-	const associations = readSetting(vscode.workspace.getConfiguration("files").get<object>("associations"));
+		// 動作環境ログ
+		const logs = _logs = new Logs(package_json?.displayName);
+		const platform = process.platform;  // 'darwin' / 'win32' / 'linux'
+		const arch = process.arch;          // 'x64' / 'arm64'
+		logs.log(`extension is now active! ${version} Node.js:${process.version}, VSCode:${vscode.version}, Platform:${platform}-${arch}`);
 
-	// 動作環境ログ
-	const logs = _logs = new Logs(package_json?.displayName);
-	const platform = process.platform;  // 'darwin' / 'win32' / 'linux'
-	const arch = process.arch;          // 'x64' / 'arm64'
-	logs.log(`extension is now active! ${version} Node.js:${process.version}, VSCode:${vscode.version}, Platform:${platform}-${arch}`);
-
-	// ステータスバーを生成
-	const status_bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
-	const updateCommand = (bar: vscode.StatusBarItem, text: string, command: string | undefined, tooltip: string) => {
-		bar.text = text;
-		bar.command = command;
-		bar.tooltip = tooltip;
-	};
-	updateCommand(status_bar, short_name, 'vscode-code-relationship-diagram.showDiagram', locale('show-diagram-tooltip'));
-	status_bar.show();
-
-	// ファイル監視
-	if (workspace_folder && (Object.keys(associations).length > 0)) {
-		for (const [pattern, language_id] of Object.entries(associations)) {
-			const watcher = vscode.workspace.createFileSystemWatcher(
-				new vscode.RelativePattern(workspace_folder, pattern)
-			);
-			// ファイル追加
-			watcher.onDidCreate((uri) => {
-				// .gitignoreを除外
-				const ig = ignore().add(codeFiles.loadGitignorePatterns(workspace_folder));
-				const relative_path = path.relative(workspace_folder, uri.fsPath);
-				if (!ig.ignores(relative_path)) {
-					logs.log(`on create ${language_id}: ${relative_path}`);
-				} else {
-					logs.error(`on create (ignored) ${language_id}: ${relative_path}`);
-				}
-			});
-			// ファイル削除
-			watcher.onDidDelete((uri) => {
-				const relative_path = path.relative(workspace_folder, uri.fsPath);
-				logs.log(`on delete ${language_id}: ${relative_path}`);
-			});
-			// ファイル変更
-			watcher.onDidChange((uri) => {
-				const relative_path = path.relative(workspace_folder, uri.fsPath);
-
-				// コードにエラーが無い事を確認
-				const diagnostics = vscode.languages.getDiagnostics(uri);
-				const errors = diagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Error);
-				if (errors.length === 0) {
-					logs.log(`on change ${language_id}: ${relative_path}`);
-				} else {
-					logs.error(`on change ${errors.length} errors.`);
-				}
-			});
-			context.subscriptions.push(watcher);
-		}
-	}
-
-	// コード関係調査コマンドの登録
-	context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.examineRelationships', async () => {
-
-		// 経過の初期表示
+		// ステータスバーを生成
+		const status_bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
+		const updateCommand = (bar: vscode.StatusBarItem, text: string, command: string | undefined, tooltip: string) => {
+			bar.text = text;
+			bar.command = command;
+			bar.tooltip = tooltip;
+		};
+		updateCommand(status_bar, short_name, 'vscode-code-relationship-diagram.showDiagram', locale('show-diagram-tooltip'));
 		status_bar.show();
-		const secondsToTime = (milliSeconds: number): string => {
-			const hours = Math.floor(milliSeconds / 3600000);
-			const minutes = Math.floor((milliSeconds % 3600000) / 60000);
-			const secs = Math.floor((milliSeconds % 60000) / 1000);
-			let time = milliSeconds >= 3600000 ? String(hours).padStart(2, '0') + ':' : '';
-			time += milliSeconds >= 60000 ? String(minutes).padStart(2, '0') + ':' : '';
-			time += milliSeconds >= 10000 ? String(secs).padStart(2, '0') : milliSeconds >= 1000 ? String(secs) : '0';
-			return time;
-		};
-		const updateProgress = (bar: vscode.StatusBarItem, start: number, processed: number, total: number, message: string = '') => {
-			const percentage = total > 0 ? (processed / total) * 100 : 0.00;
-			const processed_msec = performance.now() - start;
-			const rest_sec = percentage > 0 ? (processed_msec / percentage) * (total - processed) : 0;
-			bar.text = `$(sync~spin) ${short_name}: ${processed.toLocaleString()}/${total.toLocaleString()} ${percentage.toFixed(2)}% ...${secondsToTime(rest_sec)} ${message}`;
-		};
-		updateCommand(status_bar, short_name, undefined, locale('examing-tooltip'));
 
-		// ワークスペースが在り、ファイルの関連付けのパターンが在ったら
+		// ファイル監視
 		if (workspace_folder && (Object.keys(associations).length > 0)) {
-			const db_file = path.join(workspace_folder, '.vscode', 'crd.duckdb');
-			try {
-				// コード関係図DBを作成する
-				const db = new codeDb.Db(db_file);
-				await db.table_create();
-				try {
-					const interval = _interval_processe;
-					const start = performance.now();
-
-					// 進捗表示の初期化
-					updateProgress(status_bar, start, interval.progressed, interval.progress_total);
-
-					const examine = new Relationship.Examine(workspace_folder, db, message => logs.log(message), (message, error) => logs.error(message, error));
-
-					// ファイルの差分を求める
-					const file_diff = await examine.fileDifference(workspace_folder, associations, () => {
-						updateProgress(status_bar, start, (interval.progressed++ / 3) * 1, interval.progress_total++);
-					});
-					await interval.request(file_diff, examine,
-						(progressed, total) => updateProgress(status_bar, start, progressed, total),
-						(message, params) => logs.log(message, params),
-						(message, error) => logs.error(message, error));
-					interval.progress_total += file_diff.additions.length + file_diff.updates.length + file_diff.notchanges.length + file_diff.removes.length;
-
-					// インデックス作成待ち
-					updateProgress(status_bar, start, interval.progressed, interval.progress_total, 'Waiting for indexing to complete...');
-					const attempt = await codeRelationships.indexingCompleteWait(10);
-					logs.log(`Waitied for indexing to complete... attempt ${attempt}`);
-
-					// コード関係調査を登録する
-					const results = await Promise.allSettled(examine.processes);
-					const failures = results.filter(result => result.status === 'rejected');
-					failures.map(result => logs.error(result.reason));
-					if (failures.length > 0) {
-						logs.error(`${failures.length}/${results.length} processes failed.`);
+			for (const [pattern, language_id] of Object.entries(associations)) {
+				const watcher = vscode.workspace.createFileSystemWatcher(
+					new vscode.RelativePattern(workspace_folder, pattern)
+				);
+				// ファイル追加
+				watcher.onDidCreate((uri) => {
+					// .gitignoreを除外
+					const ig = ignore().add(codeFiles.loadGitignorePatterns(workspace_folder));
+					const relative_path = path.relative(workspace_folder, uri.fsPath);
+					if (!ig.ignores(relative_path)) {
+						logs.log(`on create ${language_id}: ${relative_path}`);
+					} else {
+						logs.error(`on create (ignored) ${language_id}: ${relative_path}`);
 					}
+				});
+				// ファイル削除
+				watcher.onDidDelete((uri) => {
+					const relative_path = path.relative(workspace_folder, uri.fsPath);
+					logs.log(`on delete ${language_id}: ${relative_path}`);
+				});
+				// ファイル変更
+				watcher.onDidChange((uri) => {
+					const relative_path = path.relative(workspace_folder, uri.fsPath);
 
-					// DBを破棄する
-					db.dispose();
+					// コードにエラーが無い事を確認
+					const diagnostics = vscode.languages.getDiagnostics(uri);
+					const errors = diagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Error);
+					if (errors.length === 0) {
+						logs.log(`on change ${language_id}: ${relative_path}`);
+					} else {
+						logs.error(`on change ${errors.length} errors.`);
+					}
+				});
+				context.subscriptions.push(watcher);
+			}
+		}
 
-					logs.log(`${secondsToTime(performance.now() - start)} ` +
-						`processed ${file_diff.lists.length.toLocaleString()} files(` +
-							`added ${file_diff.additions.length.toLocaleString()}, ` +
-							`updated ${file_diff.updates.length.toLocaleString()}, ` +
-							`no changed ${file_diff.notchanges.length.toLocaleString()}, ` +
-							`removed ${file_diff.removes.length.toLocaleString()}) ` +
-						`${examine.lineCount.toLocaleString()} lines, ` +
-						`${examine.relationshipCount.toLocaleString()} relationships`);
+		// コード関係調査コマンドの登録
+		context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.examineRelationships', async () => {
 
-					// コード関係図表示に切替える
-					updateCommand(status_bar, short_name, 'vscode-code-relationship-diagram.showDiagram', locale('show-diagram-tooltip'));
+			// 経過の初期表示
+			status_bar.show();
+			const secondsToTime = (milliSeconds: number): string => {
+				const hours = Math.floor(milliSeconds / 3600000);
+				const minutes = Math.floor((milliSeconds % 3600000) / 60000);
+				const secs = Math.floor((milliSeconds % 60000) / 1000);
+				let time = milliSeconds >= 3600000 ? String(hours).padStart(2, '0') + ':' : '';
+				time += milliSeconds >= 60000 ? String(minutes).padStart(2, '0') + ':' : '';
+				time += milliSeconds >= 10000 ? String(secs).padStart(2, '0') : milliSeconds >= 1000 ? String(secs) : '0';
+				return time;
+			};
+			const updateProgress = (bar: vscode.StatusBarItem, start: number, processed: number, total: number, message: string = '') => {
+				const percentage = total > 0 ? (processed / total) * 100 : 0.00;
+				const processed_msec = performance.now() - start;
+				const rest_sec = percentage > 0 ? (processed_msec / percentage) * (total - processed) : 0;
+				bar.text = `$(sync~spin) ${short_name}: ${processed.toLocaleString()}/${total.toLocaleString()} ${percentage.toFixed(2)}% ...${secondsToTime(rest_sec)} ${message}`;
+			};
+			updateCommand(status_bar, short_name, undefined, locale('examing-tooltip'));
+
+			// ワークスペースが在り、ファイルの関連付けのパターンが在ったら
+			if (workspace_folder && (Object.keys(associations).length > 0)) {
+				const db_file = path.join(workspace_folder, '.vscode', 'crd.duckdb');
+				try {
+					// コード関係図DBを作成する
+					const db = new codeDb.Db(db_file);
+					await db.table_create();
+					try {
+						const interval = _interval_processe;
+						const start = performance.now();
+
+						// 進捗表示の初期化
+						updateProgress(status_bar, start, interval.progressed, interval.progress_total);
+
+						const examine = new Relationship.Examine(workspace_folder, db, message => logs.log(message), (message, error) => logs.error(message, error));
+
+						// ファイルの差分を求める
+						const file_diff = await examine.fileDifference(workspace_folder, associations, () => {
+							updateProgress(status_bar, start, (interval.progressed++ / 3) * 1, interval.progress_total++);
+						});
+						await interval.request(file_diff, examine,
+							(progressed, total) => updateProgress(status_bar, start, progressed, total),
+							(message, params) => logs.log(message, params),
+							(message, error) => logs.error(message, error));
+						interval.progress_total += file_diff.additions.length + file_diff.updates.length + file_diff.notchanges.length + file_diff.removes.length;
+
+						// インデックス作成待ち
+						updateProgress(status_bar, start, interval.progressed, interval.progress_total, 'Waiting for indexing to complete...');
+						const attempt = await codeRelationships.indexingCompleteWait(10);
+						logs.log(`Waitied for indexing to complete... attempt ${attempt}`);
+
+						// コード関係調査を登録する
+						const results = await Promise.allSettled(examine.processes);
+						const failures = results.filter(result => result.status === 'rejected');
+						failures.map(result => logs.error(result.reason));
+						if (failures.length > 0) {
+							logs.error(`${failures.length}/${results.length} processes failed.`);
+						}
+
+						// DBを破棄する
+						db.dispose();
+
+						logs.log(`${secondsToTime(performance.now() - start)} ` +
+							`processed ${file_diff.lists.length.toLocaleString()} files(` +
+								`added ${file_diff.additions.length.toLocaleString()}, ` +
+								`updated ${file_diff.updates.length.toLocaleString()}, ` +
+								`no changed ${file_diff.notchanges.length.toLocaleString()}, ` +
+								`removed ${file_diff.removes.length.toLocaleString()}) ` +
+							`${examine.lineCount.toLocaleString()} lines, ` +
+							`${examine.relationshipCount.toLocaleString()} relationships`);
+
+						// コード関係図表示に切替える
+						updateCommand(status_bar, short_name, 'vscode-code-relationship-diagram.showDiagram', locale('show-diagram-tooltip'));
+					} catch (error) {
+						setTimeout(() => status_bar.dispose(), 3000);
+						logs.error(`codeFile.list(${workspace_folder}): `, error);
+					}
 				} catch (error) {
 					setTimeout(() => status_bar.dispose(), 3000);
-					logs.error(`codeFile.list(${workspace_folder}): `, error);
+					logs.error(`db.table_create(${db_file}): `, error);
 				}
-			} catch (error) {
-				setTimeout(() => status_bar.dispose(), 3000);
-				logs.error(`db.table_create(${db_file}): `, error);
-			}
-		} else {
-			setTimeout(() => status_bar.dispose(), 3000);
-			logs.error(locale('error-no-associations'));
-		}
-	}));
-
-	// コード関係図表示コマンドの登録
-	context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.showDiagram', async () => {
-		logs.log('=== SHOWDIAGRAM COMMAND STARTED ===');
-		
-		if (workspace_folder) {
-			const db_file = path.join(workspace_folder, '.vscode', 'crd.duckdb');
-			logs.log(`Attempting to open database: ${db_file}`);
-			
-			// DBファイルの存在確認
-			logs.log('Checking database file existence:', db_file);
-			if (!fs.existsSync(db_file)) {
-				logs.error(locale('error-no-database'));
 			} else {
-				try {
-					const db = new codeDb.Db(db_file);
-					
-					// 全てのシンボルを読み込み
-					const all_symbols = await db.symbol_quaryAll();
-					logs.log(`Loaded symbol: ${all_symbols.length} counts`);
-					
-					// シンボル関係を読み込み
-					const all_rels = await db.relationship_quaryAll();
-					logs.log(`Loaded relationships: ${all_rels.length} counts`);
-					
-					// グラフを表示
-					const graphViz = new Relationship.Visualization(context, workspace_folder, workspace_basename + '.crd.html', logs);
-					await graphViz.showDiagram(all_symbols, all_rels);
-					logs.log('Show Diagram completed');
-					
-					db.dispose();
-					logs.info('Code relationship diagram displayed');
-				} catch (error) {
-					logs.error('Failed to show graph: ', error);
-				}
+				setTimeout(() => status_bar.dispose(), 3000);
+				logs.error(locale('error-no-associations'));
 			}
-		} else {
-			logs.error('No workspace folder found');
+		}));
+
+		// コード関係図表示コマンドの登録
+		context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.showDiagram', async () => {
+			logs.log('=== SHOWDIAGRAM COMMAND STARTED ===');
+			
+			if (workspace_folder) {
+				const db_file = path.join(workspace_folder, '.vscode', 'crd.duckdb');
+				logs.log(`Attempting to open database: ${db_file}`);
+				
+				// DBファイルの存在確認
+				logs.log('Checking database file existence:', db_file);
+				if (!fs.existsSync(db_file)) {
+					logs.error(locale('error-no-database'));
+				} else {
+					try {
+						const db = new codeDb.Db(db_file);
+						
+						// 全てのシンボルを読み込み
+						const all_symbols = await db.symbol_quaryAll();
+						logs.log(`Loaded symbol: ${all_symbols.length} counts`);
+						
+						// シンボル関係を読み込み
+						const all_rels = await db.relationship_quaryAll();
+						logs.log(`Loaded relationships: ${all_rels.length} counts`);
+						
+						// グラフを表示
+						const graphViz = new Relationship.Visualization(context, workspace_folder, workspace_basename + '.crd.html', logs);
+						await graphViz.showDiagram(all_symbols, all_rels);
+						logs.log('Show Diagram completed');
+						
+						db.dispose();
+						logs.info('Code relationship diagram displayed');
+					} catch (error) {
+						logs.error('Failed to show graph: ', error);
+					}
+				}
+			} else {
+				logs.error('No workspace folder found');
+			}
+		}));
+	} catch (activationError) {
+		console.error('CRITICAL: Extension activation failed:', activationError);
+		if (activationError instanceof Error) {
+			console.error('Error stack:', activationError.stack);
 		}
-	}));
+		vscode.window.showErrorMessage(`Failed to activate Code Relationship Diagram extension: ${activationError}`);
+		throw activationError;
+	}
 }
 
 // This method is called when your extension is deactivated

@@ -223,7 +223,7 @@
     <div id="progress-container">
         <div id="progress-bar"></div>
     </div>
-    <div id="progress-text">Loading...</div>
+    <h2 id="progress-text">Loading...</h2>
 
     <!-- タブナビゲーション -->
     <div class="tab-navigation">
@@ -250,7 +250,11 @@
             <button onclick="resetLayout('file-deps')" title="Reset Layout">
                 <i class="fa fa-refresh" aria-hidden="true"></i>
             </button>
-            EXPORT_BUTTON_PLACEHOLDER
+            <button onclick="toggleDirectoryGroups('file-deps')" title="Toggle Directory Grouping">
+                <i class="fa fa-folder" aria-hidden="true"></i>
+                <span id="dir-label-file-deps">Dir: OFF</span>
+            </button>
+            EXPORT_BUTTON_FILE_DEPS_PLACEHOLDER
         </div>
         <div id="cy-file-deps" class="cy-container"></div>
     </div>
@@ -264,12 +268,17 @@
             <button onclick="resetLayout('hierarchy')" title="Reset Layout">
                 <i class="fa fa-refresh" aria-hidden="true"></i>
             </button>
+            <button onclick="toggleDirectoryGroups('hierarchy')" title="Toggle Directory Grouping">
+                <i class="fa fa-folder" aria-hidden="true"></i>
+                <span id="dir-label-hierarchy">Dir: OFF</span>
+            </button>
             <button onclick="expandAll()" title="Expand All">
                 <i class="fa fa-plus-square-o" aria-hidden="true"></i>
             </button>
             <button onclick="collapseAll()" title="Collapse All">
                 <i class="fa fa-minus-square-o" aria-hidden="true"></i>
             </button>
+            EXPORT_BUTTON_HIERARCHY_PLACEHOLDER
         </div>
         <div id="cy-hierarchy" class="cy-container"></div>
     </div>
@@ -283,10 +292,15 @@
             <button onclick="resetLayout('call-graph')" title="Reset Layout">
                 <i class="fa fa-refresh" aria-hidden="true"></i>
             </button>
+            <button onclick="toggleDirectoryGroups('call-graph')" title="Toggle Directory Grouping">
+                <i class="fa fa-folder" aria-hidden="true"></i>
+                <span id="dir-label-call-graph">Dir: OFF</span>
+            </button>
             <button onclick="toggleOrientation()" title="Toggle Orientation">
                 <i class="fa fa-rotate-right" aria-hidden="true"></i>
                 <span id="orientation-label">Horizontal</span>
             </button>
+            EXPORT_BUTTON_CALL_GRAPH_PLACEHOLDER
         </div>
         <div id="cy-call-graph" class="cy-container"></div>
     </div>
