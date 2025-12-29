@@ -34,6 +34,35 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
     - D3.js の treemap または sunburst
     - モジュール/パッケージの構造
 
+## 0.1.30 - 2025-12-29
+
+### [Added] HTMLエクスポート機能の強化
+
+- スタンドアロンHTMLエクスポート時に `.data.js` ファイルを生成（JavaScriptフォーマット）
+- HTMLエクスポート中の経過表示（進捗バーとメッセージ）
+- ビュー切り替え時の経過表示
+- 包括的なプロジェクトドキュメント（機能仕様書、実装仕様書）を追加
+
+### [Changed] データ読み込みの改善
+
+- HTMLエクスポートのデータ形式をJSONからJavaScriptに変更
+- 動的スクリプト読み込みによるデータ読み込み（初期ロード高速化）
+- ストリーム書き込みによる大規模データファイル生成
+
+### [Fixed] 大規模プロジェクト対応
+
+- 大規模プロジェクト（数万ノード）でのHTMLエクスポート時の "Invalid string length" エラーを修正
+- ブラウザでスタンドアロンHTML表示時のCORSエラーを解決
+- V8エンジンの文字列長制限を回避（ストリーム書き込み実装）
+
+### [Documentation] 仕様書の整備
+
+- FUNCTIONAL_SPECS.md（機能仕様書）を追加
+- IMPLEMENTATION_SPECS.md（実装仕様書）を追加
+- SPECIFICATIONS.md（仕様書インデックス）を追加
+- claude.md（AI開発コンテキスト）を追加
+- DUCKDB_BINDINGS.mdを更新
+
 ## 0.1.29 - 2025-12-27
 
 ### [Changed] WebViewのTypeScript化

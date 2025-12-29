@@ -798,6 +798,179 @@ function createExportButton(viewName, isStandalone) {
 
 **ビューごとのボタンが必要な理由**: 以前の単一ボタンは複数ビューのレンダリング時にID競合を引き起こしました。各ビューは今では一意のメニューID (`export-menu-file-deps`, `export-menu-hierarchy`, `export-menu-call-graph`) を持っています。
 
+### 5.6 スタンドアロンHTMLエクスポート
+
+#### a) アーキテクチャ
+
+**目的**: VSCodeなしで動作する完全に自己完結したHTMLファイルを生成
+
+**実装フロー**:
+
+```text
+exportStandaloneHTML():
+  1. ファイル保存ダイアログを表示 (拡張子: .html)
+  2. ユーザーが保存先を選択
+  3. データファイル (.data.js) を生成 → writeDataJsFileInChunks()
+  4. HTMLファイルを生成 → テンプレート + プレースホルダー置換
+  5. 両ファイルを保存: {filename}.html, {filename}.crd.data.js
+  6. オプション: ブラウザで開く
+```
+
+**実装**: `src/relationship/visualization.ts:664-769`
+
+#### b) データファイル生成 (ストリーム書き込み)
+
+**問題**: 大規模プロジェクト (例: tockプロジェクト) では `JSON.stringify()` が "Invalid string length" エラーをスローする
+
+**原因**: V8エンジンの文字列長制限 (~512MB-1GB)
+
+**解決策**: ストリーム書き込みを使用して、データを一度に1ノード/エッジずつ書き込む
+
+```typescript
+async writeDataJsFileInChunks(filepath: string, data: { nodes, edges }) {
+  const writeStream = fs.createWriteStream(filepath, { encoding: 'utf8' })
+
+  // JavaScriptファイルヘッダー
+  writeStream.write('// Graph data for standalone HTML\n')
+  writeStream.write('window.GRAPH_DATA = {\n  "nodes": [\n')
+
+  // ノードを1つずつ書き込み
+  for (let i = 0; i < data.nodes.length; i++) {
+    const nodeJson = JSON.stringify(data.nodes[i])
+    writeStream.write('    ' + nodeJson + (i < data.nodes.length - 1 ? ',\n' : '\n'))
+
+    // 1000ノードごとにログ出力 (進捗追跡)
+    if (i > 0 && i % 1000 === 0) {
+      this.logs.log(`Writing nodes: ${i}/${data.nodes.length}`)
+    }
+  }
+
+  writeStream.write('  ],\n  "edges": [\n')
+
+  // エッジを1つずつ書き込み
+  for (let i = 0; i < data.edges.length; i++) {
+    const edgeJson = JSON.stringify(data.edges[i])
+    writeStream.write('    ' + edgeJson + (i < data.edges.length - 1 ? ',\n' : '\n'))
+  }
+
+  writeStream.write('  ]\n};\n')
+  writeStream.end()
+}
+```
+
+**主な利点**:
+- メモリ使用量が一定 (データサイズに依存しない)
+- V8の文字列長制限を回避
+- 大規模プロジェクト (数万ノード) でも動作
+
+**ファイル形式**: JavaScriptファイル (`.data.js`)、JSONファイルではない
+
+**理由**: ブラウザの `file://` プロトコルでJSONファイルを `fetch()` するとCORSエラーが発生するため
+
+**実装**: `src/relationship/visualization.ts:771-832`
+
+#### c) 動的データ読み込み
+
+**スタンドアロンHTML側の実装** (`src/webview/graphMultiview.ts`):
+
+```typescript
+async function loadExternalDataJs(dataJsUri: string) {
+  // 動的にscriptタグを作成して読み込む
+  await new Promise<void>((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = dataJsUri
+    script.async = true
+
+    script.onload = () => resolve()
+    script.onerror = (error) => reject(new Error('Failed to load data file'))
+
+    document.head.appendChild(script)
+  })
+
+  // window.GRAPH_DATAが設定されているか確認
+  if (window.GRAPH_DATA && window.GRAPH_DATA.nodes && window.GRAPH_DATA.edges) {
+    allNodes = window.GRAPH_DATA.nodes
+    allEdges = window.GRAPH_DATA.edges
+    isDataLoaded = true
+
+    // ビューを初期化
+    await initializeView('file-deps')
+  }
+}
+```
+
+**主な利点**:
+- CORS問題を回避 (JavaScriptファイルは `file://` プロトコルで動作)
+- 初期HTMLロードの高速化 (データは後から読み込まれる)
+- ブラウザのキャッシュを活用可能
+
+**実装**: `src/webview/graphMultiview.ts:416-486`
+
+#### d) 経過表示の実装
+
+**Webview → Extension通信**:
+
+スタンドアロンHTMLではないモード (VSCode内) で、エクスポート中の経過を表示:
+
+```typescript
+// Webview側 (graphMultiview.ts)
+function exportHTML() {
+  showProgress()
+  updateProgress(10, 'Preparing HTML export...')
+
+  vscode.postMessage({
+    type: 'exportHTML',
+    data: { nodes: allNodes, edges: allEdges }
+  })
+
+  updateProgress(50, 'Waiting for file save...')
+}
+
+// メッセージハンドラ
+case 'exportHTMLProgress':
+  updateProgress(message.percent, message.message)
+  break
+case 'exportHTMLComplete':
+  updateProgress(100, 'Export complete!')
+  break
+```
+
+**Extension → Webview通信**:
+
+```typescript
+// Extension側 (visualization.ts)
+async exportStandaloneHTML(filename: string, data: { nodes, edges }) {
+  await this.updateExportProgress(60, 'Opening file save dialog...')
+
+  const saveUri = await vscode.window.showSaveDialog({...})
+
+  if (saveUri) {
+    await this.updateExportProgress(70, 'Writing data file...')
+    await this.writeDataJsFileInChunks(dataJsPath, data)
+
+    await this.updateExportProgress(90, 'Writing HTML file...')
+    await vscode.workspace.fs.writeFile(saveUri, Buffer.from(html_text, 'utf8'))
+
+    await this.notifyExportComplete()
+  }
+}
+
+async updateExportProgress(percent: number, message: string) {
+  if (this.panel) {
+    await this.panel.webview.postMessage({
+      type: 'exportHTMLProgress',
+      percent: percent,
+      message: message
+    })
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+}
+```
+
+**実装**:
+- Webview側: `src/webview/graphMultiview.ts:352-358, 1790-1825`
+- Extension側: `src/relationship/visualization.ts:664-769`
+
 ---
 
 ## 6. マルチプラットフォーム対応
@@ -1469,6 +1642,7 @@ function getSymbolKindColor(kind: number): string {
 
 | バージョン | 日付 | 変更内容 |
 |-----------|------|----------|
+| 1.1 | 2025-12-29 | § 5.6 スタンドアロンHTMLエクスポート実装詳細を追加 |
 | 1.0 | 2025-12-27 | 初回実装仕様書 (SPECIFICATIONS.mdから分割) |
 
 ---

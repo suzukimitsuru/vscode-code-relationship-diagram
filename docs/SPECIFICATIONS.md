@@ -45,7 +45,7 @@
 - [拡張機能エントリーポイント](IMPLEMENTATION_SPECS.md#2-拡張機能エントリーポイント) - 起動ライフサイクル、コマンド実装、ファイル監視
 - [コア機能実装](IMPLEMENTATION_SPECS.md#3-コア機能実装) - シンボル抽出、関係抽出、ファイル分類、非同期処理
 - [データベース層](IMPLEMENTATION_SPECS.md#4-データベース層) - DuckDB統合、スキーマ、CRUD操作
-- [可視化システム実装](IMPLEMENTATION_SPECS.md#5-可視化システム実装) - Webview初期化、グラフ要素生成、チャンク化転送、テンプレートシステム
+- [可視化システム実装](IMPLEMENTATION_SPECS.md#5-可視化システム実装) - Webview初期化、グラフ要素生成、チャンク化転送、テンプレートシステム、スタンドアロンHTMLエクスポート
 - [マルチプラットフォーム対応](IMPLEMENTATION_SPECS.md#6-マルチプラットフォーム対応) - ネイティブバインディング、macOSコード署名、CI/CD
 - [パフォーマンス最適化](IMPLEMENTATION_SPECS.md#7-パフォーマンス最適化) - チャンク化処理、データベースインデックス、適応型レンダリング、レイアウト事前計算、メモリ管理
 - [付録](IMPLEMENTATION_SPECS.md#付録) - 主要アルゴリズム、Cytoscapeレイアウトパラメータ、SymbolKind色マッピング
@@ -94,6 +94,7 @@ Claude Codeがプロジェクトを理解するためのコンテキスト情報
 | シンボル抽出の仕組み | [実装仕様書 § 3.1 シンボル抽出](IMPLEMENTATION_SPECS.md#31-シンボル抽出-extractcodesymbolsts) |
 | データベーススキーマ | [実装仕様書 § 4.2 スキーマ](IMPLEMENTATION_SPECS.md#42-スキーマ) |
 | Webview実装 | [実装仕様書 § 5 可視化システム実装](IMPLEMENTATION_SPECS.md#5-可視化システム実装) |
+| HTMLエクスポート実装 | [実装仕様書 § 5.6 スタンドアロンHTMLエクスポート](IMPLEMENTATION_SPECS.md#56-スタンドアロンhtmlエクスポート) |
 | パフォーマンス最適化 | [実装仕様書 § 7 パフォーマンス最適化](IMPLEMENTATION_SPECS.md#7-パフォーマンス最適化) |
 | DuckDBバインディング | [DUCKDB_BINDINGS.md](DUCKDB_BINDINGS.md) |
 
