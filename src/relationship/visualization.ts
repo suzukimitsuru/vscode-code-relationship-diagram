@@ -584,8 +584,8 @@ export class Visualization {
                 ? 'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js'
                 : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'cytoscape-dagre', 'cytoscape-dagre.js')).toString(),
             'GRAPH_MULTIVIEW_SCRIPT_URI_PLACEHOLDER': isStandalone
-                ? '' // Standalone version should have inline script
-                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'graphMultiview.js')).toString(),
+                ? `<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphMultiview.js'), 'utf8')}</script>`
+                : `<script src="${this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'graphMultiview.js')).toString()}"></script>`,
 
             'BACKGROUND_COLOR_PLACEHOLDER':     isDarkTheme ? '#1e1e1e' : '#ffffff',
             'PROGRESS_BG_COLOR_PLACEHOLDER':    isDarkTheme ? '#333' : '#e0e0e0',
@@ -601,6 +601,7 @@ export class Visualization {
             'ELEMENTS_PLACEHOLDER':             JSON.stringify([...elements.nodes, ...elements.edges]),
             'ELEMENTS_NODES_LENGTH_PLACEHOLDER': elements.nodes.length.toString(),
             'ELEMENTS_EDGES_LENGTH_PLACEHOLDER': elements.edges.length.toString(),
+            'GRAPH_DATA_JS_URI_PLACEHOLDER':    '',  // 通常のWebviewでは使用しない
 
             'EXPORT_BUTTON_FILE_DEPS_PLACEHOLDER': this.createExportButton('file-deps', isStandalone),
             'EXPORT_BUTTON_HIERARCHY_PLACEHOLDER': this.createExportButton('hierarchy', isStandalone),
@@ -614,37 +615,219 @@ export class Visualization {
 
         return result;
     }
-    
+
+    private replacePlaceholdersWithDataJsUri(template: string, title: string, elements: any, dataJsFilename: string): string {
+        // VSCodeのテーマ色を取得
+        const isDarkTheme = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
+        const replacements: { [key: string]: string } = {
+            'IS_STANDALONE_PLACEHOLDER':        'true',
+            'TITLE_PLACEHOLDER':                title,
+            'FONT_AWWSOME_CSS_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css',
+            'FONT_AWESOME_WOFF2_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.woff2',
+            'FONT_AWESOME_WOFF_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.woff',
+            'FONT_AWESOME_TTF_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.ttf',
+            'CYTOSCAPE_URI_PLACEHOLDER':        'https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js',
+            'PLAIN_DAGRE_URI_PLACEHOLDER':      'https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.js',
+            'CYTOSCAPE_DAGRE_URI_PLACEHOLDER':  'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js',
+            'GRAPH_MULTIVIEW_SCRIPT_URI_PLACEHOLDER': `<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphMultiview.js'), 'utf8')}</script>`,
+
+            'BACKGROUND_COLOR_PLACEHOLDER':     isDarkTheme ? '#1e1e1e' : '#ffffff',
+            'PROGRESS_BG_COLOR_PLACEHOLDER':    isDarkTheme ? '#333' : '#e0e0e0',
+
+            'CONTROLS_COLOR_PLACEHOLDER':       isDarkTheme ? '#cccccc' : '#333333',
+            'CONTROLS_BG_PLACEHOLDER':          isDarkTheme ? '#2d2d30' : '#ffffff',
+            'BOX_SHADOW_COLOR_PLACEHOLDER':     isDarkTheme ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.1)',
+            'BORDER_STYLE_PLACEHOLDER':         isDarkTheme ? '1px solid #3e3e42' : '1px solid #e1e1e1',
+
+            'BUTTON_NO_POINT_BG_PLACEHOLDER':   isDarkTheme ? '#0e639c' : '#007ACC',
+            'BUTTON_HOVER_BG_PLACEHOLDER':      isDarkTheme ? '#1177bb' : '#005a9e',
+
+            // データは空にして、代わりにデータJSファイルのURIを設定
+            'ELEMENTS_PLACEHOLDER':             '[]',
+            'ELEMENTS_NODES_LENGTH_PLACEHOLDER': '0',
+            'ELEMENTS_EDGES_LENGTH_PLACEHOLDER': '0',
+            'GRAPH_DATA_JS_URI_PLACEHOLDER':    dataJsFilename,
+
+            'EXPORT_BUTTON_FILE_DEPS_PLACEHOLDER': this.createExportButton('file-deps', true),
+            'EXPORT_BUTTON_HIERARCHY_PLACEHOLDER': this.createExportButton('hierarchy', true),
+            'EXPORT_BUTTON_CALL_GRAPH_PLACEHOLDER': this.createExportButton('call-graph', true)
+        };
+
+        let result = template;
+        for (const [placeholder, value] of Object.entries(replacements)) {
+            result = result.replace(new RegExp(placeholder, 'g'), value);
+        }
+
+        return result;
+    }
+
     private async exportStandaloneHTML(filename: string, data: { nodes: any[], edges: any[] }) {
-        const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-multiview.html'));
-        const html_text = this.replacePlaceholders(html_load, locale('window-title') + ' - Standalone', data, true);
+        try {
+            // 進捗を通知
+            await this.updateExportProgress(60, 'Opening file save dialog...');
 
-        // ファイル保存ダイアログを表示
-        const saveUri = await vscode.window.showSaveDialog({
-            defaultUri: vscode.Uri.file(filename),
-            filters: {
-                'HTML Files': ['html'],
-                'All Files': ['*']
+            // ファイル保存ダイアログを表示
+            const saveUri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(filename),
+                filters: {
+                    'HTML Files': ['html'],
+                    'All Files': ['*']
+                }
+            });
+
+            if (saveUri) {
+                try {
+                    // データファイルのパスを決定（HTMLと同じディレクトリ、同じベース名、.data.js拡張子）
+                    const htmlPath = saveUri.fsPath;
+                    const dataJsPath = htmlPath.replace(/\.html$/i, '.data.js');
+                    const dataJsUri = vscode.Uri.file(dataJsPath);
+
+                    // データJSファイル名（相対パス）
+                    const dataJsFilename = path.basename(dataJsPath);
+
+                    this.logs.log(`Exporting HTML to: ${htmlPath}`);
+                    this.logs.log(`Exporting data to: ${dataJsPath}`);
+                    this.logs.log(`Data size: ${data.nodes.length} nodes, ${data.edges.length} edges`);
+
+                    await this.updateExportProgress(70, 'Writing data file...');
+
+                    // データをJavaScriptファイルとして保存（ストリーム書き込みを使用して大規模データに対応）
+                    await this.writeDataJsFileInChunks(dataJsPath, data);
+
+                    this.logs.log(`Data JavaScript file saved to: ${dataJsPath}`);
+
+                    await this.updateExportProgress(90, 'Writing HTML file...');
+
+                    // HTMLテンプレートを生成（データは埋め込まず、JavaScriptファイルのURIを指定）
+                    const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-multiview.html'));
+                    const emptyData = { nodes: [], edges: [] };
+                    const html_text = this.replacePlaceholdersWithDataJsUri(html_load, locale('window-title') + ' - Standalone', emptyData, dataJsFilename);
+
+                    // HTMLファイルに書き込み
+                    await vscode.workspace.fs.writeFile(saveUri, Buffer.from(html_text, 'utf8'));
+
+                    this.logs.log(`HTML file saved (${html_text.length} bytes)`);
+
+                    // 完了通知
+                    await this.notifyExportComplete();
+
+                    // 成功メッセージを表示
+                    const action = await vscode.window.showInformationMessage(
+                        `HTML and data files exported to: ${htmlPath}`,
+                        'Open File', 'Open in Browser'
+                    );
+
+                    if (action === 'Open File') {
+                        const document = await vscode.workspace.openTextDocument(saveUri);
+                        await vscode.window.showTextDocument(document);
+                    } else if (action === 'Open in Browser') {
+                        vscode.env.openExternal(saveUri);
+                    }
+                } catch (error) {
+                    this.logs.error(`Export failed: ${error instanceof Error ? error.message : error}`);
+                    vscode.window.showErrorMessage(`Export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    // エラー時も完了通知を送る
+                    await this.notifyExportComplete();
+                }
+            } else {
+                // キャンセルされた場合も完了通知を送る
+                this.logs.log('Export cancelled by user');
+                await this.notifyExportComplete();
             }
-        });
+        } catch (error) {
+            this.logs.error(`Export failed: ${error instanceof Error ? error.message : error}`);
+            await this.notifyExportComplete();
+        }
+    }
 
-        if (saveUri) {
-            // ファイルに書き込み
-            await vscode.workspace.fs.writeFile(saveUri, Buffer.from(html_text, 'utf8'));
-
-            // 成功メッセージを表示
-            const action = await vscode.window.showInformationMessage(
-                `HTML file exported to: ${saveUri.fsPath}`,
-                'Open File', 'Open in Browser'
-            );
-
-            if (action === 'Open File') {
-                const document = await vscode.workspace.openTextDocument(saveUri);
-                await vscode.window.showTextDocument(document);
-            } else if (action === 'Open in Browser') {
-                vscode.env.openExternal(saveUri);
+    private async updateExportProgress(percent: number, message: string): Promise<void> {
+        if (this.panel) {
+            try {
+                await this.panel.webview.postMessage({
+                    type: 'exportHTMLProgress',
+                    percent: percent,
+                    message: message
+                });
+                // UI更新のための短い待機
+                await new Promise(resolve => setTimeout(resolve, 50));
+            } catch (error) {
+                this.logs.error(`Failed to update export progress: ${error instanceof Error ? error.message : error}`);
             }
         }
+    }
+
+    private async notifyExportComplete(): Promise<void> {
+        if (this.panel) {
+            try {
+                await this.panel.webview.postMessage({
+                    type: 'exportHTMLComplete'
+                });
+            } catch (error) {
+                this.logs.error(`Failed to notify export complete: ${error instanceof Error ? error.message : error}`);
+            }
+        }
+    }
+
+    private async writeDataJsFileInChunks(filepath: string, data: { nodes: any[], edges: any[] }): Promise<void> {
+        return new Promise((resolve, reject) => {
+            try {
+                const writeStream = fs.createWriteStream(filepath, { encoding: 'utf8' });
+
+                writeStream.on('error', (error) => {
+                    this.logs.error(`Data JS write stream error: ${error.message}`);
+                    reject(error);
+                });
+
+                writeStream.on('finish', () => {
+                    this.logs.log('Data JS write stream finished');
+                    resolve();
+                });
+
+                // JavaScriptファイルの開始
+                writeStream.write('// Graph data for standalone HTML\n');
+                writeStream.write('window.GRAPH_DATA = {\n  "nodes": [\n');
+
+                // ノードを1つずつ書き込み
+                for (let i = 0; i < data.nodes.length; i++) {
+                    const nodeJson = JSON.stringify(data.nodes[i]);
+                    if (i < data.nodes.length - 1) {
+                        writeStream.write('    ' + nodeJson + ',\n');
+                    } else {
+                        writeStream.write('    ' + nodeJson + '\n');
+                    }
+
+                    // 進捗ログ（1000件ごと）
+                    if (i > 0 && i % 1000 === 0) {
+                        this.logs.log(`Writing nodes: ${i}/${data.nodes.length}`);
+                    }
+                }
+
+                writeStream.write('  ],\n  "edges": [\n');
+
+                // エッジを1つずつ書き込み
+                for (let i = 0; i < data.edges.length; i++) {
+                    const edgeJson = JSON.stringify(data.edges[i]);
+                    if (i < data.edges.length - 1) {
+                        writeStream.write('    ' + edgeJson + ',\n');
+                    } else {
+                        writeStream.write('    ' + edgeJson + '\n');
+                    }
+
+                    // 進捗ログ（1000件ごと）
+                    if (i > 0 && i % 1000 === 0) {
+                        this.logs.log(`Writing edges: ${i}/${data.edges.length}`);
+                    }
+                }
+
+                // JavaScriptファイルの終了
+                writeStream.write('  ]\n};\n');
+                writeStream.end();
+
+            } catch (error) {
+                this.logs.error(`writeDataJsFileInChunks error: ${error instanceof Error ? error.message : error}`);
+                reject(error);
+            }
+        });
     }
 
 

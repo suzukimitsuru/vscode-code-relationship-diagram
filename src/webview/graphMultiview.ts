@@ -18,6 +18,8 @@ declare global {
         GRAPH_NODES_COUNT: number;
         GRAPH_EDGES_COUNT: number;
         IS_STANDALONE: boolean;
+        GRAPH_DATA?: { nodes: any[], edges: any[] };
+        GRAPH_DATA_JS_URI?: string;
     }
 }
 
@@ -280,6 +282,63 @@ function updateProgress(percent: number, message: string): void {
     }
 }
 
+function showProgress(): void {
+    progressContainer.style.display = 'block';
+    progressContainer.style.opacity = '1';
+    progressText.style.display = 'block';
+    progressText.style.opacity = '1';
+}
+
+function hideProgress(): void {
+    progressContainer.style.opacity = '0';
+    progressText.style.opacity = '0';
+    setTimeout(() => {
+        progressContainer.style.display = 'none';
+        progressText.style.display = 'none';
+    }, 300);
+}
+
+function showErrorMessage(message: string): void {
+    // エラーメッセージを表示する簡易的な実装
+    const errorDiv = document.createElement('div');
+    errorDiv.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(220, 53, 69, 0.95);
+        color: white;
+        padding: 20px 30px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-family: Arial, sans-serif;
+        z-index: 10000;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        max-width: 500px;
+        word-wrap: break-word;
+    `;
+    errorDiv.textContent = message;
+    document.body.appendChild(errorDiv);
+
+    // 5秒後に自動的に削除
+    setTimeout(() => {
+        errorDiv.style.opacity = '0';
+        errorDiv.style.transition = 'opacity 0.3s ease';
+        setTimeout(() => {
+            if (errorDiv.parentNode) {
+                document.body.removeChild(errorDiv);
+            }
+        }, 300);
+    }, 5000);
+
+    // クリックで即座に削除
+    errorDiv.addEventListener('click', () => {
+        if (errorDiv.parentNode) {
+            document.body.removeChild(errorDiv);
+        }
+    });
+}
+
 // Webview初期化完了を通知
 if (!window.IS_STANDALONE && vscode) {
     console.log('Sending webviewReady message to extension...');
@@ -291,6 +350,12 @@ window.addEventListener('message', event => {
     const message = event.data;
     if (message.type === 'progress') {
         updateProgress(message.percent, message.message);
+    } else if (message.type === 'exportHTMLProgress') {
+        // HTMLエクスポートの進捗更新
+        updateProgress(message.percent, message.message);
+    } else if (message.type === 'exportHTMLComplete') {
+        // HTMLエクスポート完了
+        updateProgress(100, 'Export complete!');
     } else if (message.type === 'graphData') {
         // チャンクデータを受信
         const { dataType, chunk, chunkIndex, totalChunks } = message;
@@ -315,7 +380,6 @@ window.addEventListener('message', event => {
         console.log('Expected edges:', message.totalEdges);
 
         isDataLoaded = true;
-        updateProgress(70, 'Initializing visualization...');
 
         // データが揃ったのでビューを初期化
         if (allNodes.length > 0) {
@@ -331,11 +395,95 @@ window.addEventListener('message', event => {
 
         // 初期ビューを初期化
         (async () => {
-            await initializeView('file-deps');
-            updateProgress(100, 'Complete!');
+            try {
+                showProgress();
+                updateProgress(70, 'Initializing visualization...');
+                await initializeView('file-deps');
+                updateProgress(100, 'Complete!');
+            } catch (error) {
+                hideProgress();
+                showErrorMessage(`Failed to initialize view: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                console.error('View initialization error:', error);
+            }
         })();
     }
 });
+
+// ========================================
+// External Data Loading (for standalone HTML)
+// ========================================
+
+async function loadExternalDataJs(dataJsUri: string): Promise<void> {
+    try {
+        showProgress();
+        updateProgress(10, 'Loading graph data...');
+        console.log('Loading external data from:', dataJsUri);
+
+        // UIが表示されるまで少し待つ
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        updateProgress(30, 'Downloading data file...');
+
+        // 動的にscriptタグを作成して読み込む
+        await new Promise<void>((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = dataJsUri;
+            script.async = true;
+
+            script.onload = () => {
+                console.log('Data JS file loaded successfully');
+                resolve();
+            };
+
+            script.onerror = (error) => {
+                console.error('Failed to load data JS file:', error);
+                reject(new Error('Failed to load data file'));
+            };
+
+            document.head.appendChild(script);
+        });
+
+        updateProgress(60, 'Processing graph data...');
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        // window.GRAPH_DATAが設定されているか確認
+        if (window.GRAPH_DATA && window.GRAPH_DATA.nodes && window.GRAPH_DATA.edges) {
+            allNodes = window.GRAPH_DATA.nodes;
+            allEdges = window.GRAPH_DATA.edges;
+            isDataLoaded = true;
+
+            console.log('External data loaded successfully:', {
+                nodes: allNodes.length,
+                edges: allEdges.length
+            });
+
+            if (allNodes.length > 0) {
+                console.log('Sample node:', allNodes[0]);
+                const fileNodes = allNodes.filter(n => n.data.kind === 0);
+                const symbolNodes = allNodes.filter(n => n.data.kind !== 0);
+                console.log('File nodes:', fileNodes.length);
+                console.log('Symbol nodes:', symbolNodes.length);
+            }
+            if (allEdges.length > 0) {
+                console.log('Sample edge:', allEdges[0]);
+            }
+
+            updateProgress(80, 'Initializing views...');
+
+            await initializeView('file-deps');
+
+            updateProgress(100, 'Complete!');
+            console.log('=== External data loading and initialization complete ===');
+        } else {
+            throw new Error('Data file did not set window.GRAPH_DATA');
+        }
+    } catch (error) {
+        hideProgress();
+        const errorMessage = `Failed to load graph data: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        showErrorMessage(errorMessage);
+        console.error('External data loading error:', error);
+    }
+}
 
 // ========================================
 // Data Preparation
@@ -349,9 +497,41 @@ let allNodes: any[] = [];
 let allEdges: any[] = [];
 let isDataLoaded = false;
 
-// 初期データをチェック（後方互換性のため）
-if (window.GRAPH_ELEMENTS && window.GRAPH_ELEMENTS.length > 0) {
-    console.log('Using embedded graph data (legacy mode)');
+// 初期データをチェック（スタンドアロンHTML用）
+if (window.IS_STANDALONE && window.GRAPH_DATA_JS_URI && window.GRAPH_DATA_JS_URI !== '') {
+    // スタンドアロンHTMLで外部data.jsファイルを動的に読み込む
+    console.log('=== Standalone HTML: Loading external data file ===');
+    console.log('Data JS URI:', window.GRAPH_DATA_JS_URI);
+    (async () => {
+        try {
+            await loadExternalDataJs(window.GRAPH_DATA_JS_URI!);
+        } catch (error) {
+            console.error('=== External data loading failed ===', error);
+        }
+    })();
+} else if (window.GRAPH_DATA && window.GRAPH_DATA.nodes && window.GRAPH_DATA.edges) {
+    // data.jsが既に読み込まれている場合（旧形式の互換性）
+    console.log('=== Standalone HTML: Using pre-loaded GRAPH_DATA ===');
+    allNodes = window.GRAPH_DATA.nodes;
+    allEdges = window.GRAPH_DATA.edges;
+    isDataLoaded = true;
+
+    console.log('Total nodes:', allNodes.length);
+    console.log('Total edges:', allEdges.length);
+    console.log('IS_STANDALONE:', window.IS_STANDALONE);
+
+    if (allNodes.length > 0) {
+        console.log('Sample node:', allNodes[0]);
+        const fileNodes = allNodes.filter(n => n.data.kind === 0);
+        const symbolNodes = allNodes.filter(n => n.data.kind !== 0);
+        console.log('File nodes:', fileNodes.length);
+        console.log('Symbol nodes:', symbolNodes.length);
+    }
+    if (allEdges.length > 0) {
+        console.log('Sample edge:', allEdges[0]);
+    }
+} else if (window.GRAPH_ELEMENTS && window.GRAPH_ELEMENTS.length > 0) {
+    console.log('=== Standalone HTML: Using embedded graph data ===');
     const allElements = window.GRAPH_ELEMENTS;
     allNodes = allElements.filter(el => !el.data.source);
     allEdges = allElements.filter(el => el.data.source);
@@ -360,6 +540,7 @@ if (window.GRAPH_ELEMENTS && window.GRAPH_ELEMENTS.length > 0) {
     console.log('Total elements:', allElements.length);
     console.log('Total nodes:', allNodes.length);
     console.log('Total edges:', allEdges.length);
+    console.log('IS_STANDALONE:', window.IS_STANDALONE);
 
     if (allNodes.length > 0) {
         console.log('Sample node:', allNodes[0]);
@@ -372,7 +553,8 @@ if (window.GRAPH_ELEMENTS && window.GRAPH_ELEMENTS.length > 0) {
         console.log('Sample edge:', allEdges[0]);
     }
 } else {
-    console.log('Waiting for graph data via postMessage...');
+    console.log('=== VSCode Webview: Waiting for data via postMessage ===');
+    console.log('window.GRAPH_ELEMENTS:', window.GRAPH_ELEMENTS ? window.GRAPH_ELEMENTS.length : 'undefined');
     updateProgress(20, 'Waiting for data...');
 }
 
@@ -415,7 +597,25 @@ function switchView(viewName: string): void {
     // ビューがまだ初期化されていない場合は初期化
     if (!cyInstances[viewName]) {
         (async () => {
-            await initializeView(viewName);
+            try {
+                // プログレスバーを表示
+                showProgress();
+                updateProgress(10, `Switching to ${viewName} view...`);
+
+                // UIが確実に更新されるように少し待つ
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                updateProgress(20, `Preparing ${viewName} view...`);
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                await initializeView(viewName);
+
+                // updateProgress(100, ...)で自動的に非表示になるので、ここでhideProgress()を呼ばない
+            } catch (error) {
+                hideProgress();
+                showErrorMessage(`Failed to initialize ${viewName} view: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                console.error('View initialization error:', error);
+            }
         })();
     } else {
         // 既存のビューをリフレッシュ
@@ -441,11 +641,13 @@ async function initializeView(viewName: string): Promise<void> {
                 break;
         }
         console.log(`View ${viewName} initialized successfully`);
+        updateProgress(100, `${viewName} view ready`);
     } catch (error) {
         console.error(`Error initializing view ${viewName}:`, error);
         if (error instanceof Error) {
             console.error('Error stack:', error.stack);
         }
+        throw error; // エラーを再スローして、呼び出し元でキャッチできるようにする
     }
 }
 
@@ -974,36 +1176,32 @@ function createHierarchyElements(): any[] {
     console.log('createHierarchyElements - Nodes with parent:', nodesWithParent);
 
     let symbolEdgeCount = 0;
-    if (!showOnlyFiles) {
-        allEdges.forEach(edge => {
-            if (edge.data.relationshipType !== 'file-relationship') {
-                elements.push({
-                    data: {
-                        id: edge.data.id,
-                        source: edge.data.source,
-                        target: edge.data.target
-                    }
-                });
-                symbolEdgeCount++;
-            }
-        });
-    } else {
-        // ファイルレベルのエッジのみを追加
-        allEdges.forEach(edge => {
-            if (edge.data.relationshipType === 'file-relationship') {
-                elements.push({
-                    data: {
-                        id: edge.data.id,
-                        source: edge.data.source,
-                        target: edge.data.target,
-                        relationshipCount: edge.data.relationshipCount,
-                        relationshipDetails: edge.data.relationshipDetails
-                    }
-                });
-                symbolEdgeCount++;
-            }
-        });
-    }
+    const relevantEdges = showOnlyFiles
+        ? allEdges.filter(e => e.data.relationshipType === 'file-relationship')
+        : allEdges.filter(e => e.data.relationshipType !== 'file-relationship');
+
+    relevantEdges.forEach(edge => {
+        if (!showOnlyFiles) {
+            elements.push({
+                data: {
+                    id: edge.data.id,
+                    source: edge.data.source,
+                    target: edge.data.target
+                }
+            });
+        } else {
+            elements.push({
+                data: {
+                    id: edge.data.id,
+                    source: edge.data.source,
+                    target: edge.data.target,
+                    relationshipCount: edge.data.relationshipCount,
+                    relationshipDetails: edge.data.relationshipDetails
+                }
+            });
+        }
+        symbolEdgeCount++;
+    });
 
     console.log('createHierarchyElements - Edges:', symbolEdgeCount);
     console.log('createHierarchyElements - Total elements:', elements.length);
@@ -1112,7 +1310,7 @@ async function initCallGraphView(): Promise<void> {
 
         // ノードに座標を設定（親ノードを除く - 親ノードの位置は子ノードから自動計算される）
         if (positions && positions.size > 0) {
-            updateProgress(75, 'Applying layout positions...');
+            updateProgress(72, 'Applying layout positions...');
             console.log(`initCallGraphView - Positions map size: ${positions.size}`);
             let appliedCount = 0;
             let skippedParentCount = 0;
@@ -1149,7 +1347,7 @@ async function initCallGraphView(): Promise<void> {
             console.warn('initCallGraphView - No positions to apply!');
         }
 
-        updateProgress(80, 'Rendering call graph view...');
+        updateProgress(75, 'Rendering call graph view...');
         cyInstances['call-graph'] = cytoscape({
             container: document.getElementById('cy-call-graph'),
             elements: callGraphElements,
@@ -1539,27 +1737,28 @@ function toggleDirectoryGroups(viewName: string): void {
 
     // ビューを再初期化
     (async () => {
-        // プログレスバーを再表示
-        progressContainer.style.display = 'block';
-        progressContainer.style.opacity = '1';
-        progressText.style.display = 'block';
-        progressText.style.opacity = '1';
+        try {
+            // プログレスバーを再表示
+            showProgress();
 
-        updateProgress(10, showDirectoryGroups[viewName] ? 'Enabling directory grouping...' : 'Disabling directory grouping...');
+            updateProgress(10, showDirectoryGroups[viewName] ? 'Enabling directory grouping...' : 'Disabling directory grouping...');
 
-        // 既存のインスタンスを破棄
-        if (cyInstances[viewName]) {
-            updateProgress(20, 'Destroying previous view...');
-            cyInstances[viewName].destroy();
-            delete cyInstances[viewName];
+            // 既存のインスタンスを破棄
+            if (cyInstances[viewName]) {
+                updateProgress(20, 'Destroying previous view...');
+                cyInstances[viewName].destroy();
+                delete cyInstances[viewName];
+            }
+
+            updateProgress(30, 'Rebuilding view...');
+
+            // ビューを再初期化（initializeView内でupdateProgress(100)が呼ばれる）
+            await initializeView(viewName);
+        } catch (error) {
+            hideProgress();
+            showErrorMessage(`Failed to toggle directory grouping: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            console.error('Toggle directory groups error:', error);
         }
-
-        updateProgress(30, 'Rebuilding view...');
-
-        // ビューを再初期化
-        await initializeView(viewName);
-
-        updateProgress(100, 'Complete!');
     })();
 }
 
@@ -1635,27 +1834,78 @@ function closeExportMenuOnOutsideClick(event: Event): void {
 function exportPNG(): void {
     const cy = cyInstances[currentView];
     if (cy) {
-        const png = cy.png({
-            output: 'blob',
-            bg: 'white',
-            full: true
-        });
-        const link = document.createElement('a');
-        link.download = `code-relationship-${currentView}.png`;
-        link.href = URL.createObjectURL(png);
-        link.click();
+        try {
+            showProgress();
+            updateProgress(10, 'Preparing PNG export...');
+
+            // PNGレンダリングを非同期で実行（UIを更新してから実行）
+            setTimeout(() => {
+                try {
+                    updateProgress(50, 'Rendering PNG image...');
+
+                    const png = cy.png({
+                        output: 'blob',
+                        bg: 'white',
+                        full: true
+                    });
+
+                    updateProgress(90, 'Creating download link...');
+
+                    const link = document.createElement('a');
+                    link.download = `code-relationship-${currentView}.png`;
+                    link.href = URL.createObjectURL(png);
+                    link.click();
+
+                    updateProgress(100, 'PNG export complete!');
+                    // updateProgress(100)で自動的に非表示になるので、hideProgress()は不要
+                } catch (error) {
+                    hideProgress();
+                    showErrorMessage(`PNG export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    console.error('PNG export error:', error);
+                }
+            }, 200); // UIが確実に更新されるように遅延を増やす
+        } catch (error) {
+            hideProgress();
+            showErrorMessage(`PNG export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            console.error('PNG export error:', error);
+        }
     }
 }
 
 function exportHTML(): void {
-    const cy = cyInstances[currentView];
-    if (cy && !window.IS_STANDALONE && vscode) {
-        const nodes = cy.nodes().map((node: any) => ({ data: node.data() }));
-        const edges = cy.edges().map((edge: any) => ({ data: edge.data() }));
-        vscode.postMessage({
-            type: 'exportHTML',
-            data: { nodes, edges }
-        });
+    if (!window.IS_STANDALONE && vscode) {
+        try {
+            showProgress();
+            updateProgress(10, 'Preparing HTML export...');
+
+            // 現在のビューではなく、元の全データを送信
+            // スタンドアロンHTMLでは全データが必要（ビューごとのフィルタリングは表示時に行われる）
+            // allNodes/allEdgesは既に { data: {...} } の形式で格納されている
+            console.log(`Exporting HTML with ${allNodes.length} nodes and ${allEdges.length} edges`);
+
+            // UIを更新してから送信
+            setTimeout(() => {
+                try {
+                    updateProgress(30, 'Sending export request...');
+
+                    vscode.postMessage({
+                        type: 'exportHTML',
+                        data: { nodes: allNodes, edges: allEdges }
+                    });
+
+                    updateProgress(50, 'Waiting for file save...');
+                    // ここで止める。拡張機能からexportHTMLCompleteメッセージが来るまで待つ
+                } catch (error) {
+                    hideProgress();
+                    showErrorMessage(`HTML export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    console.error('HTML export error:', error);
+                }
+            }, 200); // UIが確実に更新されるように遅延を増やす
+        } catch (error) {
+            hideProgress();
+            showErrorMessage(`HTML export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            console.error('HTML export error:', error);
+        }
     }
 }
 
@@ -1674,14 +1924,26 @@ function exportHTML(): void {
 // Initialize
 // ========================================
 
-// データが既にロード済みの場合（埋め込みデータ）のみ初期化
+// データが既にロード済みの場合（埋め込みデータまたは外部データファイル）のみ初期化
 // postMessageでデータが送られる場合は、graphDataCompleteハンドラーで初期化される
 if (isDataLoaded) {
-    console.log('Initializing with embedded data...');
+    console.log('=== Data loaded, initializing views... ===');
+    console.log('isDataLoaded:', isDataLoaded);
+    console.log('allNodes.length:', allNodes.length);
+    console.log('allEdges.length:', allEdges.length);
     (async () => {
-        await initializeView('file-deps');
-        updateProgress(100, 'Complete!');
+        try {
+            showProgress();
+            updateProgress(70, 'Initializing views...');
+            await initializeView('file-deps');
+            updateProgress(100, 'Complete!');
+            console.log('=== Initialization complete ===');
+        } catch (error) {
+            hideProgress();
+            showErrorMessage(`Failed to initialize view: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            console.error('=== Initialization failed ===', error);
+        }
     })();
 } else {
-    console.log('Waiting for data from extension...');
+    console.log('=== Waiting for data from extension via postMessage... ===');
 }
