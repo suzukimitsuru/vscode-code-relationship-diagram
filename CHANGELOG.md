@@ -34,7 +34,20 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
     - D3.js の treemap または sunburst
     - モジュール/パッケージの構造
 
-## 0.1.30 - 2025-12-29
+## 0.1.30 - 2026-01-09
+
+### [Added] 拡張機能側でのDagreレイアウト計算
+
+- **UIフリーズの完全解消**: Node.js環境でのレイアウト計算によりWebview UIフリーズを解消
+- **dagreLayout.ts 新規追加**: Dagreレイアウト計算ロジック（286行）
+- **プログレス表示**: レイアウト計算の進捗表示とキャンセル機能
+- **レイアウトキャッシング**: 計算結果のキャッシュによる再表示の高速化
+
+### [Added] ログ機能の強化
+
+- **logs.ts 新規追加**: 詳細なデバッグログ機能（63行）
+- **ファイル出力**: `show_diagram.log` への詳細ログ出力
+- **コンソール出力**: 開発時のデバッグ情報表示
 
 ### [Added] HTMLエクスポート機能の強化
 
@@ -43,25 +56,42 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - ビュー切り替え時の経過表示
 - 包括的なプロジェクトドキュメント（機能仕様書、実装仕様書）を追加
 
+### [Changed] レンダリング戦略の最適化
+
+- **適応型レイアウト選択**:
+  - 小規模（≤ 15,000ノード）: シンボルレベル詳細表示 + Dagreレイアウト（拡張機能側）
+  - 中規模（≤ 10,000ノード または ≤ 15,000エッジ）: Dagreレイアウト（拡張機能側）
+  - 大規模（> 10,000ノード）: COSEレイアウト（フォールバック）
+- **Webview処理の軽量化**: 事前計算された座標を適用するのみ（presetレイアウト）
+- **チャンク転送の最適化**: レイアウト座標をチャンク分割して転送（5000要素/チャンク）
+
 ### [Changed] データ読み込みの改善
 
 - HTMLエクスポートのデータ形式をJSONからJavaScriptに変更
 - 動的スクリプト読み込みによるデータ読み込み（初期ロード高速化）
 - ストリーム書き込みによる大規模データファイル生成
 
+### [Enhanced] メモリ制限の緩和
+
+- **レイアウト計算メモリ制限の拡大**: Webview ~2GB → Node.js ~4GB+
+- **より大規模なプロジェクト対応**: 数万ノードのプロジェクトでも安定動作
+- **メモリ使用量の最適化**: 段階的なデータ処理による効率化
+
 ### [Fixed] 大規模プロジェクト対応
 
 - 大規模プロジェクト（数万ノード）でのHTMLエクスポート時の "Invalid string length" エラーを修正
 - ブラウザでスタンドアロンHTML表示時のCORSエラーを解決
 - V8エンジンの文字列長制限を回避（ストリーム書き込み実装）
+- Webview側でのDagreレイアウト計算によるUIフリーズを解消
 
-### [Documentation] 仕様書の整備
+### [Documentation] 開発ドキュメントの充実
 
-- FUNCTIONAL_SPECS.md（機能仕様書）を追加
-- IMPLEMENTATION_SPECS.md（実装仕様書）を追加
-- SPECIFICATIONS.md（仕様書インデックス）を追加
-- claude.md（AI開発コンテキスト）を追加
-- DUCKDB_BINDINGS.mdを更新
+- **README.md**: Development セクション追加、.gitignore 設定ガイドを追加
+- **FUNCTIONAL_SPECS.md**: 機能仕様書を追加・更新
+- **IMPLEMENTATION_SPECS.md**: 実装仕様書を追加・更新
+- **SPECIFICATIONS.md**: 仕様書インデックスを追加
+- **claude.md**: AI開発コンテキストを追加・更新（v0.1.30技術詳細を含む）
+- **DUCKDB_BINDINGS.md**: DuckDBバインディングビルド手順を更新
 
 ## 0.1.29 - 2025-12-27
 

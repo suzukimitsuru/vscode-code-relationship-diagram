@@ -51,66 +51,22 @@
 - 16.歴史的・教育言語 (6): Pascal, BASIC, Logo, Smalltalk, Forth, Prolog
 - 17.エソテリック言語 (2): Brainfuck, Whitespace
 
-## Specifications
+## Development
 
-### E.関係の抽出
+### Excluding database and log files from Git
 
-シンボルの定義場所から参照場所を抽出する事できる。
-シンボルの参照場所を変更した場合は、検出できない。
-このため、変更ファイルで参照しているシンボルの、関係の再抽出も行う必要がある。
+この拡張機能は`.vscode`ディレクトリにデータベースファイルとログファイルを生成します。  
+これらのファイルをGit履歴管理から除外するには、プロジェクトの`.gitignore`ファイルに以下を追加してください：  
 
-- E1.codeFile.distribute(List File, Load table_symbols)
-  - case Upsert(Add | Update):
-    - a) codeSymbols.distribute(Extruct Symbols, Load table_symbols)
-      - case Upsert(Add | Update):
-        - a) Extruct Relationship
-          - a) Extruct Relationship define
-          - a) case Update: Extruct Relationship referance 全ての抽出を統合して、同じ抽出は1度だけにする -> 抽出完了のイベントにより個々の抽出完了の同期を行う。
-        - z) codeSymbols_upsert()
-          - case Update: ''
-          - case Insert: ''
-        - z) relationship_upsert()
-          - case Update: ''
-          - case Insert: ''
-      - case Delete:
-        - a) 'DELETE FROM table_symbols WHERE id = ?;'
-        - a) 'DELETE FROM table_relationships WHERE reference_id = ? OR define_id = ?;
-      - case No change:
-        - No opration
-    - z) codeFile_upsert(path, updated)
-      - case Update: `UPDATE table_files SET updated_at = ? WHERE relative_path = ?;`
-      - case Insert: `INSERT INTO table_files (updated_at, relative_path) VALUES (?, ?);`
-  - case Delete:
-    - 'DELETE FROM table_files WHERE relative_path = ?;'
-    - 'DELETE FROM table_symbols WHERE path = ?;'
-    - 'DELETE FROM table_relationships WHERE reference_path = ? OR define_path = ?;
-  - case No change:
-    - No opration
+``` text
+.vscode/crd.duckdb
+.vscode/crd.duckdb.wal
+.vscode/crd-*.log
+```
 
-### G.コード関係図エディタ
+既に追跡されているファイルがある場合は、以下のコマンドでGitインデックスから削除してください（ローカルファイルは保持されます）：
 
-- G1.コード関係図の初期表示
-  - G1-1.可視性保証
-    - G1-1-1. ノード間の最小距離を維持し、重なりを防ぐ
-    - G1-1-2. 関係線が他のノードに隠れないよう、透過性を考慮した配置
-    - G1-1-3. 短すぎる関係線は適度に伸ばし、長すぎる関係線は縮める
-    - G1-1-4. ノード間の最小間隔を矢印の三角の大きさの２倍以上に設定し、関係線の矢印を明確に表示する
-  - G1-2.垂直配置
-    - G1-2-1. 参照ノード（他のシンボルを参照するノード）を相対的に上方向に配置する
-    - G1-2-2. 定義ノード（他のシンボルから参照されるノード）を相対的に下方向に配置する
-    - G1-2-3. 垂直配置の力は水平方向の力よりも弱く設定し、自然な階層構造を形成する
-
-- G2.ノード選択の仕様(検討中)
-  - G2-2.選択状態の定義
-    - 表示を選択状態にする
-    - マウスの移動に追従してノードを移動する
-  - G2-1.操作方法
-    - Shift+ドラッグ: 範囲選択
-    - Shift+クリック: 個別選択/選択解除
-    - 通常マウスダウン: 単一選択
-    - ノード以外をクリック: 全選択解除
-
-- G3.関係線(エッジ)にマウスホバーでの関係表示
-  - G3-1.タイトルなしのツールチップで表示する。ツールチップは表示後に移動しない
-  - G3-2.参照シンボルのシンボル名と行番号でソートして、「参照シンボル → 定義シンボル」の形式で表示
-  - G3-3.シンボルをクリックすると、対象のシンボルのエディタへ移動する
+```bash
+git rm --cached .vscode/crd.duckdb
+git rm --cached .vscode/crd.duckdb.wal
+```

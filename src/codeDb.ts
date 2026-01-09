@@ -577,8 +577,8 @@ export class Db extends vscode.Disposable {
                     'r.reference_id, s_ref.path AS reference_path, s_ref.start_line AS reference_line, ' +
                     'r.define_id,    s_def.path AS define_path,    s_def.start_line AS define_line ' +
                 'FROM table_relationships r ' +
-                'LEFT JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
-                'LEFT JOIN table_symbols s_def ON r.define_id = s_def.id;').all(
+                'INNER JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
+                'INNER JOIN table_symbols s_def ON r.define_id = s_def.id;').all(
                 (err: Error | null, rows: duckdb.TableData) => {
                     if (err) {
                         reject(err);
@@ -607,8 +607,8 @@ export class Db extends vscode.Disposable {
                     'r.reference_id, s_ref.path AS reference_path, s_ref.start_line AS reference_line, ' +
                     'r.define_id,    s_def.path AS define_path,    s_def.start_line AS define_line ' +
                 'FROM table_relationships r ' +
-                'LEFT JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
-                'LEFT JOIN table_symbols s_def ON r.define_id = s_def.id ' +
+                'INNER JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
+                'INNER JOIN table_symbols s_def ON r.define_id = s_def.id ' +
                 'WHERE s_def.path = ?;').all(
                 definePath,
                 (err: Error | null, rows: duckdb.TableData) => {
@@ -640,8 +640,8 @@ export class Db extends vscode.Disposable {
                     'r.reference_id, s_ref.path AS reference_path, s_ref.start_line AS reference_line, ' +
                     'r.define_id,    s_def.path AS define_path,    s_def.start_line AS define_line ' +
                 'FROM table_relationships r ' +
-                'LEFT JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
-                'LEFT JOIN table_symbols s_def ON r.define_id = s_def.id ' +
+                'INNER JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
+                'INNER JOIN table_symbols s_def ON r.define_id = s_def.id ' +
                 `WHERE r.reference_id IN (${placeholders});`
             ).all(
                 ...symbolIds,
@@ -655,6 +655,25 @@ export class Db extends vscode.Disposable {
                                 new codeRelationships.SymbolLocation(row.define_id, row.define_path, row.define_line)
                         ));
                         resolve(relationships);
+                    }
+                }
+            );
+        });
+    }
+
+    /**
+     * @description 汎用クエリ実行（任意のSELECTクエリを実行）
+     * @param query SQLクエリ文字列
+     * @returns クエリ結果の配列
+     */
+    public executeQuery<T = any>(query: string): Promise<T[]> {
+        return new Promise<T[]>((resolve, reject) => {
+            this._conn.prepare(query).all(
+                (err: Error | null, rows: duckdb.TableData) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve(rows as T[]);
                     }
                 }
             );

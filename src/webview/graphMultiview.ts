@@ -3,13 +3,12 @@
  * @description Webview script for displaying multi-view code relationship diagrams
  */
 
-const HierarchyView_LIMIT_ONLY_FILE = 5000; // 階層構造ビューでファイルレベルのみ表示する閾値
-const CallGraphView_LIMIT_ONLY_FILE = 5000; // 呼び出しグラフビューでファイルレベルのみ表示する閾値
+// 新しい制限値（拡張機能側でDagreレイアウト計算を実行するため、制限を緩和）
+const HierarchyView_LIMIT_ONLY_FILE = 15000; // 階層構造ビューでファイルレベルのみ表示する閾値（5000 → 15000）
+const CallGraphView_LIMIT_ONLY_FILE = 15000; // 呼び出しグラフビューでファイルレベルのみ表示する閾値（5000 → 15000）
 
 // Type declarations for global variables injected by HTML template
 declare const cytoscape: any;
-declare const cytoscapeDagre: any;
-declare const dagre: any;
 
 // Global window interface extension
 declare global {
@@ -18,7 +17,13 @@ declare global {
         GRAPH_NODES_COUNT: number;
         GRAPH_EDGES_COUNT: number;
         IS_STANDALONE: boolean;
-        GRAPH_DATA?: { nodes: any[], edges: any[] };
+        GRAPH_DATA?: {
+            nodes: any[],
+            edges: any[],
+            layoutPositions?: {
+                [viewType: string]: Array<{id: string, x: number, y: number}>
+            }
+        };
         GRAPH_DATA_JS_URI?: string;
     }
 }
@@ -39,20 +44,9 @@ declare function acquireVsCodeApi(): VsCodeAPI;
 // Debug: Check what libraries are loaded
 console.log('=== Library Loading Status ===');
 console.log('cytoscape:', typeof cytoscape);
-console.log('dagre:', typeof dagre);
-console.log('cytoscapeDagre:', typeof cytoscapeDagre);
 
-// Register cytoscape-dagre extension
-if (typeof cytoscape !== 'undefined' && typeof cytoscapeDagre !== 'undefined') {
-    cytoscape.use(cytoscapeDagre);
-    console.log('✓ cytoscape-dagre registered successfully');
-} else {
-    console.error('✗ Failed to register cytoscape-dagre:', {
-        cytoscape: typeof cytoscape,
-        cytoscapeDagre: typeof cytoscapeDagre,
-        dagre: typeof dagre
-    });
-}
+// Note: Dagre layout calculation is now performed on extension side (Node.js)
+// Webview uses 'preset' layout with pre-calculated positions
 
 // ========================================
 // Utility Functions
@@ -356,6 +350,31 @@ window.addEventListener('message', event => {
     } else if (message.type === 'exportHTMLComplete') {
         // HTMLエクスポート完了
         updateProgress(100, 'Export complete!');
+    } else if (message.type === 'layoutPositions') {
+        // 拡張機能側で計算されたレイアウト座標を受信
+        const { viewType, positions } = message;
+        console.log(`=== RECEIVED LAYOUT POSITIONS ===`);
+        console.log(`View type: ${viewType}`);
+        console.log(`Positions count: ${positions.length}`);
+
+        // Map<nodeId, {x, y}>に変換して格納
+        const positionMap = new Map<string, {x: number, y: number}>();
+        positions.forEach((pos: {id: string, x: number, y: number}) => {
+            positionMap.set(pos.id, { x: pos.x, y: pos.y });
+        });
+
+        layoutPositions.set(viewType, positionMap);
+        console.log(`Stored ${positionMap.size} positions for view ${viewType}`);
+
+        // サンプル座標を表示
+        let sampleCount = 0;
+        positionMap.forEach((pos, id) => {
+            if (sampleCount < 3) {
+                console.log(`  Sample position: ${id} -> (${pos.x.toFixed(2)}, ${pos.y.toFixed(2)})`);
+                sampleCount++;
+            }
+        });
+        console.log(`=== LAYOUT POSITIONS STORED ===`);
     } else if (message.type === 'graphData') {
         // チャンクデータを受信
         const { dataType, chunk, chunkIndex, totalChunks } = message;
@@ -457,6 +476,24 @@ async function loadExternalDataJs(dataJsUri: string): Promise<void> {
                 edges: allEdges.length
             });
 
+            // layoutPositionsを読み込む（存在する場合）
+            if (window.GRAPH_DATA?.layoutPositions) {
+                const layoutPositionsData = window.GRAPH_DATA.layoutPositions;
+                console.log('Loading pre-calculated layout positions from exported data...');
+                Object.keys(layoutPositionsData).forEach(viewType => {
+                    const positions = layoutPositionsData[viewType];
+                    const positionMap = new Map<string, {x: number, y: number}>();
+                    positions.forEach((pos: {id: string, x: number, y: number}) => {
+                        positionMap.set(pos.id, { x: pos.x, y: pos.y });
+                    });
+                    layoutPositions.set(viewType, positionMap);
+                    console.log(`Loaded ${positionMap.size} positions for view '${viewType}'`);
+                });
+                console.log(`Total layout positions loaded for ${Object.keys(layoutPositionsData).length} view types`);
+            } else {
+                console.log('No pre-calculated layout positions found in exported data - will calculate on-demand');
+            }
+
             if (allNodes.length > 0) {
                 console.log('Sample node:', allNodes[0]);
                 const fileNodes = allNodes.filter(n => n.data.kind === 0);
@@ -497,6 +534,10 @@ let allNodes: any[] = [];
 let allEdges: any[] = [];
 let isDataLoaded = false;
 
+// 拡張機能側で計算されたレイアウト座標を格納
+const layoutPositions: Map<string, Map<string, {x: number, y: number}>> = new Map();
+// Map<viewType, Map<nodeId, {x, y}>>
+
 // 初期データをチェック（スタンドアロンHTML用）
 if (window.IS_STANDALONE && window.GRAPH_DATA_JS_URI && window.GRAPH_DATA_JS_URI !== '') {
     // スタンドアロンHTMLで外部data.jsファイルを動的に読み込む
@@ -515,6 +556,24 @@ if (window.IS_STANDALONE && window.GRAPH_DATA_JS_URI && window.GRAPH_DATA_JS_URI
     allNodes = window.GRAPH_DATA.nodes;
     allEdges = window.GRAPH_DATA.edges;
     isDataLoaded = true;
+
+    // layoutPositionsを読み込む（存在する場合）
+    if (window.GRAPH_DATA?.layoutPositions) {
+        const layoutPositionsData = window.GRAPH_DATA.layoutPositions;
+        console.log('Loading pre-calculated layout positions from exported data...');
+        Object.keys(layoutPositionsData).forEach(viewType => {
+            const positions = layoutPositionsData[viewType];
+            const positionMap = new Map<string, {x: number, y: number}>();
+            positions.forEach((pos: {id: string, x: number, y: number}) => {
+                positionMap.set(pos.id, { x: pos.x, y: pos.y });
+            });
+            layoutPositions.set(viewType, positionMap);
+            console.log(`Loaded ${positionMap.size} positions for view '${viewType}'`);
+        });
+        console.log(`Total layout positions loaded for ${Object.keys(layoutPositionsData).length} view types`);
+    } else {
+        console.log('No pre-calculated layout positions found in exported data - will calculate on-demand');
+    }
 
     console.log('Total nodes:', allNodes.length);
     console.log('Total edges:', allEdges.length);
@@ -758,7 +817,7 @@ function initFileDepView(): void {
                         'text-wrap': 'none',
                         'border-width': '2px',
                         'border-color': '#2E5984',
-                        'background-opacity': 0.9
+                        'background-opacity': 0.7
                     }
                 },
                 {
@@ -777,28 +836,11 @@ function initFileDepView(): void {
                             const relationshipCount = ele.data('relationshipCount') || 1;
                             return Math.min(Math.max(relationshipCount * 0.8, 1), 10);
                         },
-                        'line-color': function(ele: any) {
-                            const relationshipCount = ele.data('relationshipCount') || 1;
-                            const intensity = Math.min(relationshipCount / 10, 1);
-                            const red = Math.floor(71 + (231 - 71) * intensity);
-                            const green = Math.floor(144 + (76 - 144) * intensity);
-                            const blue = Math.floor(226 + (60 - 226) * intensity);
-                            return `rgb(${red}, ${green}, ${blue})`;
-                        },
-                        'target-arrow-color': function(ele: any) {
-                            const relationshipCount = ele.data('relationshipCount') || 1;
-                            const intensity = Math.min(relationshipCount / 10, 1);
-                            const red = Math.floor(71 + (231 - 71) * intensity);
-                            const green = Math.floor(144 + (76 - 144) * intensity);
-                            const blue = Math.floor(226 + (60 - 226) * intensity);
-                            return `rgb(${red}, ${green}, ${blue})`;
-                        },
+                        'line-color': '#3498DB',
+                        'target-arrow-color': '#3498DB',
                         'target-arrow-shape': 'triangle',
                         'curve-style': 'bezier',
-                        'opacity': function(ele: any) {
-                            const relationshipCount = ele.data('relationshipCount') || 1;
-                            return Math.min(0.6 + relationshipCount * 0.04, 1.0);
-                        }
+                        'opacity': 0.3
                     }
                 }
             ],
@@ -865,16 +907,27 @@ async function initHierarchyView(): Promise<void> {
 
         console.log(`initHierarchyView - Dataset: ${nodeCount} nodes, ${edgeCount} edges`);
 
-        // 大規模データセットの場合はプリセットレイアウトで座標を事前計算
-        // 元データが大規模かエッジ数が多い場合はcoseレイアウトを使用（dagreは重い）
-        const isLargeDataset = allNodes.length > HierarchyView_LIMIT_ONLY_FILE || edgeCount > 5000;
+        // 拡張機能側で計算されたレイアウト座標を取得
         let positions: Map<string, {x: number, y: number}> | null = null;
+        const HierarchyView_DAGRE_LAYOUT_LIMIT_NODES = 10000;
+        const HierarchyView_DAGRE_LAYOUT_LIMIT_EDGES = 15000;
 
-        if (isLargeDataset) {
-            console.log('initHierarchyView - Large dataset detected. Pre-calculating positions with cose layout...');
-            updateProgress(65, 'Calculating layout positions...');
+        // デバッグ: layoutPositionsの内容を確認
+        console.log(`=== CHECKING LAYOUT POSITIONS ===`);
+        console.log(`layoutPositions size: ${layoutPositions.size}`);
+        console.log(`layoutPositions keys: ${Array.from(layoutPositions.keys()).join(', ')}`);
+        console.log(`Has 'hierarchy'?: ${layoutPositions.has('hierarchy')}`);
 
-            // 大規模データの場合はcoseレイアウトで座標計算（dagreより高速）
+        // 拡張機能側から座標を受信しているか確認
+        if (layoutPositions.has('hierarchy')) {
+            positions = layoutPositions.get('hierarchy')!;
+            console.log(`✓ initHierarchyView - Using pre-calculated positions from extension: ${positions.size} positions`);
+            updateProgress(65, 'Applying layout positions...');
+        } else if (allNodes.length > HierarchyView_DAGRE_LAYOUT_LIMIT_NODES || edgeCount > HierarchyView_DAGRE_LAYOUT_LIMIT_EDGES) {
+            // 大規模すぎる場合はWebview側でCOSEレイアウトを計算（フォールバック）
+            console.log('initHierarchyView - Large dataset. Using COSE layout as fallback...');
+            updateProgress(65, 'Calculating COSE layout...');
+
             positions = await calculateLayoutPositions(hierarchyElements, 'cose', {
                 nodeRepulsion: 200000,
                 idealEdgeLength: 300,
@@ -884,14 +937,17 @@ async function initHierarchyView(): Promise<void> {
                 randomize: false
             });
         } else {
-            console.log('initHierarchyView - Small dataset. Pre-calculating positions with dagre layout...');
+            // 中規模データでも座標がない場合はCOSEレイアウトをフォールバックとして使用
+            console.log('initHierarchyView - No pre-calculated positions. Using COSE layout as fallback...');
             updateProgress(65, 'Calculating layout positions...');
 
-            // 小規模データの場合はdagreで階層構造を計算
-            positions = await calculateLayoutPositions(hierarchyElements, 'dagre', {
-                rankDir: 'TB',
-                nodeSep: 50,
-                rankSep: 100
+            positions = await calculateLayoutPositions(hierarchyElements, 'cose', {
+                nodeRepulsion: 200000,
+                idealEdgeLength: 300,
+                edgeElasticity: 100,
+                gravity: 30,
+                numIter: 1000,
+                randomize: false
             });
         }
 
@@ -981,19 +1037,24 @@ async function initHierarchyView(): Promise<void> {
                             const bgColor = ele.style('background-color');
                             return getContrastColor(bgColor);
                         },
-                        'font-size': '14px',
+                        'font-size': '28px',
                         'font-weight': 'bold',
                         'shape': 'rectangle',
-                        'padding': '20px',
+                        'padding': '40px',
                         'min-width': function(ele: any) {
                             const label = ele.data('label');
-                            const textWidth = measureTextWidth(label, 14, 'bold');
-                            return Math.max(150, textWidth + 60) + 'px';
+                            const textWidth = measureTextWidth(label, 28, 'bold');
+                            return Math.max(300, textWidth + 120) + 'px';
+                        },
+                        'min-height': function(ele: any) {
+                            const label = ele.data('label');
+                            const textWidth = measureTextWidth(label, 28, 'bold');
+                            return Math.max(300, textWidth + 120) + 'px';
                         },
                         'text-wrap': 'none',
-                        'border-width': '3px',
+                        'border-width': '6px',
                         'border-color': '#2E5984',
-                        'background-opacity': 0.3
+                        'background-opacity': 0.7
                     }
                 },
                 {
@@ -1019,7 +1080,8 @@ async function initHierarchyView(): Promise<void> {
                         'height': '40px',
                         'text-wrap': 'none',
                         'border-width': '1px',
-                        'border-color': '#34495E'
+                        'border-color': '#34495E',
+                        'background-opacity': 1.0
                     }
                 },
                 {
@@ -1033,49 +1095,12 @@ async function initHierarchyView(): Promise<void> {
                 {
                     selector: 'edge',
                     style: {
-                        'width': function(ele: any) {
-                            // 大規模データセットの場合、relationshipCountを考慮
-                            const relationshipCount = ele.data('relationshipCount') || 1;
-                            if (nodeCount <= HierarchyView_LIMIT_ONLY_FILE) {
-                                return 2;
-                            } else {
-                                return Math.min(Math.max(relationshipCount * 0.5, 1), 8);
-                            }
-                        },
-                        'line-color': function(ele: any) {
-                            if (nodeCount <= HierarchyView_LIMIT_ONLY_FILE) {
-                                return '#7F8C8D';
-                            } else {
-                                const relationshipCount = ele.data('relationshipCount') || 1;
-                                const intensity = Math.min(relationshipCount / 10, 1);
-                                const red = Math.floor(127 + (231 - 127) * intensity);
-                                const green = Math.floor(140 + (76 - 140) * intensity);
-                                const blue = Math.floor(141 + (60 - 141) * intensity);
-                                return `rgb(${red}, ${green}, ${blue})`;
-                            }
-                        },
-                        'target-arrow-color': function(ele: any) {
-                            if (nodeCount <= HierarchyView_LIMIT_ONLY_FILE) {
-                                return '#7F8C8D';
-                            } else {
-                                const relationshipCount = ele.data('relationshipCount') || 1;
-                                const intensity = Math.min(relationshipCount / 10, 1);
-                                const red = Math.floor(127 + (231 - 127) * intensity);
-                                const green = Math.floor(140 + (76 - 140) * intensity);
-                                const blue = Math.floor(141 + (60 - 141) * intensity);
-                                return `rgb(${red}, ${green}, ${blue})`;
-                            }
-                        },
+                        'width': 2,
+                        'line-color': '#3498DB',
+                        'target-arrow-color': '#3498DB',
                         'target-arrow-shape': 'triangle',
                         'curve-style': 'bezier',
-                        'opacity': function(ele: any) {
-                            if (nodeCount <= HierarchyView_LIMIT_ONLY_FILE) {
-                                return 0.8;
-                            } else {
-                                const relationshipCount = ele.data('relationshipCount') || 1;
-                                return Math.min(0.5 + relationshipCount * 0.05, 1.0);
-                            }
-                        }
+                        'opacity': 0.3
                     }
                 }
             ],
@@ -1280,17 +1305,21 @@ async function initCallGraphView(): Promise<void> {
             return;
         }
 
-        // プリセットレイアウトで座標を事前計算
-        console.log('initCallGraphView - Pre-calculating positions...');
-        updateProgress(75, 'Calculating layout positions...');
-
+        // 拡張機能側で計算されたレイアウト座標を取得
         let positions: Map<string, {x: number, y: number}> | null = null;
+        const CallGraphView_DAGRE_LAYOUT_LIMIT_NODES = 10000;
+        const CallGraphView_DAGRE_LAYOUT_LIMIT_EDGES = 15000;
 
-        // エッジ数が多い場合もcoseレイアウトを使用（dagreは重い）
-        const useCoseLayout = showOnlyFiles || edgeCount > 5000;
+        // 拡張機能側から座標を受信しているか確認
+        if (layoutPositions.has('call-graph')) {
+            positions = layoutPositions.get('call-graph')!;
+            console.log(`initCallGraphView - Using pre-calculated positions from extension: ${positions.size} positions`);
+            updateProgress(75, 'Applying layout positions...');
+        } else if (allNodes.length > CallGraphView_DAGRE_LAYOUT_LIMIT_NODES || edgeCount > CallGraphView_DAGRE_LAYOUT_LIMIT_EDGES) {
+            // 大規模すぎる場合はWebview側でCOSEレイアウトを計算（フォールバック）
+            console.log('initCallGraphView - Large dataset. Using COSE layout as fallback...');
+            updateProgress(75, 'Calculating COSE layout...');
 
-        if (useCoseLayout) {
-            // ファイルレベルまたは大規模データの場合はcoseレイアウト
             positions = await calculateLayoutPositions(callGraphElements, 'cose', {
                 nodeRepulsion: 200000,
                 idealEdgeLength: 300,
@@ -1300,11 +1329,17 @@ async function initCallGraphView(): Promise<void> {
                 randomize: false
             });
         } else {
-            // 小規模シンボルレベルの場合はdagreレイアウト
-            positions = await calculateLayoutPositions(callGraphElements, 'dagre', {
-                rankDir: callGraphOrientation,
-                nodeSep: 40,
-                rankSep: 80
+            // 中規模データでも座標がない場合はCOSEレイアウトをフォールバックとして使用
+            console.log('initCallGraphView - No pre-calculated positions. Using COSE layout as fallback...');
+            updateProgress(75, 'Calculating layout positions...');
+
+            positions = await calculateLayoutPositions(callGraphElements, 'cose', {
+                nodeRepulsion: 200000,
+                idealEdgeLength: 300,
+                edgeElasticity: 100,
+                gravity: 30,
+                numIter: 1000,
+                randomize: false
             });
         }
 
@@ -1403,7 +1438,8 @@ async function initCallGraphView(): Promise<void> {
                         'height': '50px',
                         'text-wrap': 'none',
                         'border-width': '2px',
-                        'border-color': '#34495E'
+                        'border-color': '#34495E',
+                        'background-opacity': 1.0
                     }
                 },
                 {
@@ -1421,7 +1457,8 @@ async function initCallGraphView(): Promise<void> {
                         'line-color': '#3498DB',
                         'target-arrow-color': '#3498DB',
                         'target-arrow-shape': 'triangle',
-                        'curve-style': 'bezier'
+                        'curve-style': 'bezier',
+                        'opacity': 0.3
                     }
                 }
             ],
@@ -1453,13 +1490,31 @@ async function initCallGraphView(): Promise<void> {
 
 /**
  * 事前にレイアウト計算を行い、各ノードの座標を返す（非同期）
+ * フォールバック用：拡張機能側から座標が送信されない場合のみ使用
+ * 注意：dagreレイアウトは削除されたため、coseのみ使用可能
  * @param elements - ノードとエッジの配列
- * @param layoutName - 使用するレイアウト名（'cose' または 'dagre'）
+ * @param layoutName - 使用するレイアウト名（'cose'のみ）
  * @param layoutOptions - レイアウトオプション
  * @returns 各ノードIDと座標のマップ
  */
 async function calculateLayoutPositions(elements: any[], layoutName: string, layoutOptions: any): Promise<Map<string, {x: number, y: number}>> {
-    console.log(`calculateLayoutPositions - Computing ${layoutName} layout for ${elements.length} elements...`);
+    console.log(`⚠️ FALLBACK: calculateLayoutPositions - Computing ${layoutName} layout for ${elements.length} elements...`);
+    console.log(`⚠️ This should only be called if extension-side layout calculation failed`);
+
+    // dagreレイアウトは使用不可（ライブラリ削除済み）
+    if (layoutName === 'dagre') {
+        console.error(`❌ Dagre layout is no longer supported in webview. Using COSE instead.`);
+        layoutName = 'cose';
+        layoutOptions = {
+            nodeRepulsion: 200000,
+            idealEdgeLength: 300,
+            edgeElasticity: 100,
+            gravity: 30,
+            numIter: 1000,
+            randomize: false
+        };
+    }
+
     updateProgress(50, `Calculating ${layoutName} layout...`);
 
     // 一時的なコンテナを作成（適切なサイズで）
@@ -1884,14 +1939,20 @@ function exportHTML(): void {
             console.log(`Exporting HTML with ${allNodes.length} nodes and ${allEdges.length} edges`);
 
             // UIを更新してから送信
-            setTimeout(() => {
+            setTimeout(async () => {
                 try {
-                    updateProgress(30, 'Sending export request...');
+                    updateProgress(20, 'Preparing layout positions...');
 
+                    // まずexportHTMLメッセージを送信（データのみ）
                     vscode.postMessage({
                         type: 'exportHTML',
                         data: { nodes: allNodes, edges: allEdges }
                     });
+
+                    updateProgress(30, 'Sending layout positions...');
+
+                    // layoutPositionsをチャンク分割して送信
+                    await sendLayoutPositionsInChunks();
 
                     updateProgress(50, 'Waiting for file save...');
                     // ここで止める。拡張機能からexportHTMLCompleteメッセージが来るまで待つ
@@ -1907,6 +1968,73 @@ function exportHTML(): void {
             console.error('HTML export error:', error);
         }
     }
+}
+
+/**
+ * layoutPositionsをチャンク分割して拡張機能側に送信
+ */
+async function sendLayoutPositionsInChunks(): Promise<void> {
+    if (!vscode) {
+        console.error('vscode API not available');
+        return;
+    }
+
+    const CHUNK_SIZE = 5000;  // 5000座標/チャンク
+    const viewTypes = Array.from(layoutPositions.keys());
+
+    if (viewTypes.length === 0) {
+        console.log('No layout positions to send');
+        // 座標がない場合も完了を通知
+        vscode.postMessage({
+            type: 'layoutPositionsComplete'
+        });
+        return;
+    }
+
+    let totalPositions = 0;
+    viewTypes.forEach(viewType => {
+        totalPositions += layoutPositions.get(viewType)!.size;
+    });
+
+    console.log(`Sending ${totalPositions} layout positions in chunks (chunk size: ${CHUNK_SIZE})`);
+
+    for (const viewType of viewTypes) {
+        const positionMap = layoutPositions.get(viewType)!;
+        const positionsArray = Array.from(positionMap.entries()).map(([id, pos]) => ({
+            id,
+            x: Math.round(pos.x),  // 整数化してサイズ削減
+            y: Math.round(pos.y)
+        }));
+
+        const totalChunks = Math.ceil(positionsArray.length / CHUNK_SIZE);
+        console.log(`Sending ${positionsArray.length} positions for view '${viewType}' in ${totalChunks} chunks`);
+
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const start = chunkIndex * CHUNK_SIZE;
+            const end = Math.min((chunkIndex + 1) * CHUNK_SIZE, positionsArray.length);
+            const chunkData = positionsArray.slice(start, end);
+
+            vscode.postMessage({
+                type: 'layoutPositionsChunk',
+                viewType: viewType,
+                chunk: chunkIndex,
+                totalChunks: totalChunks,
+                positions: chunkData
+            });
+
+            console.log(`Sent chunk ${chunkIndex + 1}/${totalChunks} for '${viewType}' (${chunkData.length} positions)`);
+
+            // UI応答性維持のため短い待機
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+    }
+
+    // 全チャンク送信完了を通知
+    vscode.postMessage({
+        type: 'layoutPositionsComplete'
+    });
+
+    console.log('All layout position chunks sent');
 }
 
 // Make functions available globally for HTML onclick handlers

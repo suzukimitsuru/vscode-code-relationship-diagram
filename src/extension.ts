@@ -162,6 +162,12 @@ export function activate(context: vscode.ExtensionContext) {
 		// コード関係調査コマンドの登録
 		context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.examineRelationships', async () => {
 
+			// ログファイルの設定（.vscode/crd-examine.log）
+			if (workspace_folder) {
+				const logFile = path.join(workspace_folder, '.vscode', 'crd-examine.log');
+				logs.setLogFile(logFile);
+			}
+
 			// 経過の初期表示
 			status_bar.show();
 			const secondsToTime = (milliSeconds: number): string => {
@@ -237,21 +243,35 @@ export function activate(context: vscode.ExtensionContext) {
 					} catch (error) {
 						setTimeout(() => status_bar.dispose(), 3000);
 						logs.error(`codeFile.list(${workspace_folder}): `, error);
+					} finally {
+						// ログファイルを閉じる
+						logs.closeLogFile();
 					}
 				} catch (error) {
 					setTimeout(() => status_bar.dispose(), 3000);
 					logs.error(`db.table_create(${db_file}): `, error);
+					// ログファイルを閉じる
+					logs.closeLogFile();
 				}
 			} else {
 				setTimeout(() => status_bar.dispose(), 3000);
 				logs.error(locale('error-no-associations'));
+				// ログファイルを閉じる
+				logs.closeLogFile();
 			}
 		}));
 
 		// コード関係図表示コマンドの登録
 		context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.showDiagram', async () => {
+
+			// ログファイルの設定（.vscode/crd-show.log）
+			if (workspace_folder) {
+				const logFile = path.join(workspace_folder, '.vscode', 'crd-show.log');
+				logs.setLogFile(logFile);
+			}
+
 			logs.log('=== SHOWDIAGRAM COMMAND STARTED ===');
-			
+
 			if (workspace_folder) {
 				const db_file = path.join(workspace_folder, '.vscode', 'crd.duckdb');
 				logs.log(`Attempting to open database: ${db_file}`);
@@ -260,31 +280,38 @@ export function activate(context: vscode.ExtensionContext) {
 				logs.log('Checking database file existence:', db_file);
 				if (!fs.existsSync(db_file)) {
 					logs.error(locale('error-no-database'));
+					// ログファイルを閉じる
+					logs.closeLogFile();
 				} else {
 					try {
 						const db = new codeDb.Db(db_file);
-						
+
 						// 全てのシンボルを読み込み
 						const all_symbols = await db.symbol_quaryAll();
 						logs.log(`Loaded symbol: ${all_symbols.length} counts`);
-						
+
 						// シンボル関係を読み込み
 						const all_rels = await db.relationship_quaryAll();
 						logs.log(`Loaded relationships: ${all_rels.length} counts`);
-						
+
 						// グラフを表示
 						const graphViz = new Relationship.Visualization(context, workspace_folder, workspace_basename + '.crd.html', logs);
 						await graphViz.showDiagram(all_symbols, all_rels);
 						logs.log('Show Diagram completed');
-						
+
 						db.dispose();
 						logs.info('Code relationship diagram displayed');
 					} catch (error) {
 						logs.error('Failed to show graph: ', error);
+					} finally {
+						// ログファイルを閉じる
+						logs.closeLogFile();
 					}
 				}
 			} else {
 				logs.error('No workspace folder found');
+				// ログファイルを閉じる
+				logs.closeLogFile();
 			}
 		}));
 	} catch (activationError) {

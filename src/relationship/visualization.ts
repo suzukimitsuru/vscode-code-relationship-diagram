@@ -5,6 +5,8 @@ import locale from '../locale';
 import * as SYMBOL from '../extruct/symbol';
 import * as codeRelationships from './codeRelationships';
 import { Logs } from '../logs';
+import * as dagreLayout from './dagreLayout';
+import * as codeDb from '../codeDb';
 
 export class Visualization {
     private panel: vscode.WebviewPanel | null = null;
@@ -14,6 +16,10 @@ export class Visualization {
     private readonly wsFolder: string;
     private readonly htmlFilename: string;
     private readonly logs: Logs;
+
+    // HTMLエクスポート時のチャンク蓄積用
+    private exportData?: { nodes: any[], edges: any[] };
+    private exportLayoutPositionsChunks: Map<string, Array<{id: string, x: number, y: number}>[]> = new Map();
 
     constructor(context: vscode.ExtensionContext, wsFolder: string, htmlFilename: string, logs: Logs) {
         this.subscriptions = context.subscriptions;
@@ -95,10 +101,63 @@ export class Visualization {
                                 break;
                             case 'exportHTML':
                                 try {
-                                    await this.exportStandaloneHTML(path.join(this.wsFolder, this.htmlFilename), message.data);
-                                    this.logs.log('HTML exported successfully');
+                                    // データを保存して、チャンク受信を開始
+                                    this.exportData = message.data;
+                                    this.exportLayoutPositionsChunks.clear();
+                                    this.logs.log('HTML export started, waiting for layout position chunks...');
+                                } catch (error) {
+                                    this.logs.error(`Failed to start HTML export: ${error instanceof Error ? error.message : error}`);
+                                }
+                                break;
+
+                            case 'layoutPositionsChunk':
+                                try {
+                                    const { viewType, chunk, totalChunks, positions } = message;
+
+                                    // viewTypeごとのチャンク配列を初期化
+                                    if (!this.exportLayoutPositionsChunks.has(viewType)) {
+                                        this.exportLayoutPositionsChunks.set(viewType, []);
+                                    }
+
+                                    // チャンクを保存
+                                    const chunks = this.exportLayoutPositionsChunks.get(viewType)!;
+                                    chunks[chunk] = positions;
+
+                                    this.logs.log(`Received layout positions chunk ${chunk + 1}/${totalChunks} for '${viewType}' (${positions.length} positions)`);
+                                } catch (error) {
+                                    this.logs.error(`Failed to receive layout positions chunk: ${error instanceof Error ? error.message : error}`);
+                                }
+                                break;
+
+                            case 'layoutPositionsComplete':
+                                try {
+                                    // 全チャンクを結合
+                                    const layoutPositions: { [viewType: string]: Array<{id: string, x: number, y: number}> } = {};
+                                    this.exportLayoutPositionsChunks.forEach((chunks, viewType) => {
+                                        layoutPositions[viewType] = chunks.flat();
+                                        this.logs.log(`Merged ${chunks.length} chunks for '${viewType}': ${layoutPositions[viewType].length} positions`);
+                                    });
+
+                                    // exportStandaloneHTMLを呼び出し
+                                    if (this.exportData) {
+                                        await this.exportStandaloneHTML(
+                                            path.join(this.wsFolder, this.htmlFilename),
+                                            this.exportData,
+                                            Object.keys(layoutPositions).length > 0 ? layoutPositions : undefined
+                                        );
+                                        this.logs.log('HTML exported successfully');
+
+                                        // クリーンアップ
+                                        this.exportData = undefined;
+                                        this.exportLayoutPositionsChunks.clear();
+                                    } else {
+                                        throw new Error('Export data not found');
+                                    }
                                 } catch (error) {
                                     this.logs.error(`Failed to export HTML: ${error instanceof Error ? error.message : error}`);
+                                    // エラー時もクリーンアップ
+                                    this.exportData = undefined;
+                                    this.exportLayoutPositionsChunks.clear();
                                 }
                                 break;
                         }
@@ -158,12 +217,72 @@ export class Visualization {
                 this.logs.error(`Webview initialization timeout - proceeding anyway: ${error instanceof Error ? error.message : error}`);
             }
 
+            // 階層構造ビュー用のレイアウト計算（拡張機能側でDagreレイアウトを計算）
+            await this.updateProgress(64, 'Calculating hierarchy layout...');
+            const layoutStartTime = performance.now();
+            const hierarchyPositions = await this.calculateHierarchyLayout(elements, startTime);
+            const layoutEndTime = performance.now();
+            const layoutElapsed = (layoutEndTime - startTime) / 1000;
+            this.logs.log(`${layoutElapsed.toFixed(3)}s  75.00%: Calculated hierarchy layout: ${hierarchyPositions.size} positions (${(layoutEndTime - layoutStartTime).toFixed(3)}ms)`);
+
+            // レイアウト座標をWebviewに送信
+            if (hierarchyPositions.size > 0) {
+                const positionsArray = Array.from(hierarchyPositions.entries()).map(([id, pos]) => ({
+                    id,
+                    x: pos.x,
+                    y: pos.y
+                }));
+
+                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  76.00%: Sending ${positionsArray.length} hierarchy positions to webview...`);
+                // サンプル座標をログ出力
+                if (positionsArray.length > 0) {
+                    this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  76.50%: Sample positions: ${positionsArray.slice(0, 3).map(p => `${p.id}=(${p.x.toFixed(0)},${p.y.toFixed(0)})`).join(', ')}`);
+                }
+
+                await this.panel.webview.postMessage({
+                    type: 'layoutPositions',
+                    viewType: 'hierarchy',
+                    positions: positionsArray
+                });
+                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  78.00%: ✓ Sent hierarchy layout positions to webview`);
+            } else {
+                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  76.00%: ⚠️  No hierarchy positions calculated, webview will use fallback layout`);
+            }
+
+            // 呼び出しグラフビュー用のレイアウト計算
+            await this.updateProgress(79, 'Calculating call graph layout...');
+            const callGraphLayoutStartTime = performance.now();
+            const callGraphPositions = await this.calculateCallGraphLayout(elements, startTime);
+            const callGraphLayoutEndTime = performance.now();
+            const callGraphLayoutElapsed = (callGraphLayoutEndTime - startTime) / 1000;
+            this.logs.log(`${callGraphLayoutElapsed.toFixed(3)}s  82.00%: Calculated call graph layout: ${callGraphPositions.size} positions (${(callGraphLayoutEndTime - callGraphLayoutStartTime).toFixed(3)}ms)`);
+
+            // レイアウト座標をWebviewに送信
+            if (callGraphPositions.size > 0) {
+                const positionsArray = Array.from(callGraphPositions.entries()).map(([id, pos]) => ({
+                    id,
+                    x: pos.x,
+                    y: pos.y
+                }));
+
+                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  83.00%: Sending ${positionsArray.length} call graph positions to webview...`);
+
+                await this.panel.webview.postMessage({
+                    type: 'layoutPositions',
+                    viewType: 'call-graph',
+                    positions: positionsArray
+                });
+                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  85.00%: ✓ Sent call graph layout positions to webview`);
+            } else {
+                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  83.00%: ⚠️  No call graph positions calculated, webview will use fallback layout`);
+            }
+
             // データをpostMessageで送信（大規模データの場合はチャンク分割）
             const sendStartTime = performance.now();
             await this.sendGraphDataToWebview(elements, startTime);
             const sendEndTime = performance.now();
             const sendElapsed = (sendEndTime - startTime) / 1000;
-            this.logs.log(`${sendElapsed.toFixed(3)}s  90.00%: Sent graph data to webview (${(sendEndTime - sendStartTime).toFixed(3)}ms)`);
+            this.logs.log(`${sendElapsed.toFixed(3)}s  95.00%: Sent graph data to webview (${(sendEndTime - sendStartTime).toFixed(3)}ms)`);
 
             const totalTime = (performance.now() - startTime) / 1000;
             this.logs.log(`${totalTime.toFixed(3)}s 100.00%: Code relationship diagram generation completed in ${totalTime.toFixed(3)}s`);
@@ -577,12 +696,8 @@ export class Visualization {
             'CYTOSCAPE_URI_PLACEHOLDER':        isStandalone
                 ? 'https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js'
                 : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'cytoscape', 'dist', 'cytoscape.min.js')).toString(),
-            'PLAIN_DAGRE_URI_PLACEHOLDER':            isStandalone
-                ? 'https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.js'
-                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'dagre', 'dist', 'dagre.js')).toString(),
-            'CYTOSCAPE_DAGRE_URI_PLACEHOLDER':  isStandalone
-                ? 'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js'
-                : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'cytoscape-dagre', 'cytoscape-dagre.js')).toString(),
+            // Note: Dagre layout calculation is now performed on extension side (Node.js)
+            // Dagre library URIs are no longer needed in webview
             'GRAPH_MULTIVIEW_SCRIPT_URI_PLACEHOLDER': isStandalone
                 ? `<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphMultiview.js'), 'utf8')}</script>`
                 : `<script src="${this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'graphMultiview.js')).toString()}"></script>`,
@@ -627,8 +742,8 @@ export class Visualization {
             'FONT_AWESOME_WOFF_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.woff',
             'FONT_AWESOME_TTF_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.ttf',
             'CYTOSCAPE_URI_PLACEHOLDER':        'https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js',
-            'PLAIN_DAGRE_URI_PLACEHOLDER':      'https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.js',
-            'CYTOSCAPE_DAGRE_URI_PLACEHOLDER':  'https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js',
+            // Note: Dagre layout calculation is now performed on extension side (Node.js)
+            // Standalone HTML exports use pre-calculated positions in data file
             'GRAPH_MULTIVIEW_SCRIPT_URI_PLACEHOLDER': `<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphMultiview.js'), 'utf8')}</script>`,
 
             'BACKGROUND_COLOR_PLACEHOLDER':     isDarkTheme ? '#1e1e1e' : '#ffffff',
@@ -661,7 +776,11 @@ export class Visualization {
         return result;
     }
 
-    private async exportStandaloneHTML(filename: string, data: { nodes: any[], edges: any[] }) {
+    private async exportStandaloneHTML(
+        filename: string,
+        data: { nodes: any[], edges: any[] },
+        layoutPositions?: { [viewType: string]: Array<{id: string, x: number, y: number}> }
+    ) {
         try {
             // 進捗を通知
             await this.updateExportProgress(60, 'Opening file save dialog...');
@@ -688,11 +807,16 @@ export class Visualization {
                     this.logs.log(`Exporting HTML to: ${htmlPath}`);
                     this.logs.log(`Exporting data to: ${dataJsPath}`);
                     this.logs.log(`Data size: ${data.nodes.length} nodes, ${data.edges.length} edges`);
+                    if (layoutPositions) {
+                        const hierarchyCount = layoutPositions['hierarchy']?.length || 0;
+                        const callGraphCount = layoutPositions['call-graph']?.length || 0;
+                        this.logs.log(`Layout positions: hierarchy=${hierarchyCount}, call-graph=${callGraphCount}`);
+                    }
 
                     await this.updateExportProgress(70, 'Writing data file...');
 
                     // データをJavaScriptファイルとして保存（ストリーム書き込みを使用して大規模データに対応）
-                    await this.writeDataJsFileInChunks(dataJsPath, data);
+                    await this.writeDataJsFileInChunks(dataJsPath, data, layoutPositions);
 
                     this.logs.log(`Data JavaScript file saved to: ${dataJsPath}`);
 
@@ -768,7 +892,11 @@ export class Visualization {
         }
     }
 
-    private async writeDataJsFileInChunks(filepath: string, data: { nodes: any[], edges: any[] }): Promise<void> {
+    private async writeDataJsFileInChunks(
+        filepath: string,
+        data: { nodes: any[], edges: any[] },
+        layoutPositions?: { [viewType: string]: Array<{id: string, x: number, y: number}> }
+    ): Promise<void> {
         return new Promise((resolve, reject) => {
             try {
                 const writeStream = fs.createWriteStream(filepath, { encoding: 'utf8' });
@@ -819,8 +947,42 @@ export class Visualization {
                     }
                 }
 
+                writeStream.write('  ]');
+
+                // layoutPositionsを書き込み（存在する場合）
+                if (layoutPositions && Object.keys(layoutPositions).length > 0) {
+                    writeStream.write(',\n  "layoutPositions": {\n');
+                    const viewTypes = Object.keys(layoutPositions);
+                    viewTypes.forEach((viewType, viewIndex) => {
+                        const positions = layoutPositions[viewType];
+                        writeStream.write(`    "${viewType}": [\n`);
+
+                        // 座標を1つずつ書き込み
+                        for (let i = 0; i < positions.length; i++) {
+                            const posJson = JSON.stringify(positions[i]);
+                            if (i < positions.length - 1) {
+                                writeStream.write('      ' + posJson + ',\n');
+                            } else {
+                                writeStream.write('      ' + posJson + '\n');
+                            }
+
+                            // 進捗ログ（1000件ごと）
+                            if (i > 0 && i % 1000 === 0) {
+                                this.logs.log(`Writing ${viewType} layout positions: ${i}/${positions.length}`);
+                            }
+                        }
+
+                        const comma = viewIndex < viewTypes.length - 1 ? ',' : '';
+                        writeStream.write(`    ]${comma}\n`);
+                    });
+                    writeStream.write('  }\n');
+                    this.logs.log(`Written layout positions for ${viewTypes.length} view types`);
+                } else {
+                    writeStream.write('\n');
+                }
+
                 // JavaScriptファイルの終了
-                writeStream.write('  ]\n};\n');
+                writeStream.write('};\n');
                 writeStream.end();
 
             } catch (error) {
@@ -828,6 +990,817 @@ export class Visualization {
                 reject(error);
             }
         });
+    }
+
+    /**
+     * DuckDBを使って階層レベルを高速計算（トポロジカルソート版）
+     * @param startTime 開始時刻（パフォーマンス測定用）
+     * @returns ファイルパスと階層レベルのマップ
+     */
+    private async calculateHierarchyLevelsWithDuckDB(startTime: number): Promise<Map<string, number>> {
+        const dbPath = path.join(this.wsFolder, '.vscode', 'crd.duckdb');
+
+        if (!fs.existsSync(dbPath)) {
+            this.logs.error('Database file not found for hierarchy calculation');
+            return new Map();
+        }
+
+        try {
+            const db = new codeDb.Db(dbPath);
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculating hierarchy levels using DuckDB (topological sort)...`);
+
+            // まず、ファイル間の依存関係データがあるか確認（修正版）
+            const checkQuery = `
+                SELECT COUNT(*) as total_files,
+                       (SELECT COUNT(DISTINCT s_ref.path)
+                        FROM table_relationships r
+                        JOIN table_symbols s_ref ON r.reference_id = s_ref.id
+                        JOIN table_symbols s_def ON r.define_id = s_def.id
+                        WHERE s_ref.path != s_def.path) as files_with_deps
+                FROM table_symbols s
+                WHERE s.kind = 0;
+            `;
+            const checkResult = await db.executeQuery<{ total_files: number; files_with_deps: number }>(checkQuery);
+            if (checkResult.length > 0) {
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Files: ${checkResult[0].total_files}, Files with dependencies: ${checkResult[0].files_with_deps}`);
+            }
+
+            // トポロジカルソートによる真の階層レベル計算（修正版 + 深さ制限）
+            // ファイルAがファイルBに依存 = ファイルA内のシンボルがファイルB内のシンボルを参照
+            // レベル0: 他のファイルに依存していないファイル（基盤ファイル）
+            // レベルN: 依存先ファイルの最大レベル + 1
+            const query = `
+                WITH RECURSIVE topology AS (
+                    -- ベースケース: 依存先のないファイル（レベル0）
+                    SELECT
+                        s.path as file_path,
+                        0 as level,
+                        0 as iteration
+                    FROM table_symbols s
+                    WHERE s.kind = 0  -- ファイルのみ
+                      AND NOT EXISTS (
+                          -- このファイル内のシンボルが、他のファイルのシンボルを参照していない
+                          SELECT 1
+                          FROM table_symbols s_ref  -- このファイル内のシンボル
+                          JOIN table_relationships r ON r.reference_id = s_ref.id
+                          JOIN table_symbols s_def ON r.define_id = s_def.id
+                          WHERE s_ref.path = s.path  -- このファイル内のシンボル
+                            AND s_def.path != s.path  -- 異なるファイルのシンボルを参照
+                      )
+
+                    UNION ALL
+
+                    -- 再帰ステップ: 依存先ファイルの最大レベル + 1
+                    SELECT DISTINCT
+                        s_ref.path as file_path,
+                        t.level + 1 as level,
+                        t.iteration + 1 as iteration
+                    FROM table_symbols s_ref  -- 参照元ファイル内のシンボル
+                    JOIN table_relationships r ON r.reference_id = s_ref.id
+                    JOIN table_symbols s_def ON r.define_id = s_def.id  -- 参照先シンボル
+                    JOIN topology t ON t.file_path = s_def.path  -- 参照先ファイル
+                    WHERE s_ref.path != s_def.path  -- 異なるファイル間の参照のみ
+                      AND t.iteration < 50  -- 深さ制限（循環参照対策）
+                )
+                SELECT
+                    file_path,
+                    MAX(level) as level  -- 複数パスがある場合は最大レベルを採用
+                FROM topology
+                GROUP BY file_path
+                ORDER BY level, file_path;
+            `;
+
+            const rows = await db.executeQuery<{ file_path: string; level: number }>(query);
+            const result = new Map<string, number>();
+            for (const row of rows) {
+                result.set(row.file_path, row.level);
+            }
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculated hierarchy levels for ${result.size} files`);
+
+            // レベル分布をログ出力
+            const levelCounts = new Map<number, number>();
+            let maxLevel = 0;
+            for (const level of result.values()) {
+                levelCounts.set(level, (levelCounts.get(level) || 0) + 1);
+                maxLevel = Math.max(maxLevel, level);
+            }
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Level distribution (0-${maxLevel}): ${Array.from(levelCounts.entries()).sort((a, b) => a[0] - b[0]).map(([l, c]) => `L${l}:${c}`).join(', ')}`);
+
+            // トポロジカルソートの結果をチェック：異常な分布の場合はフォールバック
+            const level0Count = levelCounts.get(0) || 0;
+            const level0Ratio = result.size > 0 ? level0Count / result.size : 1;
+            const maxLevelCount = levelCounts.get(maxLevel) || 0;
+            const maxLevelRatio = result.size > 0 ? maxLevelCount / result.size : 0;
+
+            // フォールバック条件：
+            // 1. 80%以上がレベル0（依存関係が取得できていない）
+            // 2. 最高レベルが30以上（循環参照でiteration制限に到達）
+            // 3. 最高レベルに80%以上集中（トポロジカルソートが破綻）
+            const needsFallback = (level0Ratio > 0.8 || maxLevel >= 30 || maxLevelRatio > 0.8) && result.size > 10;
+
+            if (needsFallback) {
+                if (level0Ratio > 0.8) {
+                    this.logs.log(`[${(performance.now() - startTime) / 1000}s] ⚠️  Warning: ${(level0Ratio * 100).toFixed(1)}% of files are at level 0. Using dependency-count fallback...`);
+                } else if (maxLevel >= 30) {
+                    this.logs.log(`[${(performance.now() - startTime) / 1000}s] ⚠️  Warning: Max level is ${maxLevel} (likely circular dependencies). Using dependency-count fallback...`);
+                } else {
+                    this.logs.log(`[${(performance.now() - startTime) / 1000}s] ⚠️  Warning: ${(maxLevelRatio * 100).toFixed(1)}% of files are at level ${maxLevel}. Using dependency-count fallback...`);
+                }
+
+                const fallbackQuery = `
+                    WITH file_dependencies AS (
+                        SELECT
+                            s_file.path as file_path,
+                            COUNT(DISTINCT s_def.path) as dependency_count
+                        FROM table_symbols s_file
+                        LEFT JOIN table_symbols s_ref ON s_ref.path = s_file.path  -- このファイル内のシンボル
+                        LEFT JOIN table_relationships r ON r.reference_id = s_ref.id
+                        LEFT JOIN table_symbols s_def ON r.define_id = s_def.id
+                            AND s_def.path != s_file.path  -- 異なるファイルを参照
+                        WHERE s_file.kind = 0  -- ファイルレベル
+                        GROUP BY s_file.path
+                    ),
+                    level_ranges AS (
+                        SELECT
+                            MAX(dependency_count) as max_deps,
+                            MIN(dependency_count) as min_deps
+                        FROM file_dependencies
+                    )
+                    SELECT
+                        fd.file_path,
+                        CASE
+                            WHEN lr.max_deps = lr.min_deps THEN 0
+                            ELSE CAST(
+                                199.0 * (fd.dependency_count - lr.min_deps) /
+                                (lr.max_deps - lr.min_deps) AS INTEGER
+                            )
+                        END as level
+                    FROM file_dependencies fd
+                    CROSS JOIN level_ranges lr
+                    ORDER BY level, file_path;
+                `;
+
+                const fallbackRows = await db.executeQuery<{ file_path: string; level: number }>(fallbackQuery);
+                result.clear();
+                for (const row of fallbackRows) {
+                    result.set(row.file_path, row.level);
+                }
+
+                // フォールバック結果のレベル分布を再計算
+                levelCounts.clear();
+                maxLevel = 0;
+                for (const level of result.values()) {
+                    levelCounts.set(level, (levelCounts.get(level) || 0) + 1);
+                    maxLevel = Math.max(maxLevel, level);
+                }
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Fallback level distribution (0-${maxLevel}): ${Array.from(levelCounts.entries()).sort((a, b) => a[0] - b[0]).map(([l, c]) => `L${l}:${c}`).join(', ')}`);
+            }
+
+            // デバッグ: 各レベルのサンプルファイルを表示
+            if (result.size > 0) {
+                const samplesByLevel = new Map<number, string[]>();
+                for (const [filepath, level] of result.entries()) {
+                    if (!samplesByLevel.has(level)) {
+                        samplesByLevel.set(level, []);
+                    }
+                    if (samplesByLevel.get(level)!.length < 3) {
+                        samplesByLevel.get(level)!.push(filepath);
+                    }
+                }
+                for (const [level, samples] of Array.from(samplesByLevel.entries()).sort((a, b) => a[0] - b[0])) {
+                    this.logs.log(`[${(performance.now() - startTime) / 1000}s]   Level ${level} samples: ${samples.join(', ')}`);
+                }
+            }
+
+            // データベース接続を閉じる
+            db.dispose();
+
+            return result;
+        } catch (error) {
+            this.logs.error(`Failed to calculate hierarchy levels with DuckDB: ${error instanceof Error ? error.message : error}`);
+            return new Map();
+        }
+    }
+
+    /**
+     * 階層構造ビュー用のレイアウトを計算（ハイブリッド戦略）
+     * @param elements ノードとエッジのデータ
+     * @param startTime 開始時刻（パフォーマンス測定用）
+     * @returns ノードIDと座標のマップ
+     */
+    private async calculateHierarchyLayout(elements: any, startTime: number): Promise<Map<string, dagreLayout.Position>> {
+        try {
+            const nodeCount = elements.nodes.length;
+            const edgeCount = elements.edges.length;
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculating hierarchy layout for ${nodeCount} nodes, ${edgeCount} edges...`);
+
+            // ハイブリッド戦略の閾値
+            const SMALL_DAGRE_NODE_LIMIT = 3000;   // 小規模: Dagreで美しい配置
+            const SMALL_DAGRE_EDGE_LIMIT = 15000;
+            const HierarchyView_LIMIT_ONLY_FILE = 15000;
+
+            // ファイルレベルのノードのみを抽出（kind=0）または全ノード
+            const showOnlyFiles = nodeCount > HierarchyView_LIMIT_ONLY_FILE;
+            const layoutNodes = showOnlyFiles
+                ? elements.nodes.filter((n: any) => n.data.kind === 0)
+                : elements.nodes;
+
+            const actualNodeCount = layoutNodes.length;
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Using ${actualNodeCount} nodes (${showOnlyFiles ? 'files only' : 'all symbols'})`);
+
+            // データサイズに応じて最適な手法を選択
+            if (actualNodeCount < SMALL_DAGRE_NODE_LIMIT && edgeCount < SMALL_DAGRE_EDGE_LIMIT) {
+                // 小規模データ: Dagreで最高品質のレイアウト
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Small dataset detected. Using Dagre layout for optimal quality...`);
+                return await this.calculateHierarchyLayoutWithDagre(elements, startTime, layoutNodes, showOnlyFiles);
+            } else {
+                // 中規模・大規模データ: DuckDBで高速レイアウト
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Medium/Large dataset detected. Using DuckDB layout for performance...`);
+                return await this.calculateHierarchyLayoutWithDuckDB_Simple(elements, startTime, layoutNodes);
+            }
+        } catch (error) {
+            this.logs.error(`Failed to calculate hierarchy layout: ${error instanceof Error ? error.message : error}`);
+            console.error('Hierarchy layout error:', error);
+            return new Map();
+        }
+    }
+
+    /**
+     * エッジの統計情報を分析（仮説検証用）
+     * @param edges エッジリスト
+     * @param positions ノード座標
+     * @param startTime 開始時刻
+     */
+    private analyzeEdgeStatistics(edges: any[], positions: Map<string, dagreLayout.Position>, startTime: number): void {
+        let totalLength = 0;
+        let totalDeltaX = 0;
+        let totalAbsDeltaX = 0;
+        let totalDeltaY = 0;
+        let verticalCount = 0;  // deltaX < 200px（ほぼ垂直）のエッジ数
+        let validEdgeCount = 0;
+
+        for (const edge of edges) {
+            const sourcePos = positions.get(edge.data.source);
+            const targetPos = positions.get(edge.data.target);
+
+            if (sourcePos && targetPos) {
+                const deltaX = targetPos.x - sourcePos.x;
+                const deltaY = targetPos.y - sourcePos.y;
+                const length = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+                totalLength += length;
+                totalDeltaX += deltaX;
+                totalAbsDeltaX += Math.abs(deltaX);
+                totalDeltaY += Math.abs(deltaY);
+                validEdgeCount++;
+
+                // ほぼ垂直なエッジ（X方向の距離が1ノード分以下）
+                if (Math.abs(deltaX) < 200) {
+                    verticalCount++;
+                }
+            }
+        }
+
+        if (validEdgeCount > 0) {
+            const avgLength = totalLength / validEdgeCount;
+            const avgDeltaX = totalDeltaX / validEdgeCount;
+            const avgAbsDeltaX = totalAbsDeltaX / validEdgeCount;
+            const avgDeltaY = totalDeltaY / validEdgeCount;
+            const verticalRatio = (verticalCount / validEdgeCount) * 100;
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Edge Statistics (${validEdgeCount} edges):`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s]   - Avg length: ${avgLength.toFixed(1)}px`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s]   - Avg deltaX: ${avgDeltaX.toFixed(1)}px (bias indicator)`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s]   - Avg |deltaX|: ${avgAbsDeltaX.toFixed(1)}px`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s]   - Avg |deltaY|: ${avgDeltaY.toFixed(1)}px`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s]   - Vertical edges (|deltaX|<200): ${verticalRatio.toFixed(1)}%`);
+        }
+    }
+
+    /**
+     * ノードの依存先の重心X座標を計算（重み付きバリセントリック法）
+     * @param nodeId ノードID
+     * @param dependencyMap 依存関係マップ（source -> Map<target, weight>）
+     * @param positions 既に配置されたノードの座標
+     * @returns 重心X座標（依存先がない場合は0）
+     */
+    private calculateCentroid(nodeId: string, dependencyMap: Map<string, Map<string, number>>, positions: Map<string, dagreLayout.Position>): number {
+        const dependencies = dependencyMap.get(nodeId);
+        if (!dependencies || dependencies.size === 0) {
+            // 依存先がない場合は0（中央）
+            return 0;
+        }
+
+        let weightedSumX = 0;
+        let totalWeight = 0;
+        for (const [targetId, weight] of dependencies.entries()) {
+            const pos = positions.get(targetId);
+            if (pos) {
+                // エッジの重み（関係数）を考慮した重み付き平均
+                weightedSumX += pos.x * weight;
+                totalWeight += weight;
+            }
+        }
+
+        if (totalWeight === 0) {
+            // 依存先が未配置の場合は0（中央）
+            return 0;
+        }
+
+        // 重み付き平均X座標（重心）
+        return weightedSumX / totalWeight;
+    }
+
+    /**
+     * DuckDBベースのシンプルな階層レイアウト計算（中規模・大規模データ用）
+     * @param elements ノードとエッジのデータ
+     * @param startTime 開始時刻（パフォーマンス測定用）
+     * @param layoutNodes レイアウト対象のノード
+     * @returns ノードIDと座標のマップ
+     */
+    private async calculateHierarchyLayoutWithDuckDB_Simple(elements: any, startTime: number, layoutNodes: any[]): Promise<Map<string, dagreLayout.Position>> {
+        try {
+            // DuckDBを使って階層レベルを高速計算
+            const hierarchyLevels = await this.calculateHierarchyLevelsWithDuckDB(startTime);
+
+            if (hierarchyLevels.size === 0) {
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] No hierarchy levels calculated. Using fallback layout.`);
+                return new Map();
+            }
+
+            // レベルごとにノードをグループ化
+            const nodesByLevel = new Map<number, any[]>();
+            for (const node of layoutNodes) {
+                const filePath = node.data.path || node.data.id;
+                const level = hierarchyLevels.get(filePath) ?? 0;
+
+                if (!nodesByLevel.has(level)) {
+                    nodesByLevel.set(level, []);
+                }
+                nodesByLevel.get(level)!.push(node);
+            }
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Assigning positions based on hierarchy levels...`);
+
+            // レイアウト対象ノードのIDセットを作成（ファイルのみ）
+            const layoutNodeIds = new Set(layoutNodes.map(n => n.data.id));
+
+            // file-levelエッジのみから重み付き依存関係マップを作成（エッジ交差最小化のため）
+            // エッジの重み（関係数）を考慮して、強く接続されたノードを近くに配置
+            const dependencyMap = new Map<string, Map<string, number>>();
+            let fileLevelEdgeCount = 0;
+            for (const edge of elements.edges) {
+                const source = edge.data.source;
+                const target = edge.data.target;
+                const weight = edge.data.relationshipCount || 1;  // 関係数を重みとして使用
+
+                // sourceとtargetの両方がレイアウト対象ノード（ファイル）の場合のみ追加
+                if (layoutNodeIds.has(source) && layoutNodeIds.has(target)) {
+                    if (!dependencyMap.has(source)) {
+                        dependencyMap.set(source, new Map());
+                    }
+                    dependencyMap.get(source)!.set(target, weight);
+                    fileLevelEdgeCount++;
+                }
+            }
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Using ${fileLevelEdgeCount} file-level edges for weighted barycentric method`);
+
+            // 逆方向の依存関係マップを作成（依存元を追跡、重み付き）
+            const reverseDependencyMap = new Map<string, Map<string, number>>();
+            for (const [source, targets] of dependencyMap.entries()) {
+                for (const [target, weight] of targets.entries()) {
+                    if (!reverseDependencyMap.has(target)) {
+                        reverseDependencyMap.set(target, new Map());
+                    }
+                    reverseDependencyMap.get(target)!.set(source, weight);
+                }
+            }
+
+            // 孤立ノード（エッジが全く無いノード）を検出して、一番下のレベルに移動
+            const isolatedNodes: any[] = [];
+            for (const node of layoutNodes) {
+                const nodeId = node.data.id;
+                const hasOutgoing = dependencyMap.has(nodeId) && dependencyMap.get(nodeId)!.size > 0;
+                const hasIncoming = reverseDependencyMap.has(nodeId) && reverseDependencyMap.get(nodeId)!.size > 0;
+
+                if (!hasOutgoing && !hasIncoming) {
+                    isolatedNodes.push(node);
+                }
+            }
+
+            // 孤立ノードを元のレベルから削除し、新しいレベル-1に配置
+            if (isolatedNodes.length > 0) {
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Found ${isolatedNodes.length} isolated nodes (no edges), moving to bottom level`);
+
+                // 各レベルから孤立ノードを削除
+                for (const [level, nodes] of nodesByLevel.entries()) {
+                    const filteredNodes = nodes.filter(n => !isolatedNodes.includes(n));
+                    if (filteredNodes.length > 0) {
+                        nodesByLevel.set(level, filteredNodes);
+                    } else {
+                        nodesByLevel.delete(level);
+                    }
+                }
+
+                // 孤立ノードを新しいレベル-1に配置（一番下）
+                nodesByLevel.set(-1, isolatedNodes);
+            }
+
+            // レベルに基づいて座標を割り当て（重み付きバリセントリック法でエッジ交差最小化）
+            const positions = new Map<string, dagreLayout.Position>();
+            const levelHeight = 150;  // レベル間の垂直間隔
+
+            // Y軸を反転：レベル0（定義提供）を下部、レベルN（参照多）を上部に配置
+            // ノードがあるレベルのみを抽出して圧縮（空レベルをスキップ）
+            // レベルを昇順にソート（低レベルから高レベルへ）
+            // これにより、各ノードを配置する時点で、その依存先（低レベル）が既に配置されている
+            const sortedLevels = Array.from(nodesByLevel.entries()).sort((a, b) => a[0] - b[0]);
+            const maxCompactedLevel = sortedLevels.length - 1;
+
+            // 各レベルのノード数に応じて可変のnodeWidthを計算（エッジの重なり削減）
+            // 全レベルが同じ最大幅に収まるように調整
+            const maxNodesInLevel = Math.max(...sortedLevels.map(([_, nodes]) => nodes.length));
+            const TARGET_MAX_WIDTH = 30000;  // 全レベルの目標最大幅（px）
+            const MIN_NODE_WIDTH = 100;      // 最小ノード間隔（px）
+            const MAX_NODE_WIDTH = 400;      // 最大ノード間隔（px）
+
+            // 各レベルのnodeWidthを計算
+            const nodeWidthPerLevel = new Map<number, number>();
+            for (const [level, nodes] of sortedLevels) {
+                if (nodes.length === 1) {
+                    // 1ノードの場合は幅0だが、計算上はMAX_NODE_WIDTHを使用
+                    nodeWidthPerLevel.set(level, MAX_NODE_WIDTH);
+                } else {
+                    // レベル幅 = TARGET_MAX_WIDTH / (ノード数 - 1)
+                    const width = TARGET_MAX_WIDTH / (nodes.length - 1);
+                    // 最小値と最大値でクランプ
+                    const clampedWidth = Math.max(MIN_NODE_WIDTH, Math.min(MAX_NODE_WIDTH, width));
+                    nodeWidthPerLevel.set(level, clampedWidth);
+                }
+            }
+
+            // デバッグ用：各レベルのnodeWidthをログ出力
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Variable nodeWidth per level (max=${maxNodesInLevel} nodes, target width=${TARGET_MAX_WIDTH}px):`);
+            let logCount = 0;
+            for (const [level, nodes] of sortedLevels) {
+                if (logCount < 5 || nodes.length > 50) {
+                    const width = nodeWidthPerLevel.get(level)!;
+                    const totalWidth = (nodes.length - 1) * width;
+                    this.logs.log(`[${(performance.now() - startTime) / 1000}s]   Level ${level}: ${nodes.length} nodes, nodeWidth=${width.toFixed(0)}px, total width=${totalWidth.toFixed(0)}px`);
+                    logCount++;
+                }
+            }
+
+            // 最大レベル幅を計算（可変nodeWidthを考慮）
+            let maxLevelWidth = 0;
+            for (const [level, nodes] of sortedLevels) {
+                const width = nodeWidthPerLevel.get(level)!;
+                const levelWidth = (nodes.length - 1) * width;
+                maxLevelWidth = Math.max(maxLevelWidth, levelWidth);
+            }
+
+            // 初期配置：レベルを下から上（低レベルから高レベル）に処理
+            sortedLevels.forEach(([originalLevel, nodes], compactedIndex) => {
+                const y = (maxCompactedLevel - compactedIndex) * levelHeight;
+                const nodeWidth = nodeWidthPerLevel.get(originalLevel)!;  // このレベルのnodeWidth
+
+                // バリセントリック法：依存先ノードの重心X座標に基づいてソート
+                const sortedNodes = nodes.sort((a, b) => {
+                    const centroidA = this.calculateCentroid(a.data.id, dependencyMap, positions);
+                    const centroidB = this.calculateCentroid(b.data.id, dependencyMap, positions);
+
+                    if (Math.abs(centroidA - centroidB) < 0.1) {
+                        const pathA = a.data.path || a.data.id;
+                        const pathB = b.data.path || b.data.id;
+                        const dirA = path.dirname(pathA);
+                        const dirB = path.dirname(pathB);
+                        if (dirA !== dirB) {
+                            return dirA.localeCompare(dirB);
+                        }
+                        return path.basename(pathA).localeCompare(path.basename(pathB));
+                    }
+
+                    return centroidA - centroidB;
+                });
+
+                // 各レベルのノードを中央揃えで配置（エッジ長の最小化、可変nodeWidth）
+                const levelWidth = (sortedNodes.length - 1) * nodeWidth;
+                const levelOffset = (maxLevelWidth - levelWidth) / 2;  // 中央揃えのオフセット
+
+                sortedNodes.forEach((node, index) => {
+                    const x = levelOffset + index * nodeWidth;
+                    positions.set(node.data.id, { x, y });
+                });
+            });
+
+            // バリセントリック法を反復適用してエッジの長さを最小化（4回の最適化パス）
+            const OPTIMIZATION_ITERATIONS = 4;
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Starting ${OPTIMIZATION_ITERATIONS} optimization passes...`);
+
+            for (let iter = 0; iter < OPTIMIZATION_ITERATIONS; iter++) {
+                // 下から上へのパス（依存先の重心に基づいて調整）
+                for (let i = 0; i < sortedLevels.length; i++) {
+                    const [level, nodes] = sortedLevels[i];
+                    const nodeWidth = nodeWidthPerLevel.get(level)!;  // このレベルのnodeWidth
+
+                    const sortedNodes = nodes.sort((a, b) => {
+                        const centroidA = this.calculateCentroid(a.data.id, dependencyMap, positions);
+                        const centroidB = this.calculateCentroid(b.data.id, dependencyMap, positions);
+                        return centroidA - centroidB;
+                    });
+
+                    const y = positions.get(sortedNodes[0].data.id)!.y;
+                    const levelWidth = (sortedNodes.length - 1) * nodeWidth;
+                    const levelOffset = (maxLevelWidth - levelWidth) / 2;
+
+                    sortedNodes.forEach((node, index) => {
+                        const x = levelOffset + index * nodeWidth;
+                        positions.set(node.data.id, { x, y });
+                    });
+                }
+
+                // 上から下へのパス（依存元の重心に基づいて調整）
+                for (let i = sortedLevels.length - 1; i >= 0; i--) {
+                    const [level, nodes] = sortedLevels[i];
+                    const nodeWidth = nodeWidthPerLevel.get(level)!;  // このレベルのnodeWidth
+
+                    const sortedNodes = nodes.sort((a, b) => {
+                        const centroidA = this.calculateCentroid(a.data.id, reverseDependencyMap, positions);
+                        const centroidB = this.calculateCentroid(b.data.id, reverseDependencyMap, positions);
+                        return centroidA - centroidB;
+                    });
+
+                    const y = positions.get(sortedNodes[0].data.id)!.y;
+                    const levelWidth = (sortedNodes.length - 1) * nodeWidth;
+                    const levelOffset = (maxLevelWidth - levelWidth) / 2;
+
+                    sortedNodes.forEach((node, index) => {
+                        const x = levelOffset + index * nodeWidth;
+                        positions.set(node.data.id, { x, y });
+                    });
+                }
+            }
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Optimization complete (${OPTIMIZATION_ITERATIONS} iterations)`);
+
+            // 全体の配置を中央に調整（左偏り解消 + エッジ長最適化）
+            if (positions.size > 0) {
+                // 全ノードのX座標の範囲を計算
+                let minX = Infinity, maxX = -Infinity;
+                for (const pos of positions.values()) {
+                    minX = Math.min(minX, pos.x);
+                    maxX = Math.max(maxX, pos.x);
+                }
+
+                // 全体の中心を0にするオフセットを計算
+                const centerOffset = -(minX + maxX) / 2;
+
+                // 全ノードを中央にシフト
+                const centeredPositions = new Map<string, dagreLayout.Position>();
+                for (const [id, pos] of positions.entries()) {
+                    centeredPositions.set(id, { x: pos.x + centerOffset, y: pos.y });
+                }
+
+                // エッジの統計情報を計算（仮説検証用）
+                this.analyzeEdgeStatistics(elements.edges, centeredPositions, startTime);
+
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Hierarchy layout calculation complete: ${centeredPositions.size} positions (centered: offset=${centerOffset.toFixed(1)}, range: ${minX.toFixed(0)} to ${maxX.toFixed(0)})`);
+
+                return centeredPositions;
+            }
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Hierarchy layout calculation complete: ${positions.size} positions`);
+
+            return positions;
+        } catch (error) {
+            this.logs.error(`Failed to calculate hierarchy layout: ${error instanceof Error ? error.message : error}`);
+            console.error('Hierarchy layout error:', error);
+            return new Map();
+        }
+    }
+
+    /**
+     * 階層構造ビュー用のDagreレイアウトを計算（小規模データ用）
+     * @param elements ノードとエッジのデータ
+     * @param startTime 開始時刻（パフォーマンス測定用）
+     * @param layoutNodes レイアウト対象のノード
+     * @param showOnlyFiles ファイルレベルのみ表示するか
+     * @returns ノードIDと座標のマップ
+     */
+    private async calculateHierarchyLayoutWithDagre(elements: any, startTime: number, layoutNodes: any[], showOnlyFiles: boolean): Promise<Map<string, dagreLayout.Position>> {
+        try {
+            const edgeCount = elements.edges.length;
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculating Dagre layout for ${layoutNodes.length} nodes, ${edgeCount} edges...`);
+
+            // Dagreレイアウトの制限値
+            const HierarchyView_DAGRE_LAYOUT_LIMIT_NODES = 5000;
+            const HierarchyView_DAGRE_LAYOUT_LIMIT_EDGES = 20000;
+
+            // 階層構造ビューでは、親子関係をエッジとして使用
+            // Dagreは親子関係（parent プロパティ）ではなく、エッジベースで階層を計算するため、
+            // parentプロパティを持つノードから親へのエッジを生成する
+            const parentChildEdges: Array<{source: string, target: string}> = [];
+
+            layoutNodes.forEach((n: any) => {
+                if (n.data.parent) {
+                    // 親から子へのエッジを追加（Dagreは親→子の方向で階層を作成）
+                    parentChildEdges.push({
+                        source: n.data.parent,
+                        target: n.data.id
+                    });
+                }
+            });
+
+            // ファイルレベルまたはシンボルレベルの依存関係エッジも追加
+            let relationshipEdges;
+            if (showOnlyFiles) {
+                // ファイルレベルのみの場合は、ファイル間の関係
+                relationshipEdges = elements.edges.filter((e: any) =>
+                    e.data.relationshipType === 'file-relationship'
+                ).map((e: any) => ({
+                    source: e.data.source,
+                    target: e.data.target
+                }));
+            } else {
+                // シンボルレベルの場合は、シンボル間の関係（file-relationship以外）
+                relationshipEdges = elements.edges.filter((e: any) =>
+                    e.data.relationshipType !== 'file-relationship'
+                ).map((e: any) => ({
+                    source: e.data.source,
+                    target: e.data.target
+                }));
+            }
+
+            // 実際にレイアウトするノード数とエッジ数を取得
+            const actualNodeCount = layoutNodes.length;
+            let actualEdgeCount = parentChildEdges.length + relationshipEdges.length;
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Using ${actualNodeCount} nodes (${showOnlyFiles ? 'files only' : 'all symbols'})`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Parent-child edges: ${parentChildEdges.length}, Relationship edges: ${relationshipEdges.length}, Total: ${actualEdgeCount}`);
+
+            // エッジ数が多すぎる場合はサンプリング
+            if (actualEdgeCount > HierarchyView_DAGRE_LAYOUT_LIMIT_EDGES) {
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Too many edges (${actualEdgeCount}). Sampling to ${HierarchyView_DAGRE_LAYOUT_LIMIT_EDGES} edges for layout calculation.`);
+
+                // エッジをサンプリング（ランダムサンプリング）
+                const samplingRatio = HierarchyView_DAGRE_LAYOUT_LIMIT_EDGES / actualEdgeCount;
+                const sampledRelationshipEdges = relationshipEdges.filter(() => {
+                    return Math.random() < samplingRatio;
+                }).slice(0, HierarchyView_DAGRE_LAYOUT_LIMIT_EDGES - parentChildEdges.length);
+
+                relationshipEdges = sampledRelationshipEdges;
+                actualEdgeCount = parentChildEdges.length + relationshipEdges.length;
+
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Sampled edges: ${actualEdgeCount} (${parentChildEdges.length} parent-child + ${relationshipEdges.length} relationship)`);
+            }
+
+            // データセットサイズに応じてレイアウト計算の可否を判定（抽出後の実際の要素数で判定）
+            if (actualNodeCount > HierarchyView_DAGRE_LAYOUT_LIMIT_NODES) {
+                // ノード数が多すぎる場合はCOSEレイアウトを使用（Webview側で計算）
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Too many nodes (${actualNodeCount}). Using COSE layout on webview side.`);
+                return new Map();
+            }
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Sample nodes: ${layoutNodes.slice(0, 3).map((n: any) => `${n.data.label} (kind=${n.data.kind}, parent=${n.data.parent || 'none'})`).join(', ')}`);
+
+            // Dagreレイアウトを計算
+            const nodes: dagreLayout.LayoutNode[] = layoutNodes.map((n: any) => ({
+                id: n.data.id,
+                label: n.data.label,
+                kind: n.data.kind
+            }));
+
+            // 親子関係エッジと依存関係エッジを結合
+            // 親子関係エッジを優先（階層構造の主要な構造）
+            const edges: dagreLayout.LayoutEdge[] = [
+                ...parentChildEdges,
+                ...relationshipEdges
+            ];
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Total edges for Dagre: ${edges.length} (parent-child + relationship)`);
+            if (edges.length > 0 && edges.length <= 5) {
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Sample edges: ${edges.map(e => `${e.source}->${e.target}`).join(', ')}`);
+            }
+
+            // プログレスコールバック
+            const progressCallback: dagreLayout.ProgressCallback = (percent, message) => {
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Hierarchy layout: ${message} (${percent}%)`);
+            };
+
+            // レイアウト計算を実行
+            const positions = await dagreLayout.calculateDagreLayout(
+                nodes,
+                edges,
+                {
+                    rankDir: 'TB',
+                    nodeSep: 50,
+                    rankSep: 100,
+                    ranker: 'tight-tree'  // 高速化
+                },
+                progressCallback
+            );
+
+            // Y軸を反転：レベル0（定義提供）を下部、レベルN（参照多）を上部に配置
+            const maxY = Math.max(...Array.from(positions.values()).map(pos => pos.y));
+            const flippedPositions = new Map<string, dagreLayout.Position>();
+            for (const [id, pos] of positions.entries()) {
+                flippedPositions.set(id, { x: pos.x, y: maxY - pos.y });
+            }
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Hierarchy layout calculation complete: ${flippedPositions.size} positions`);
+
+            return flippedPositions;
+        } catch (error) {
+            this.logs.error(`Failed to calculate hierarchy layout: ${error instanceof Error ? error.message : error}`);
+            console.error('Hierarchy layout error:', error);
+            return new Map();
+        }
+    }
+
+    /**
+     * 呼び出しグラフビュー用のDagreレイアウトを計算
+     * @param elements ノードとエッジのデータ
+     * @param startTime 開始時刻（パフォーマンス測定用）
+     * @returns ノードIDと座標のマップ
+     */
+    private async calculateCallGraphLayout(elements: any, startTime: number): Promise<Map<string, dagreLayout.Position>> {
+        try {
+            const nodeCount = elements.nodes.length;
+            const edgeCount = elements.edges.length;
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculating call graph layout for ${nodeCount} nodes, ${edgeCount} edges...`);
+
+            // 新しい制限値を適用
+            const CallGraphView_LIMIT_ONLY_FILE = 15000;
+            const CallGraphView_DAGRE_LAYOUT_LIMIT_NODES = 10000;
+            const CallGraphView_DAGRE_LAYOUT_LIMIT_EDGES = 15000;
+
+            // ファイルレベルのノードのみを抽出（kind=0）または全ノード
+            const showOnlyFiles = nodeCount > CallGraphView_LIMIT_ONLY_FILE;
+            const layoutNodes = showOnlyFiles
+                ? elements.nodes.filter((n: any) => n.data.kind === 0)
+                : elements.nodes;
+
+            // シンボルレベルのエッジを抽出
+            const layoutEdges = elements.edges.filter((e: any) =>
+                e.data.relationshipType === 'symbol-relationship'
+            );
+
+            // 実際にレイアウトするノード数とエッジ数を取得
+            const actualNodeCount = layoutNodes.length;
+            const actualEdgeCount = layoutEdges.length;
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Using ${actualNodeCount} nodes (${showOnlyFiles ? 'files only' : 'all symbols'}) and ${actualEdgeCount} edges for layout calculation`);
+
+            // データセットサイズに応じてレイアウト計算の可否を判定（抽出後の実際の要素数で判定）
+            if (actualNodeCount > CallGraphView_DAGRE_LAYOUT_LIMIT_NODES || actualEdgeCount > CallGraphView_DAGRE_LAYOUT_LIMIT_EDGES) {
+                // 大規模すぎる場合はCOSEレイアウトを使用（Webview側で計算）
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Dataset too large for Dagre (nodes: ${actualNodeCount}, edges: ${actualEdgeCount}). Using COSE layout on webview side.`);
+                return new Map();
+            }
+
+            // Dagreレイアウトを計算
+            const nodes: dagreLayout.LayoutNode[] = layoutNodes.map((n: any) => ({
+                id: n.data.id,
+                label: n.data.label,
+                kind: n.data.kind
+            }));
+
+            const edges: dagreLayout.LayoutEdge[] = layoutEdges.map((e: any) => ({
+                source: e.data.source,
+                target: e.data.target
+            }));
+
+            // プログレスコールバック
+            const progressCallback: dagreLayout.ProgressCallback = (percent, message) => {
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Call graph layout: ${message} (${percent}%)`);
+            };
+
+            // レイアウト計算を実行
+            const positions = await dagreLayout.calculateDagreLayout(
+                nodes,
+                edges,
+                {
+                    rankDir: 'TB',
+                    nodeSep: 40,
+                    rankSep: 80,
+                    ranker: 'tight-tree'  // 高速化
+                },
+                progressCallback
+            );
+
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Call graph layout calculation complete: ${positions.size} positions`);
+
+            return positions;
+        } catch (error) {
+            this.logs.error(`Failed to calculate call graph layout: ${error instanceof Error ? error.message : error}`);
+            console.error('Call graph layout error:', error);
+            return new Map();
+        }
     }
 
 
