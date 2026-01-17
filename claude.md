@@ -15,11 +15,11 @@
 1. **シンボル抽出**: VSCode APIを使用してコード内のすべてのシンボル（クラス、関数、変数など）を抽出
 2. **関係抽出**: シンボル間の依存関係と参照関係を分析
 3. **DuckDB保存**: 抽出データを埋め込みデータベースに永続化
-4. **マルチビュー可視化**:
-   - ファイル依存関係ビュー
-   - 階層構造ビュー
-   - 呼び出しグラフビュー
-5. **エクスポート**: PNG画像およびスタンドアロンHTML形式での出力
+4. **階層構造グラフ可視化**:
+   - 4レベルのノード表示切り替え（Directory Only / Directory + File / File Only / File + Symbol）
+   - Dagreレイアウトによる階層的な配置
+   - データセットサイズに応じた適応型機能制限
+5. **エクスポート**: スタンドアロンHTML形式での出力（VSCode拡張版のみ）
 
 ---
 
@@ -66,13 +66,14 @@ src/
 ├── relationship/
 │   ├── examine.ts            # 関係抽出メインロジック
 │   ├── codeRelationships.ts  # Relationshipモデル
+│   ├── dagreLayout.ts        # Dagreレイアウト計算（拡張機能側）
 │   └── visualization.ts      # Webview管理、グラフ生成
 └── webview/
-    └── graphMultiview.ts     # グラフUI（TypeScript、Cytoscape制御）
+    └── graphView.ts          # グラフUI（TypeScript、Cytoscape制御）
 
 templates/
 ├── loading.html              # ローディング画面
-└── graph-multiview.html      # メインビューテンプレート
+└── graph-view.html           # メインビューテンプレート
 
 bindings/
 └── duckdb-*.node             # プラットフォーム別ネイティブバインディング
@@ -128,7 +129,7 @@ bindings/
 
 **実装**:
 - `src/relationship/visualization.ts:130-143`
-- `src/webview/graphMultiview.ts:284-290`
+- `src/webview/graphView.ts:284-290`
 
 ### 3. チャンク化データ転送
 
@@ -162,21 +163,21 @@ bindings/
 - **大規模** (> 10,000ノード): COSEレイアウト（フォールバック）
 
 **実装**:
-- `src/relationship/dagreLayout.ts`: Dagreレイアウト計算ロジック
-- `src/relationship/visualization.ts:884-1048`: レイアウト計算メソッド
-- `src/webview/graphMultiview.ts:347-359`: layoutPositionsメッセージ受信
+- `src/relationship/dagreLayout.ts`: Dagreレイアウト計算ロジック（viewTypeパラメータ削除済み）
+- `src/relationship/visualization.ts`: `calculateLayout` メソッド
+- `src/webview/graphView.ts`: layoutPositionsメッセージ受信
 
 ### 5. 適応型レンダリング
 
 **戦略**: データセットサイズに応じてレンダリング方法を切り替え
 
-- **小規模** (≤ 15,000ノード): シンボルレベル詳細表示 + Dagreレイアウト（拡張機能側）
-- **中規模** (≤ 20,000ノード): ファイルレベルのみ + Dagreレイアウト（拡張機能側）
-- **大規模** (> 20,000ノード): ファイルレベルのみ + COSEレイアウト
+- **小規模** (≤ 15,000ノード): 全4レベル使用可能（File + Symbol含む）+ Dagreレイアウト
+- **中規模** (15,000 < ノード ≤ 50,000): Directory Only / Directory + File / File Only のみ
+- **大規模** (> 50,000ノード): Directory Only / Directory + File / File Only のみ、自動的にFile Onlyに切り替え
 
 **理由**: パフォーマンスと可読性のバランス
 
-**実装**: `src/webview/graphMultiview.ts:850-950`
+**実装**: `src/webview/graphView.ts`
 
 ### 6. DuckDBバインディング動的ロード
 
@@ -221,7 +222,9 @@ bindings/
 1. **セキュリティ**: CSP（Content Security Policy）を遵守
 2. **postMessage**: 必ず型定義されたメッセージ形式を使用
 3. **スタンドアロン対応**: `IS_STANDALONE`フラグで動作を分岐
-4. **ID一意性**: 複数ビューで同じIDを使わない（`export-menu-${viewName}`形式）
+4. **プレースホルダーパターン**: `EXPORT_BUTTON_PLACEHOLDER`でスタンドアロン版/VSCode版の機能差を実現
+   - スタンドアロン版: 空文字列（エクスポートボタンなし）
+   - VSCode版: HTMLエクスポートボタンのHTML
 
 ---
 
@@ -272,7 +275,7 @@ npm run compile
 npx vsce package
 
 # インストール
-code --install-extension code-relationship-diagram-0.1.29.vsix
+code --install-extension code-relationship-diagram-0.1.31.vsix
 ```
 
 ### デバッグ設定
@@ -386,8 +389,8 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 
 ## 最終更新
 
-- **日付**: 2025-12-27
-- **バージョン**: 0.1.29
+- **日付**: 2026-01-17
+- **バージョン**: 0.1.31
 - **作成者**: Claude Code
 
 このファイルはプロジェクトの進化に伴い定期的に更新してください。

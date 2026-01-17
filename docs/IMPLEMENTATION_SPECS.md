@@ -1,7 +1,7 @@
 # Code Relationship Diagram - 実装仕様書
 
-バージョン: 0.1.29
-最終更新: 2025-12-27
+バージョン: 0.1.31
+最終更新: 2026-01-17
 
 ---
 
@@ -37,13 +37,14 @@ src/
 ├── relationship/
 │   ├── examine.ts            # 関係抽出メインロジック
 │   ├── codeRelationships.ts  # Relationshipモデル
+│   ├── dagreLayout.ts        # Dagreレイアウト計算（拡張機能側）
 │   └── visualization.ts      # Webview管理、グラフ生成
 └── webview/
-    └── graphMultiview.ts     # グラフUI（TypeScript、Cytoscape制御）
+    └── graphView.ts          # グラフUI（TypeScript、Cytoscape制御）
 
 templates/
 ├── loading.html              # ローディング画面
-└── graph-multiview.html      # メインビューテンプレート
+└── graph-view.html           # メインビューテンプレート
 
 bindings/
 └── duckdb-*.node             # プラットフォーム別ネイティブバインディング
@@ -64,9 +65,13 @@ bindings/
    ↓
 6. showDiagramコマンド → データベースから読み込み
    ↓
-7. グラフ要素生成 → Webviewへチャンク転送 (5000要素/チャンク)
+7. グラフ要素生成
    ↓
-8. Cytoscape.jsでレンダリング
+8. Dagreレイアウト計算 (拡張機能側/Node.js)
+   ↓
+9. レイアウト座標 + グラフ要素 → Webviewへチャンク転送 (5000要素/チャンク)
+   ↓
+10. Cytoscape.jsで事前計算された座標を使用してレンダリング (presetレイアウト)
 ```
 
 ---
@@ -518,11 +523,13 @@ showDiagram(symbols, relationships):
      - exportHTML: スタンドアロンHTMLを作成
   3. loading.htmlテンプレートを表示
   4. symbols/relationshipsからグラフ要素を作成
-  5. graph-multiview.htmlのプレースホルダーを置換
-  6. webview HTMLを送信
-  7. webviewReadyメッセージを待機 (最大10秒タイムアウト)
-  8. グラフデータをチャンクで送信 (5000要素/チャンク)
-  9. 完了メッセージを送信
+  5. Dagreレイアウト計算 (拡張機能側)
+  6. graph-view.htmlのプレースホルダーを置換
+  7. webview HTMLを送信
+  8. webviewReadyメッセージを待機 (最大10秒タイムアウト)
+  9. グラフデータをチャンクで送信 (5000要素/チャンク)
+  10. レイアウト座標を送信
+  11. 完了メッセージを送信
 ```
 
 #### b) Webview初期化ハンドシェイク
@@ -551,7 +558,7 @@ await Promise.race([
   )
 ])
 
-// Webview側 (graphMultiview.ts)
+// Webview側 (graphView.ts)
 if (!window.IS_STANDALONE && vscode) {
   vscode.postMessage({ type: 'webviewReady' })
 }
@@ -559,7 +566,7 @@ if (!window.IS_STANDALONE && vscode) {
 
 **実装**:
 - `src/relationship/visualization.ts:130-143`
-- `src/webview/graphMultiview.ts:284-290`
+- `src/webview/graphView.ts:284-290`
 
 ### 5.2 グラフ要素の作成
 
@@ -733,7 +740,7 @@ for each fileNode:
 // ファイルはディレクトリ内に視覚的にグループ化される
 ```
 
-**実装**: `src/webview/graphMultiview.ts:700-900`
+**実装**: `src/webview/graphView.ts`
 
 ### 5.5 テンプレートシステム
 
@@ -756,12 +763,12 @@ const replacements = {
     JSON.stringify([...nodes, ...edges]),
 
   // UIコンポーネント
-  'EXPORT_BUTTON_FILE_DEPS_PLACEHOLDER':
-    createExportButton('file-deps', isStandalone),
-  'EXPORT_BUTTON_HIERARCHY_PLACEHOLDER':
-    createExportButton('hierarchy', isStandalone),
-  'EXPORT_BUTTON_CALL_GRAPH_PLACEHOLDER':
-    createExportButton('call-graph', isStandalone)
+  'EXPORT_BUTTON_PLACEHOLDER':
+    createExportButton(isStandalone),
+
+  // ワークスペース名
+  'WORKSPACE_NAME_PLACEHOLDER':
+    workspaceName
 }
 
 for (const [placeholder, value] of Object.entries(replacements)) {
@@ -769,34 +776,23 @@ for (const [placeholder, value] of Object.entries(replacements)) {
 }
 ```
 
-**ビューごとのエクスポートボタン**:
+**エクスポートボタン**:
 
 ```typescript
-function createExportButton(viewName, isStandalone) {
+function createExportButton(isStandalone) {
   if (isStandalone) {
-    return `<button onclick="exportPNG()">Export PNG</button>`
+    // スタンドアロン版ではエクスポートボタンなし
+    return ''
   } else {
-    return `
-      <div class="export-dropdown">
-        <button class="export-toggle"
-                onclick="toggleExportMenu('${viewName}')">
-          <i class="fa fa-chevron-down"></i>
-        </button>
-        <div class="export-menu" id="export-menu-${viewName}">
-          <button onclick="exportHTML(); closeExportMenu('${viewName}')">
-            HTML
-          </button>
-          <button onclick="exportPNG(); closeExportMenu('${viewName}')">
-            PNG
-          </button>
-        </div>
-      </div>
-    `
+    // VSCode拡張版ではHTMLエクスポートボタン
+    return `<button onclick="exportHTML()" title="Export HTML">
+            <i class="fa fa-floppy-o" aria-hidden="true"></i>
+        </button>`
   }
 }
 ```
 
-**ビューごとのボタンが必要な理由**: 以前の単一ボタンは複数ビューのレンダリング時にID競合を引き起こしました。各ビューは今では一意のメニューID (`export-menu-file-deps`, `export-menu-hierarchy`, `export-menu-call-graph`) を持っています。
+**EXPORT_BUTTON_PLACEHOLDERパターン**: スタンドアロン版ではボタンを一切表示しないため、JavaScriptでの表示/非表示切り替えではなく、テンプレート置換時に空文字列を返すことで対応。これにより、スタンドアロン版で一瞬ボタンが表示される問題を回避しています。
 
 ### 5.6 スタンドアロンHTMLエクスポート
 
@@ -871,7 +867,7 @@ async writeDataJsFileInChunks(filepath: string, data: { nodes, edges }) {
 
 #### c) 動的データ読み込み
 
-**スタンドアロンHTML側の実装** (`src/webview/graphMultiview.ts`):
+**スタンドアロンHTML側の実装** (`src/webview/graphView.ts`):
 
 ```typescript
 async function loadExternalDataJs(dataJsUri: string) {
@@ -894,7 +890,7 @@ async function loadExternalDataJs(dataJsUri: string) {
     isDataLoaded = true
 
     // ビューを初期化
-    await initializeView('file-deps')
+    await initView()
   }
 }
 ```
@@ -904,7 +900,7 @@ async function loadExternalDataJs(dataJsUri: string) {
 - 初期HTMLロードの高速化 (データは後から読み込まれる)
 - ブラウザのキャッシュを活用可能
 
-**実装**: `src/webview/graphMultiview.ts:416-486`
+**実装**: `src/webview/graphView.ts`
 
 #### d) 経過表示の実装
 
@@ -913,7 +909,7 @@ async function loadExternalDataJs(dataJsUri: string) {
 スタンドアロンHTMLではないモード (VSCode内) で、エクスポート中の経過を表示:
 
 ```typescript
-// Webview側 (graphMultiview.ts)
+// Webview側 (graphView.ts)
 function exportHTML() {
   showProgress()
   updateProgress(10, 'Preparing HTML export...')
@@ -968,8 +964,8 @@ async updateExportProgress(percent: number, message: string) {
 ```
 
 **実装**:
-- Webview側: `src/webview/graphMultiview.ts:352-358, 1790-1825`
-- Extension側: `src/relationship/visualization.ts:664-769`
+- Webview側: `src/webview/graphView.ts`
+- Extension側: `src/relationship/visualization.ts`
 
 ---
 
@@ -1259,45 +1255,55 @@ db.exec('COMMIT')
 
 **戦略**: 大規模データセットの複雑さを軽減
 
-#### a) 階層ビュー
+#### a) 4レベルのノード表示切り替え
 
 ```typescript
-const LIMIT = 5000
+// ノードレベルの定義
+type NodeLevel = 'dir-only' | 'dir-file' | 'file-only' | 'file-symbol'
 
-if (allNodes.length <= LIMIT) {
-  // 小規模データセット: 完全なシンボル階層
-  elements = allSymbols
-  edges = symbolRelationships
-  layout = 'dagre'  // 精密な階層レイアウト
+// データセットサイズに応じた制限
+const SMALL_LIMIT = 15000
+const MEDIUM_LIMIT = 50000
+
+if (allNodes.length <= SMALL_LIMIT) {
+  // 小規模: 全4レベル使用可能
+  availableLevels = ['dir-only', 'dir-file', 'file-only', 'file-symbol']
+} else if (allNodes.length <= MEDIUM_LIMIT) {
+  // 中規模: file-symbol以外
+  availableLevels = ['dir-only', 'dir-file', 'file-only']
 } else {
-  // 大規模データセット: ファイルレベルのみ
-  elements = fileSymbols
-  edges = fileRelationships
-  layout = 'cose'   // より高速な力学レイアウト
+  // 大規模: file-symbol以外、自動的にfile-onlyに切り替え
+  availableLevels = ['dir-only', 'dir-file', 'file-only']
+  currentLevel = 'file-only'
 }
 ```
 
-#### b) 呼び出しグラフビュー
+#### b) ノードレベルごとの要素生成
 
 ```typescript
-const LIMIT = 5000
-
-if (allNodes.length <= LIMIT) {
-  // 小規模データセット: シンボルレベル呼び出し
-  elements = symbolNodes + symbolEdges
-  layout = 'dagre'
-} else {
-  // 大規模データセット: ファイルレベル呼び出し
-  elements = fileNodes + fileEdges
-  layout = 'cose'
+function createElements(nodeLevel: NodeLevel) {
+  switch (nodeLevel) {
+    case 'dir-only':
+      // ディレクトリノードのみ、エッジは集約
+      return { nodes: directoryNodes, edges: aggregatedEdges }
+    case 'dir-file':
+      // ディレクトリ + ファイル、階層構造
+      return { nodes: [...directoryNodes, ...fileNodes], edges: fileEdges }
+    case 'file-only':
+      // ファイルノードのみ
+      return { nodes: fileNodes, edges: fileEdges }
+    case 'file-symbol':
+      // ファイル + シンボル、詳細表示
+      return { nodes: [...fileNodes, ...symbolNodes], edges: symbolEdges }
+  }
 }
 ```
 
 **利点**:
 
-- グラフを読みやすく保つ
-- 大規模コードベースでのパフォーマンスを維持
-- ファイルレベルでも価値のある洞察を提供
+- ユーザーが表示レベルを選択可能
+- 大規模コードベースでもパフォーマンスを維持
+- Directory Onlyで全体構造を把握、File + Symbolで詳細分析
 
 ### 7.4 レイアウト事前計算（v0.1.30で拡張機能側に移行）
 
@@ -1361,7 +1367,7 @@ cyInstance = cytoscape({
 - 計算中の進捗更新
 - 位置適用時のスムーズなレンダリング
 
-**新実装（v0.1.30～）**:
+**新実装（v0.1.30～、v0.1.31で簡略化）**:
 
 ```typescript
 // src/relationship/dagreLayout.ts
@@ -1369,17 +1375,18 @@ export async function calculateDagreLayout(
     nodes: LayoutNode[],
     edges: LayoutEdge[],
     options: LayoutOptions,
-    progressCallback?: ProgressCallback
+    progressCallback?: ProgressCallback,
+    signal?: AbortSignal
 ): Promise<Map<string, Position>> {
     const g = new dagre.graphlib.Graph();
     g.setGraph({
         rankdir: options.rankDir || 'TB',
-        nodesep: options.nodeSep || 50,
-        ranksep: options.rankSep || 100,
+        nodesep: options.nodeSep || 150,  // 階層ビュー用に最適化
+        ranksep: options.rankSep || 200,
         ranker: 'tight-tree'  // 高速化
     });
 
-    // ノードを登録
+    // ノードを登録（幅と高さを推定）
     nodes.forEach(node => {
         g.setNode(node.id, {
             width: estimateNodeWidth(node),
@@ -1406,33 +1413,32 @@ export async function calculateDagreLayout(
 }
 
 // src/relationship/visualization.ts
-const hierarchyPositions = await this.calculateHierarchyLayout(elements, startTime);
+const layoutPositions = await this.calculateLayout(elements, startTime);
 
 // レイアウト座標をWebviewに送信
 await this.panel.webview.postMessage({
     type: 'layoutPositions',
-    viewType: 'hierarchy',
-    positions: Array.from(hierarchyPositions.entries()).map(([id, pos]) => ({
+    positions: Array.from(layoutPositions.entries()).map(([id, pos]) => ({
         id, x: pos.x, y: pos.y
     }))
 });
 
-// src/webview/graphMultiview.ts - メッセージ受信
+// src/webview/graphView.ts - メッセージ受信
 if (message.type === 'layoutPositions') {
-    const { viewType, positions } = message;
-    const positionMap = new Map();
+    const { positions } = message;
     positions.forEach(pos => {
-        positionMap.set(pos.id, { x: pos.x, y: pos.y });
+        layoutPositions.set(pos.id, { x: pos.x, y: pos.y });
     });
-    layoutPositions.set(viewType, positionMap);
 }
 
 // レイアウト使用時
-if (layoutPositions.has('hierarchy')) {
-    positions = layoutPositions.get('hierarchy');
-    // Webview側ではpresetレイアウトで座標を適用するのみ
-}
+// Webview側ではpresetレイアウトで座標を適用するのみ
 ```
+
+**v0.1.31での変更**:
+- `viewType`パラメータを削除（階層ビューのみのため不要）
+- 関数名を簡略化: `calculateHierarchyLayout` → `calculateLayout`
+- ファイル名を簡略化: `graphMultiview.ts` → `graphView.ts`
 
 **新実装の利点**:
 - **UIフリーズの完全解消**: レイアウト計算がNode.jsのバックグラウンドで実行
@@ -1648,47 +1654,29 @@ class Queue<T> {
 - `gravity`: 中心への引力
 - `numIter`: レイアウト計算の反復回数
 
-#### B.2 Dagreレイアウト (階層構造ビュー)
+#### B.2 Dagreレイアウト (階層構造グラフ)
 
 ```typescript
+// 拡張機能側 (dagreLayout.ts) で計算
 {
-  name: 'dagre',
   rankDir: 'TB',      // 上から下へ
-  nodeSep: 50,        // 水平間隔
-  rankSep: 100,       // 垂直間隔
-  animate: false      // 位置を事前計算
+  nodeSep: 150,       // 水平間隔（ファイルノード用に最適化）
+  rankSep: 200,       // 垂直間隔
+  ranker: 'tight-tree' // 高速なランキングアルゴリズム
+}
+
+// Webview側では preset レイアウトで座標を適用
+{
+  name: 'preset',
+  positions: (node) => layoutPositions.get(node.id())
 }
 ```
 
 **パラメータ説明**:
-- `rankDir`: レイアウト方向 ('TB' = 上から下、'LR' = 左から右)
-- `nodeSep`: 同じランク内のノード間の間隔
+- `rankDir`: レイアウト方向 ('TB' = 上から下)
+- `nodeSep`: 同じランク内のノード間の間隔（ファイルノード300px幅を考慮）
 - `rankSep`: ランク間の間隔
-- `animate`: アニメーション有効化 (事前計算時はfalse)
-
-#### B.3 呼び出しグラフレイアウト
-
-**小規模データセット**:
-
-```typescript
-{
-  name: 'dagre',
-  rankDir: callGraphOrientation, // 'TB' または 'LR'
-  nodeSep: 40,
-  rankSep: 80
-}
-```
-
-**大規模データセット**:
-
-```typescript
-{
-  name: 'cose',
-  nodeRepulsion: 200000,
-  idealEdgeLength: 300,
-  numIter: 1000
-}
-```
+- `ranker`: ランキングアルゴリズム（'tight-tree'は高速）
 
 ### 付録C: VSCode SymbolKind色マッピング
 
@@ -1733,6 +1721,7 @@ function getSymbolKindColor(kind: number): string {
 
 | バージョン | 日付 | 変更内容 |
 |-----------|------|----------|
+| 1.2 | 2026-01-17 | v0.1.31対応: ファイル名更新(graphView.ts, graph-view.html)、4レベルノード表示、テンプレート簡略化 |
 | 1.1 | 2025-12-29 | § 5.6 スタンドアロンHTMLエクスポート実装詳細を追加 |
 | 1.0 | 2025-12-27 | 初回実装仕様書 (SPECIFICATIONS.mdから分割) |
 

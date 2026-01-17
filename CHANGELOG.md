@@ -15,24 +15,77 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### 可視化の改善
 
-- 1.Cytoscape.js の拡張
-  - 階層表示のためのCompound Nodes機能
-  - cytoscape-cola: より良い階層レイアウト
-  - cytoscape-euler: 集合のビジュアライゼーション
-  - cytoscape-elk: Eclipse Layout Kernel統合
-  - cytoscape-popper: より良いツールチップ
-- 2.タブ切り替えによるマルチビュー
-  - 2-1.ファイル依存関係ビュー
-    - Cytoscape.js の force-directed layout
-  - 2-2.階層構造ビュー
-    - D3.js の tree layout または ELK.js
-    - ファイル > クラス > メソッドの階層
-  - 2-3.呼び出しグラフビュー
-    - G6 または Cytoscape.js の dagre layout
-    - 関数/メソッドの呼び出しフロー
-  - 2-4.アーキテクチャビュー
-    - D3.js の treemap または sunburst
-    - モジュール/パッケージの構造
+重力は中心から周辺に向けて、引力は関連の多さに比例して、自動的に関連の深いノードが集まる様にする方法を検討して下さい。
+
+- Cytoscape.js 以外のライブラリも候補に入れて検討して下さい。
+  - D3.js の treemap または sunburst または ELK.js
+- ../tock/tock.code-workspace の様な大規模でも全てのシンボルを扱える事も考慮に入れて下さい。
+
+## [0.1.31] - 2026-01-17
+
+### Added
+
+- 4レベルのノード表示切り替え機能
+  - **Directory Only**: ディレクトリノードのみを表示
+  - **Directory + File**: ディレクトリとファイルノードを表示
+  - **File Only**: ファイルノードのみを表示
+  - **File + Symbol**: ファイルとシンボルノードを表示（最も詳細）
+- ディレクトリノード自動生成機能
+  - ファイルパスからディレクトリ階層を自動構築
+  - 階層的な親子関係の設定
+- ディレクトリ間エッジ集約機能
+  - ファイル間の関係をディレクトリ間の関係に集約
+  - 関係数のカウントと詳細情報の保持
+- データセットサイズに応じた適応型機能制限
+  - **小規模**（≤ 15,000ノード）: 全4レベル使用可能
+  - **中規模**（15,000 < ノード ≤ 50,000）: dir-only, dir-file, file-only のみ
+  - **大規模**（> 50,000ノード）: dir-only, dir-file, file-only のみ
+  - 大規模データセットでは自動的にfile-onlyに切り替え
+
+### Changed
+
+- マルチビューからシングルビュー（階層構造のみ）に変更
+  - タブナビゲーションを削除
+  - ファイル依存関係ビューを削除
+  - 階層構造ビューを常に表示
+- ファイル名のリネーム
+  - `templates/graph-multiview.html` → `templates/graph-view.html`
+  - `src/webview/graphMultiview.ts` → `src/webview/graphView.ts`
+  - 関連するプレースホルダーと参照を更新
+- ノード切り替えUIをドロップダウン形式に変更
+  - 以前の "Toggle Directory Grouping" ボタンを削除
+  - データセットサイズに応じて選択肢を自動調整
+- コードベースの簡略化
+  - 関数名のリネーム: `initHierarchyView` → `initView`, `createHierarchyElements` → `createElements`
+  - 変数名のリネーム: `hierarchyElements` → `graphElements`, `hierarchyPositions` → `layoutPositions`
+  - HTML ID のリネーム: `view-hierarchy` → `view-graph`, `cy-hierarchy` → `cy-graph`, `node-level-hierarchy` → `node-level`
+  - `viewType` パラメータの削除（階層ビューのみのため不要）
+- エクスポートボタンの配置変更
+  - ドロップダウンメニューからシンプルなボタンに変更
+  - Fit/Resetボタンの横に配置
+  - `EXPORT_BUTTON_PLACEHOLDER` によるスタンドアロン/VSCode版の切り替え
+- ノードレベルドロップダウンの幅を160pxから120pxに変更
+
+### Fixed
+
+- 階層ビューでファイルノードが重なる問題を修正
+  - Dagreレイアウト計算時のノードサイズを実際の描画サイズ（300px正方形）に合わせて調整
+  - 階層ビュー用のスペーシング（nodeSep: 150px, rankSep: 200px）を最適化
+  - ファイルノード間の間隔が適切に確保されるように改善
+- スタンドアロンHTMLでエクスポートボタンが一瞬表示される問題を修正
+  - `EXPORT_BUTTON_PLACEHOLDER` でスタンドアロン版は空文字列を返すことで解決
+
+### Removed
+
+- ファイル依存関係ビュー機能
+- マルチビュー切り替え機能
+- ビューごとのエクスポートメニュー（シンプルなエクスポートボタンに統一）
+- PNGエクスポート機能（VSCode Webviewセキュリティ制限により動作せず）
+  - `exportPNG` 関数を削除
+  - `toggleExportMenu`, `closeExportMenu` 関数を削除
+  - エクスポートメニュー関連のCSS（約50行）を削除
+- `calculateCallGraphLayout` 関数（呼び出しグラフ用レイアウト計算）
+- `calculateEdgePaths` 関数（エッジパス計算）
 
 ## 0.1.30 - 2026-01-09
 

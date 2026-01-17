@@ -54,16 +54,46 @@ export type ProgressCallback = (percent: number, message: string) => void;
  */
 function estimateNodeWidth(node: LayoutNode): number {
     const label = node.label;
-    const fontSize = node.kind === 0 ? 14 : 12;  // ファイルノードは大きめ
-    const avgCharWidth = fontSize * 0.6;  // 英数字の平均幅
-    const padding = node.kind === 0 ? 40 : 30;
+
+    // ディレクトリノードの場合
+    if (node.kind === -1) {
+        const fontSize = 16;  // ディレクトリノードのフォントサイズ（bold）
+        const avgCharWidth = fontSize * 0.7;  // boldなので少し広め
+        const padding = 70;  // min-width計算時のpadding
+
+        // 日本語文字は幅が広い（全角）
+        const japaneseChars = (label.match(/[\u3040-\u30ff\u4e00-\u9faf]/g) || []).length;
+        const otherChars = label.length - japaneseChars;
+
+        const estimatedWidth = japaneseChars * fontSize + otherChars * avgCharWidth;
+        return Math.max(180, estimatedWidth + padding);  // 最小180px
+    }
+
+    // ファイルノードは大きく表示される
+    if (node.kind === 0) {
+        const fontSize = 28;  // ファイルノードのフォントサイズ（bold）
+        const avgCharWidth = fontSize * 0.7;  // boldなので少し広め
+        const padding = 120;  // min-width計算時のpadding
+
+        // 日本語文字は幅が広い（全角）
+        const japaneseChars = (label.match(/[\u3040-\u30ff\u4e00-\u9faf]/g) || []).length;
+        const otherChars = label.length - japaneseChars;
+
+        const estimatedWidth = japaneseChars * fontSize + otherChars * avgCharWidth;
+        return Math.max(300, estimatedWidth + padding);  // 最小300px
+    }
+
+    // シンボルノード
+    const fontSize = 11;
+    const avgCharWidth = fontSize * 0.6;
+    const padding = 30;
 
     // 日本語文字は幅が広い（全角）
     const japaneseChars = (label.match(/[\u3040-\u30ff\u4e00-\u9faf]/g) || []).length;
     const otherChars = label.length - japaneseChars;
 
     const estimatedWidth = japaneseChars * fontSize + otherChars * avgCharWidth;
-    return Math.max(node.kind === 0 ? 100 : 80, estimatedWidth + padding);
+    return Math.max(80, estimatedWidth + padding);
 }
 
 /**
@@ -72,8 +102,22 @@ function estimateNodeWidth(node: LayoutNode): number {
  * @returns 推定高さ（ピクセル）
  */
 function estimateNodeHeight(node: LayoutNode): number {
-    // ファイルノード（kind=0）は大きめ、その他のシンボルは小さめ
-    return node.kind === 0 ? 50 : 40;
+    // ディレクトリノードの場合
+    if (node.kind === -1) {
+        // ディレクトリノードは横長の形状
+        // font-size: 16px + padding: 25px * 2 = 66px
+        // 安全マージンを持たせて80px
+        return 80;
+    }
+
+    // ファイルノードは大きく表示される（正方形）
+    if (node.kind === 0) {
+        // 実際はmin-widthと同じ値（正方形）だが、安全マージンとして少し小さめに
+        return estimateNodeWidth(node);
+    }
+
+    // シンボルノード
+    return 40;
 }
 
 /**
@@ -95,10 +139,10 @@ export async function calculateDagreLayout(
 ): Promise<Map<string, Position>> {
     const startTime = Date.now();
 
-    // デフォルトオプション
+    // デフォルトオプション（階層ビュー用）
     const rankDir = options.rankDir || 'TB';
-    const nodeSep = options.nodeSep || 50;
-    const rankSep = options.rankSep || 100;
+    const nodeSep = options.nodeSep || 150;
+    const rankSep = options.rankSep || 200;
     const ranker = options.ranker || 'tight-tree';  // tight-treeはnetwork-simplexより高速
 
     if (progressCallback) {
@@ -222,65 +266,4 @@ export async function calculateDagreLayout(
     console.log(`[DagreLayout] Options: rankDir=${rankDir}, nodeSep=${nodeSep}, rankSep=${rankSep}, ranker=${ranker}`);
 
     return positions;
-}
-
-/**
- * エッジのルーティングパスを取得（オプション機能）
- *
- * Dagreはエッジのルーティングパスも計算します。
- * 必要に応じてこの情報も取得できます。
- *
- * @param nodes ノード配列
- * @param edges エッジ配列
- * @param options レイアウトオプション
- * @returns エッジIDとパスポイントのマップ
- */
-export async function calculateEdgePaths(
-    nodes: LayoutNode[],
-    edges: LayoutEdge[],
-    options: LayoutOptions = {}
-): Promise<Map<string, Position[]>> {
-    const rankDir = options.rankDir || 'TB';
-    const nodeSep = options.nodeSep || 50;
-    const rankSep = options.rankSep || 100;
-    const ranker = options.ranker || 'tight-tree';
-
-    const g = new dagre.graphlib.Graph();
-    g.setGraph({
-        rankdir: rankDir,
-        nodesep: nodeSep,
-        ranksep: rankSep,
-        ranker: ranker
-    });
-    g.setDefaultEdgeLabel(() => ({}));
-
-    // ノードを登録
-    nodes.forEach(node => {
-        g.setNode(node.id, {
-            label: node.label,
-            width: estimateNodeWidth(node),
-            height: estimateNodeHeight(node)
-        });
-    });
-
-    // エッジを登録
-    edges.forEach(edge => {
-        g.setEdge(edge.source, edge.target);
-    });
-
-    // レイアウト計算
-    dagre.layout(g);
-
-    // エッジパスを取得
-    const edgePaths = new Map<string, Position[]>();
-    g.edges().forEach(edgeObj => {
-        const edge = g.edge(edgeObj);
-        const edgeId = `${edgeObj.v}-${edgeObj.w}`;
-
-        if (edge.points) {
-            edgePaths.set(edgeId, edge.points.map(p => ({ x: p.x, y: p.y })));
-        }
-    });
-
-    return edgePaths;
 }

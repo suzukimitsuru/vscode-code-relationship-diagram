@@ -46,7 +46,7 @@ async function main() {
 	// Build webview script (Browser)
 	const webviewCtx = await esbuild.context({
 		entryPoints: [
-			'src/webview/graphMultiview.ts'
+			'src/webview/graphView.ts'
 		],
 		bundle: true,
 		format: 'iife',
@@ -54,7 +54,7 @@ async function main() {
 		sourcemap: !production,
 		sourcesContent: !production,
 		platform: 'browser',
-		outfile: 'dist/webview/graphMultiview.js',
+		outfile: 'dist/webview/graphView.js',
 		logLevel: 'silent',
 		plugins: [
 			esbuildProblemMatcherPlugin,

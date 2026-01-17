@@ -193,7 +193,7 @@ export class Visualization {
 
             // 最終的なHTMLを設定（空のデータで初期化）
             const htmlStartTime = performance.now();
-            const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-multiview.html'));
+            const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-view.html'));
             const emptyElements = { nodes: [], edges: [] };
             this.panel.webview.html = this.replacePlaceholders(html_load, locale('window-title'), emptyElements);
             const htmlEndTime = performance.now();
@@ -218,22 +218,22 @@ export class Visualization {
             }
 
             // 階層構造ビュー用のレイアウト計算（拡張機能側でDagreレイアウトを計算）
-            await this.updateProgress(64, 'Calculating hierarchy layout...');
+            await this.updateProgress(64, 'Calculating layout...');
             const layoutStartTime = performance.now();
-            const hierarchyPositions = await this.calculateHierarchyLayout(elements, startTime);
+            const layoutPositions = await this.calculateLayout(elements, startTime);
             const layoutEndTime = performance.now();
             const layoutElapsed = (layoutEndTime - startTime) / 1000;
-            this.logs.log(`${layoutElapsed.toFixed(3)}s  75.00%: Calculated hierarchy layout: ${hierarchyPositions.size} positions (${(layoutEndTime - layoutStartTime).toFixed(3)}ms)`);
+            this.logs.log(`${layoutElapsed.toFixed(3)}s  75.00%: Calculated layout: ${layoutPositions.size} positions (${(layoutEndTime - layoutStartTime).toFixed(3)}ms)`);
 
             // レイアウト座標をWebviewに送信
-            if (hierarchyPositions.size > 0) {
-                const positionsArray = Array.from(hierarchyPositions.entries()).map(([id, pos]) => ({
+            if (layoutPositions.size > 0) {
+                const positionsArray = Array.from(layoutPositions.entries()).map(([id, pos]) => ({
                     id,
                     x: pos.x,
                     y: pos.y
                 }));
 
-                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  76.00%: Sending ${positionsArray.length} hierarchy positions to webview...`);
+                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  76.00%: Sending ${positionsArray.length} positions to webview...`);
                 // サンプル座標をログ出力
                 if (positionsArray.length > 0) {
                     this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  76.50%: Sample positions: ${positionsArray.slice(0, 3).map(p => `${p.id}=(${p.x.toFixed(0)},${p.y.toFixed(0)})`).join(', ')}`);
@@ -244,37 +244,9 @@ export class Visualization {
                     viewType: 'hierarchy',
                     positions: positionsArray
                 });
-                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  78.00%: ✓ Sent hierarchy layout positions to webview`);
+                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  78.00%: ✓ Sent layout positions to webview`);
             } else {
-                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  76.00%: ⚠️  No hierarchy positions calculated, webview will use fallback layout`);
-            }
-
-            // 呼び出しグラフビュー用のレイアウト計算
-            await this.updateProgress(79, 'Calculating call graph layout...');
-            const callGraphLayoutStartTime = performance.now();
-            const callGraphPositions = await this.calculateCallGraphLayout(elements, startTime);
-            const callGraphLayoutEndTime = performance.now();
-            const callGraphLayoutElapsed = (callGraphLayoutEndTime - startTime) / 1000;
-            this.logs.log(`${callGraphLayoutElapsed.toFixed(3)}s  82.00%: Calculated call graph layout: ${callGraphPositions.size} positions (${(callGraphLayoutEndTime - callGraphLayoutStartTime).toFixed(3)}ms)`);
-
-            // レイアウト座標をWebviewに送信
-            if (callGraphPositions.size > 0) {
-                const positionsArray = Array.from(callGraphPositions.entries()).map(([id, pos]) => ({
-                    id,
-                    x: pos.x,
-                    y: pos.y
-                }));
-
-                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  83.00%: Sending ${positionsArray.length} call graph positions to webview...`);
-
-                await this.panel.webview.postMessage({
-                    type: 'layoutPositions',
-                    viewType: 'call-graph',
-                    positions: positionsArray
-                });
-                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  85.00%: ✓ Sent call graph layout positions to webview`);
-            } else {
-                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  83.00%: ⚠️  No call graph positions calculated, webview will use fallback layout`);
+                this.logs.log(`${((performance.now() - startTime) / 1000).toFixed(3)}s  76.00%: ⚠️  No positions calculated, webview will use fallback layout`);
             }
 
             // データをpostMessageで送信（大規模データの場合はチャンク分割）
@@ -646,32 +618,15 @@ export class Visualization {
         }
     }
 
-    private createExportButton(viewName: string, isStandalone: boolean): string {
+    private createExportButton(isStandalone: boolean): string {
         if (isStandalone) {
-            return `
-                <div class="export-dropdown">
-                    <button onclick="exportPNG()" title="Export PNG">Export PNG</button>
-                </div>`;
+            // スタンドアロン版ではエクスポートボタンなし
+            return '';
         } else {
-            return `
-                <div class="export-dropdown">
-                    <button class="export-main" title="Export File">
-                        <i class="fa fa-floppy-o" aria-hidden="true"></i>
-                    </button>
-                    <button class="export-toggle" onclick="toggleExportMenu('${viewName}')" title="More export options">
-                        <i class="fa fa-chevron-down" aria-hidden="true"></i>
-                    </button>
-                    <div class="export-menu" id="export-menu-${viewName}">
-                        <button onclick="exportHTML(); closeExportMenu('${viewName}');" title="Export HTML">
-                            <i class="fa fa-code" aria-hidden="true"></i>
-                            <span>HTML</span>
-                        </button>
-                        <button onclick="exportPNG(); closeExportMenu('${viewName}');" title="Export PNG">
-                            <i class="fa fa-picture-o" aria-hidden="true"></i>
-                            <span>PNG</span>
-                        </button>
-                    </div>
-                </div>`;
+            // VSCode拡張版ではHTMLエクスポートボタン
+            return `<button onclick="exportHTML()" title="Export HTML">
+                    <i class="fa fa-floppy-o" aria-hidden="true"></i>
+                </button>`;
         }
     }
 
@@ -698,9 +653,9 @@ export class Visualization {
                 : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'cytoscape', 'dist', 'cytoscape.min.js')).toString(),
             // Note: Dagre layout calculation is now performed on extension side (Node.js)
             // Dagre library URIs are no longer needed in webview
-            'GRAPH_MULTIVIEW_SCRIPT_URI_PLACEHOLDER': isStandalone
-                ? `<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphMultiview.js'), 'utf8')}</script>`
-                : `<script src="${this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'graphMultiview.js')).toString()}"></script>`,
+            'GRAPH_SCRIPT_URI_PLACEHOLDER': isStandalone
+                ? `<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphView.js'), 'utf8')}</script>`
+                : `<script src="${this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'graphView.js')).toString()}"></script>`,
 
             'BACKGROUND_COLOR_PLACEHOLDER':     isDarkTheme ? '#1e1e1e' : '#ffffff',
             'PROGRESS_BG_COLOR_PLACEHOLDER':    isDarkTheme ? '#333' : '#e0e0e0',
@@ -717,10 +672,8 @@ export class Visualization {
             'ELEMENTS_NODES_LENGTH_PLACEHOLDER': elements.nodes.length.toString(),
             'ELEMENTS_EDGES_LENGTH_PLACEHOLDER': elements.edges.length.toString(),
             'GRAPH_DATA_JS_URI_PLACEHOLDER':    '',  // 通常のWebviewでは使用しない
-
-            'EXPORT_BUTTON_FILE_DEPS_PLACEHOLDER': this.createExportButton('file-deps', isStandalone),
-            'EXPORT_BUTTON_HIERARCHY_PLACEHOLDER': this.createExportButton('hierarchy', isStandalone),
-            'EXPORT_BUTTON_CALL_GRAPH_PLACEHOLDER': this.createExportButton('call-graph', isStandalone)
+            'WORKSPACE_NAME_PLACEHOLDER':       this.htmlFilename.replace('.crd.html', ''),
+            'EXPORT_BUTTON_PLACEHOLDER':        this.createExportButton(isStandalone)
         };
 
         let result = template;
@@ -744,7 +697,7 @@ export class Visualization {
             'CYTOSCAPE_URI_PLACEHOLDER':        'https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js',
             // Note: Dagre layout calculation is now performed on extension side (Node.js)
             // Standalone HTML exports use pre-calculated positions in data file
-            'GRAPH_MULTIVIEW_SCRIPT_URI_PLACEHOLDER': `<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphMultiview.js'), 'utf8')}</script>`,
+            'GRAPH_SCRIPT_URI_PLACEHOLDER': `<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphView.js'), 'utf8')}</script>`,
 
             'BACKGROUND_COLOR_PLACEHOLDER':     isDarkTheme ? '#1e1e1e' : '#ffffff',
             'PROGRESS_BG_COLOR_PLACEHOLDER':    isDarkTheme ? '#333' : '#e0e0e0',
@@ -752,7 +705,7 @@ export class Visualization {
             'CONTROLS_COLOR_PLACEHOLDER':       isDarkTheme ? '#cccccc' : '#333333',
             'CONTROLS_BG_PLACEHOLDER':          isDarkTheme ? '#2d2d30' : '#ffffff',
             'BOX_SHADOW_COLOR_PLACEHOLDER':     isDarkTheme ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.1)',
-            'BORDER_STYLE_PLACEHOLDER':         isDarkTheme ? '1px solid #3e3e42' : '1px solid #e1e1e1',
+            'BORDER_STYLE_PLACEHOLDER':         isDarkTheme ? '#3e3e42' : '#e1e1e1',
 
             'BUTTON_NO_POINT_BG_PLACEHOLDER':   isDarkTheme ? '#0e639c' : '#007ACC',
             'BUTTON_HOVER_BG_PLACEHOLDER':      isDarkTheme ? '#1177bb' : '#005a9e',
@@ -762,10 +715,8 @@ export class Visualization {
             'ELEMENTS_NODES_LENGTH_PLACEHOLDER': '0',
             'ELEMENTS_EDGES_LENGTH_PLACEHOLDER': '0',
             'GRAPH_DATA_JS_URI_PLACEHOLDER':    dataJsFilename,
-
-            'EXPORT_BUTTON_FILE_DEPS_PLACEHOLDER': this.createExportButton('file-deps', true),
-            'EXPORT_BUTTON_HIERARCHY_PLACEHOLDER': this.createExportButton('hierarchy', true),
-            'EXPORT_BUTTON_CALL_GRAPH_PLACEHOLDER': this.createExportButton('call-graph', true)
+            'WORKSPACE_NAME_PLACEHOLDER':       this.htmlFilename.replace('.crd.html', ''),
+            'EXPORT_BUTTON_PLACEHOLDER':        this.createExportButton(true)  // スタンドアロン版なのでボタンなし
         };
 
         let result = template;
@@ -808,9 +759,8 @@ export class Visualization {
                     this.logs.log(`Exporting data to: ${dataJsPath}`);
                     this.logs.log(`Data size: ${data.nodes.length} nodes, ${data.edges.length} edges`);
                     if (layoutPositions) {
-                        const hierarchyCount = layoutPositions['hierarchy']?.length || 0;
-                        const callGraphCount = layoutPositions['call-graph']?.length || 0;
-                        this.logs.log(`Layout positions: hierarchy=${hierarchyCount}, call-graph=${callGraphCount}`);
+                        const positionCount = layoutPositions['hierarchy']?.length || 0;
+                        this.logs.log(`Layout positions: ${positionCount}`);
                     }
 
                     await this.updateExportProgress(70, 'Writing data file...');
@@ -823,7 +773,7 @@ export class Visualization {
                     await this.updateExportProgress(90, 'Writing HTML file...');
 
                     // HTMLテンプレートを生成（データは埋め込まず、JavaScriptファイルのURIを指定）
-                    const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-multiview.html'));
+                    const html_load = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-view.html'));
                     const emptyData = { nodes: [], edges: [] };
                     const html_text = this.replacePlaceholdersWithDataJsUri(html_load, locale('window-title') + ' - Standalone', emptyData, dataJsFilename);
 
@@ -997,18 +947,18 @@ export class Visualization {
      * @param startTime 開始時刻（パフォーマンス測定用）
      * @returns ファイルパスと階層レベルのマップ
      */
-    private async calculateHierarchyLevelsWithDuckDB(startTime: number): Promise<Map<string, number>> {
+    private async calculateLevelsWithDuckDB(startTime: number): Promise<Map<string, number>> {
         const dbPath = path.join(this.wsFolder, '.vscode', 'crd.duckdb');
 
         if (!fs.existsSync(dbPath)) {
-            this.logs.error('Database file not found for hierarchy calculation');
+            this.logs.error('Database file not found for layout calculation');
             return new Map();
         }
 
         try {
             const db = new codeDb.Db(dbPath);
 
-            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculating hierarchy levels using DuckDB (topological sort)...`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculating levels using DuckDB (topological sort)...`);
 
             // まず、ファイル間の依存関係データがあるか確認（修正版）
             const checkQuery = `
@@ -1077,7 +1027,7 @@ export class Visualization {
                 result.set(row.file_path, row.level);
             }
 
-            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculated hierarchy levels for ${result.size} files`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculated levels for ${result.size} files`);
 
             // レベル分布をログ出力
             const levelCounts = new Map<number, number>();
@@ -1179,7 +1129,7 @@ export class Visualization {
 
             return result;
         } catch (error) {
-            this.logs.error(`Failed to calculate hierarchy levels with DuckDB: ${error instanceof Error ? error.message : error}`);
+            this.logs.error(`Failed to calculate levels with DuckDB: ${error instanceof Error ? error.message : error}`);
             return new Map();
         }
     }
@@ -1190,12 +1140,12 @@ export class Visualization {
      * @param startTime 開始時刻（パフォーマンス測定用）
      * @returns ノードIDと座標のマップ
      */
-    private async calculateHierarchyLayout(elements: any, startTime: number): Promise<Map<string, dagreLayout.Position>> {
+    private async calculateLayout(elements: any, startTime: number): Promise<Map<string, dagreLayout.Position>> {
         try {
             const nodeCount = elements.nodes.length;
             const edgeCount = elements.edges.length;
 
-            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculating hierarchy layout for ${nodeCount} nodes, ${edgeCount} edges...`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculating layout for ${nodeCount} nodes, ${edgeCount} edges...`);
 
             // ハイブリッド戦略の閾値
             const SMALL_DAGRE_NODE_LIMIT = 3000;   // 小規模: Dagreで美しい配置
@@ -1215,15 +1165,15 @@ export class Visualization {
             if (actualNodeCount < SMALL_DAGRE_NODE_LIMIT && edgeCount < SMALL_DAGRE_EDGE_LIMIT) {
                 // 小規模データ: Dagreで最高品質のレイアウト
                 this.logs.log(`[${(performance.now() - startTime) / 1000}s] Small dataset detected. Using Dagre layout for optimal quality...`);
-                return await this.calculateHierarchyLayoutWithDagre(elements, startTime, layoutNodes, showOnlyFiles);
+                return await this.calculateLayoutWithDagre(elements, startTime, layoutNodes, showOnlyFiles);
             } else {
                 // 中規模・大規模データ: DuckDBで高速レイアウト
                 this.logs.log(`[${(performance.now() - startTime) / 1000}s] Medium/Large dataset detected. Using DuckDB layout for performance...`);
-                return await this.calculateHierarchyLayoutWithDuckDB_Simple(elements, startTime, layoutNodes);
+                return await this.calculateLayoutWithDuckDB(elements, startTime, layoutNodes);
             }
         } catch (error) {
-            this.logs.error(`Failed to calculate hierarchy layout: ${error instanceof Error ? error.message : error}`);
-            console.error('Hierarchy layout error:', error);
+            this.logs.error(`Failed to calculate layout: ${error instanceof Error ? error.message : error}`);
+            console.error('Layout error:', error);
             return new Map();
         }
     }
@@ -1321,13 +1271,13 @@ export class Visualization {
      * @param layoutNodes レイアウト対象のノード
      * @returns ノードIDと座標のマップ
      */
-    private async calculateHierarchyLayoutWithDuckDB_Simple(elements: any, startTime: number, layoutNodes: any[]): Promise<Map<string, dagreLayout.Position>> {
+    private async calculateLayoutWithDuckDB(elements: any, startTime: number, layoutNodes: any[]): Promise<Map<string, dagreLayout.Position>> {
         try {
             // DuckDBを使って階層レベルを高速計算
-            const hierarchyLevels = await this.calculateHierarchyLevelsWithDuckDB(startTime);
+            const levels = await this.calculateLevelsWithDuckDB(startTime);
 
-            if (hierarchyLevels.size === 0) {
-                this.logs.log(`[${(performance.now() - startTime) / 1000}s] No hierarchy levels calculated. Using fallback layout.`);
+            if (levels.size === 0) {
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] No levels calculated. Using fallback layout.`);
                 return new Map();
             }
 
@@ -1335,7 +1285,7 @@ export class Visualization {
             const nodesByLevel = new Map<number, any[]>();
             for (const node of layoutNodes) {
                 const filePath = node.data.path || node.data.id;
-                const level = hierarchyLevels.get(filePath) ?? 0;
+                const level = levels.get(filePath) ?? 0;
 
                 if (!nodesByLevel.has(level)) {
                     nodesByLevel.set(level, []);
@@ -1343,7 +1293,7 @@ export class Visualization {
                 nodesByLevel.get(level)!.push(node);
             }
 
-            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Assigning positions based on hierarchy levels...`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Assigning positions based on levels...`);
 
             // レイアウト対象ノードのIDセットを作成（ファイルのみ）
             const layoutNodeIds = new Set(layoutNodes.map(n => n.data.id));
@@ -1567,17 +1517,17 @@ export class Visualization {
                 // エッジの統計情報を計算（仮説検証用）
                 this.analyzeEdgeStatistics(elements.edges, centeredPositions, startTime);
 
-                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Hierarchy layout calculation complete: ${centeredPositions.size} positions (centered: offset=${centerOffset.toFixed(1)}, range: ${minX.toFixed(0)} to ${maxX.toFixed(0)})`);
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Layout calculation complete: ${centeredPositions.size} positions (centered: offset=${centerOffset.toFixed(1)}, range: ${minX.toFixed(0)} to ${maxX.toFixed(0)})`);
 
                 return centeredPositions;
             }
 
-            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Hierarchy layout calculation complete: ${positions.size} positions`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Layout calculation complete: ${positions.size} positions`);
 
             return positions;
         } catch (error) {
-            this.logs.error(`Failed to calculate hierarchy layout: ${error instanceof Error ? error.message : error}`);
-            console.error('Hierarchy layout error:', error);
+            this.logs.error(`Failed to calculate layout: ${error instanceof Error ? error.message : error}`);
+            console.error('Layout error:', error);
             return new Map();
         }
     }
@@ -1590,7 +1540,7 @@ export class Visualization {
      * @param showOnlyFiles ファイルレベルのみ表示するか
      * @returns ノードIDと座標のマップ
      */
-    private async calculateHierarchyLayoutWithDagre(elements: any, startTime: number, layoutNodes: any[], showOnlyFiles: boolean): Promise<Map<string, dagreLayout.Position>> {
+    private async calculateLayoutWithDagre(elements: any, startTime: number, layoutNodes: any[], showOnlyFiles: boolean): Promise<Map<string, dagreLayout.Position>> {
         try {
             const edgeCount = elements.edges.length;
 
@@ -1688,8 +1638,19 @@ export class Visualization {
 
             // プログレスコールバック
             const progressCallback: dagreLayout.ProgressCallback = (percent, message) => {
-                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Hierarchy layout: ${message} (${percent}%)`);
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Layout: ${message} (${percent}%)`);
             };
+
+            // ディレクトリノードが含まれているかチェック
+            const hasDirectoryNodes = nodes.some(n => n.kind === -1);
+
+            // ディレクトリノードがある場合は、より大きなスペーシングを使用
+            const nodeSep = hasDirectoryNodes ? 250 : 150;  // ディレクトリノード用に大きく
+            const rankSep = hasDirectoryNodes ? 250 : 200;  // 垂直方向も少し広げる
+
+            if (hasDirectoryNodes) {
+                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Directory nodes detected. Using larger spacing (nodeSep=${nodeSep}, rankSep=${rankSep})`);
+            }
 
             // レイアウト計算を実行
             const positions = await dagreLayout.calculateDagreLayout(
@@ -1697,9 +1658,8 @@ export class Visualization {
                 edges,
                 {
                     rankDir: 'TB',
-                    nodeSep: 50,
-                    rankSep: 100,
-                    ranker: 'tight-tree'  // 高速化
+                    nodeSep: nodeSep,
+                    rankSep: rankSep
                 },
                 progressCallback
             );
@@ -1711,98 +1671,15 @@ export class Visualization {
                 flippedPositions.set(id, { x: pos.x, y: maxY - pos.y });
             }
 
-            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Hierarchy layout calculation complete: ${flippedPositions.size} positions`);
+            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Layout calculation complete: ${flippedPositions.size} positions`);
 
             return flippedPositions;
         } catch (error) {
-            this.logs.error(`Failed to calculate hierarchy layout: ${error instanceof Error ? error.message : error}`);
-            console.error('Hierarchy layout error:', error);
+            this.logs.error(`Failed to calculate layout: ${error instanceof Error ? error.message : error}`);
+            console.error('Layout error:', error);
             return new Map();
         }
     }
-
-    /**
-     * 呼び出しグラフビュー用のDagreレイアウトを計算
-     * @param elements ノードとエッジのデータ
-     * @param startTime 開始時刻（パフォーマンス測定用）
-     * @returns ノードIDと座標のマップ
-     */
-    private async calculateCallGraphLayout(elements: any, startTime: number): Promise<Map<string, dagreLayout.Position>> {
-        try {
-            const nodeCount = elements.nodes.length;
-            const edgeCount = elements.edges.length;
-
-            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Calculating call graph layout for ${nodeCount} nodes, ${edgeCount} edges...`);
-
-            // 新しい制限値を適用
-            const CallGraphView_LIMIT_ONLY_FILE = 15000;
-            const CallGraphView_DAGRE_LAYOUT_LIMIT_NODES = 10000;
-            const CallGraphView_DAGRE_LAYOUT_LIMIT_EDGES = 15000;
-
-            // ファイルレベルのノードのみを抽出（kind=0）または全ノード
-            const showOnlyFiles = nodeCount > CallGraphView_LIMIT_ONLY_FILE;
-            const layoutNodes = showOnlyFiles
-                ? elements.nodes.filter((n: any) => n.data.kind === 0)
-                : elements.nodes;
-
-            // シンボルレベルのエッジを抽出
-            const layoutEdges = elements.edges.filter((e: any) =>
-                e.data.relationshipType === 'symbol-relationship'
-            );
-
-            // 実際にレイアウトするノード数とエッジ数を取得
-            const actualNodeCount = layoutNodes.length;
-            const actualEdgeCount = layoutEdges.length;
-
-            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Using ${actualNodeCount} nodes (${showOnlyFiles ? 'files only' : 'all symbols'}) and ${actualEdgeCount} edges for layout calculation`);
-
-            // データセットサイズに応じてレイアウト計算の可否を判定（抽出後の実際の要素数で判定）
-            if (actualNodeCount > CallGraphView_DAGRE_LAYOUT_LIMIT_NODES || actualEdgeCount > CallGraphView_DAGRE_LAYOUT_LIMIT_EDGES) {
-                // 大規模すぎる場合はCOSEレイアウトを使用（Webview側で計算）
-                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Dataset too large for Dagre (nodes: ${actualNodeCount}, edges: ${actualEdgeCount}). Using COSE layout on webview side.`);
-                return new Map();
-            }
-
-            // Dagreレイアウトを計算
-            const nodes: dagreLayout.LayoutNode[] = layoutNodes.map((n: any) => ({
-                id: n.data.id,
-                label: n.data.label,
-                kind: n.data.kind
-            }));
-
-            const edges: dagreLayout.LayoutEdge[] = layoutEdges.map((e: any) => ({
-                source: e.data.source,
-                target: e.data.target
-            }));
-
-            // プログレスコールバック
-            const progressCallback: dagreLayout.ProgressCallback = (percent, message) => {
-                this.logs.log(`[${(performance.now() - startTime) / 1000}s] Call graph layout: ${message} (${percent}%)`);
-            };
-
-            // レイアウト計算を実行
-            const positions = await dagreLayout.calculateDagreLayout(
-                nodes,
-                edges,
-                {
-                    rankDir: 'TB',
-                    nodeSep: 40,
-                    rankSep: 80,
-                    ranker: 'tight-tree'  // 高速化
-                },
-                progressCallback
-            );
-
-            this.logs.log(`[${(performance.now() - startTime) / 1000}s] Call graph layout calculation complete: ${positions.size} positions`);
-
-            return positions;
-        } catch (error) {
-            this.logs.error(`Failed to calculate call graph layout: ${error instanceof Error ? error.message : error}`);
-            console.error('Call graph layout error:', error);
-            return new Map();
-        }
-    }
-
 
     public dispose() {
         if (this.panel) {
