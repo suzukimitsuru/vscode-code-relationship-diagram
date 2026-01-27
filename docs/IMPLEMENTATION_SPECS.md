@@ -1,7 +1,7 @@
 # Code Relationship Diagram - 実装仕様書
 
-バージョン: 0.1.31
-最終更新: 2026-01-17
+バージョン: 0.1.32
+最終更新: 2026-01-23
 
 ---
 
@@ -37,7 +37,8 @@ src/
 ├── relationship/
 │   ├── examine.ts            # 関係抽出メインロジック
 │   ├── codeRelationships.ts  # Relationshipモデル
-│   ├── dagreLayout.ts        # Dagreレイアウト計算（拡張機能側）
+│   ├── ciseLayout.ts         # CiSEレイアウト計算 + 階層的座標導出
+│   ├── communityDetection.ts # Louvainコミュニティ検出
 │   └── visualization.ts      # Webview管理、グラフ生成
 └── webview/
     └── graphView.ts          # グラフUI（TypeScript、Cytoscape制御）
@@ -67,11 +68,15 @@ bindings/
    ↓
 7. グラフ要素生成
    ↓
-8. Dagreレイアウト計算 (拡張機能側/Node.js)
+8. Louvainコミュニティ検出 (ファイルレベルのみ)
    ↓
-9. レイアウト座標 + グラフ要素 → Webviewへチャンク転送 (5000要素/チャンク)
+9. CiSEレイアウト計算 (ファイルレベルのみ, 拡張機能側)
    ↓
-10. Cytoscape.jsで事前計算された座標を使用してレンダリング (presetレイアウト)
+10. 階層的座標導出 (全4レベル: dir-only, dir-file, file-only, file-symbol)
+   ↓
+11. 全レベル座標 + グラフ要素 → Webviewへチャンク転送 (5000要素/チャンク)
+   ↓
+12. Cytoscape.jsで事前計算された座標を使用してレンダリング (presetレイアウト)
 ```
 
 ---
@@ -521,15 +526,18 @@ showDiagram(symbols, relationships):
      - webviewReady: 初期化完了を通知
      - openFile: ファイル/行へ移動
      - exportHTML: スタンドアロンHTMLを作成
+     - allLevelPositions: 全レベル座標を受信
   3. loading.htmlテンプレートを表示
   4. symbols/relationshipsからグラフ要素を作成
-  5. Dagreレイアウト計算 (拡張機能側)
-  6. graph-view.htmlのプレースホルダーを置換
-  7. webview HTMLを送信
-  8. webviewReadyメッセージを待機 (最大10秒タイムアウト)
-  9. グラフデータをチャンクで送信 (5000要素/チャンク)
-  10. レイアウト座標を送信
-  11. 完了メッセージを送信
+  5. Louvainコミュニティ検出 (ファイルレベルのみ)
+  6. CiSEレイアウト計算 (ファイルレベルのみ)
+  7. 階層的座標導出 (全4レベル)
+  8. graph-view.htmlのプレースホルダーを置換
+  9. webview HTMLを送信
+  10. webviewReadyメッセージを待機 (最大10秒タイムアウト)
+  11. グラフデータをチャンクで送信 (5000要素/チャンク)
+  12. 全レベル座標を送信 (allLevelPositions)
+  13. 完了メッセージを送信
 ```
 
 #### b) Webview初期化ハンドシェイク
@@ -1305,157 +1313,185 @@ function createElements(nodeLevel: NodeLevel) {
 - 大規模コードベースでもパフォーマンスを維持
 - Directory Onlyで全体構造を把握、File + Symbolで詳細分析
 
-### 7.4 レイアウト事前計算（v0.1.30で拡張機能側に移行）
+### 7.4 階層的レイアウト導出（v0.1.32～）
 
-**問題**: 複雑なレイアウト (dagre) は計算中にUIをフリーズさせる
+**問題**: 大規模プロジェクト（39,000+ノード）でのCiSEレイアウト計算がタイムアウト
 
-**旧解決策（～v0.1.30）**: 非表示のコンテナで位置を事前計算し、その後適用
+**解決策**: ファイルレベルのみCiSE計算し、他レベルは座標を導出
 
-**新解決策（v0.1.30～）**: 拡張機能側（Node.js）でレイアウトを事前計算
-
-```typescript
-async function calculateLayoutPositions(elements, layoutName, options) {
-  // 1. 非表示のコンテナを作成
-  const tempContainer = document.createElement('div')
-  tempContainer.style.position = 'absolute'
-  tempContainer.style.left = '-9999px'
-  document.body.appendChild(tempContainer)
-
-  // 2. 一時的なCytoscapeインスタンスを作成
-  const tempCy = cytoscape({
-    container: tempContainer,
-    elements: elements,
-    headless: false,
-    styleEnabled: false  // 速度のためスタイリングをスキップ
-  })
-
-  // 3. レイアウトアルゴリズムを実行
-  const layout = tempCy.layout({
-    name: layoutName,
-    ...options,
-    animate: false
-  })
-
-  // 4. 完了を待機
-  await new Promise(resolve => {
-    layout.on('layoutstop', resolve)
-    layout.run()
-  })
-
-  // 5. 位置を抽出
-  const positions = new Map()
-  tempCy.nodes().forEach(node => {
-    positions.set(node.id(), node.position())
-  })
-
-  // 6. クリーンアップ
-  tempCy.destroy()
-  document.body.removeChild(tempContainer)
-
-  return positions
-}
-
-// 実際のグラフに適用
-cyInstance = cytoscape({
-  elements: elementsWithPositions,
-  layout: { name: 'preset' }  // 事前計算された位置を使用
-})
+```text
+階層的導出アプローチ:
+1. ファイルノードのみでCiSEレイアウトを計算（計算量大幅削減）
+2. 他の3レベルはファイル座標から導出:
+   - dir-only: ディレクトリ座標 = 含まれるファイルの重心
+   - dir-file: ディレクトリ（重心） + ファイル（計算済み）
+   - file-only: ファイル座標をそのまま使用
+   - file-symbol: シンボルは親ファイルの周囲に円形配置
 ```
 
-**旧実装の利点**:
-- 複雑なレイアウト中のUIフリーズなし
-- 計算中の進捗更新
-- 位置適用時のスムーズなレンダリング
-
-**新実装（v0.1.30～、v0.1.31で簡略化）**:
+**実装（v0.1.32～）**:
 
 ```typescript
-// src/relationship/dagreLayout.ts
-export async function calculateDagreLayout(
-    nodes: LayoutNode[],
-    edges: LayoutEdge[],
-    options: LayoutOptions,
-    progressCallback?: ProgressCallback,
-    signal?: AbortSignal
-): Promise<Map<string, Position>> {
-    const g = new dagre.graphlib.Graph();
-    g.setGraph({
-        rankdir: options.rankDir || 'TB',
-        nodesep: options.nodeSep || 150,  // 階層ビュー用に最適化
-        ranksep: options.rankSep || 200,
-        ranker: 'tight-tree'  // 高速化
+// src/relationship/ciseLayout.ts
+
+// 全レベルの座標を導出
+export function deriveAllLevelPositions(
+    filePositions: LayoutPosition[],
+    allNodes: any[],
+    logs: Logs
+): AllLevelPositions {
+    // ファイル座標をMapに変換
+    const filePositionMap = new Map<string, {x: number, y: number}>();
+    filePositions.forEach(pos => {
+        filePositionMap.set(pos.id, { x: pos.x, y: pos.y });
     });
 
-    // ノードを登録（幅と高さを推定）
-    nodes.forEach(node => {
-        g.setNode(node.id, {
-            width: estimateNodeWidth(node),
-            height: estimateNodeHeight(node)
+    // ノードを分類
+    const fileNodes = allNodes.filter(n => n.data.kind === 0);
+    const symbolNodes = allNodes.filter(n => n.data.kind > 0);
+
+    // 1. ディレクトリ座標を導出（重心計算）
+    const dirPositions = deriveDirectoryPositions(fileNodes, filePositionMap);
+
+    // 2. シンボル座標を導出（親ファイル周囲に円形配置）
+    const symbolPositions = deriveSymbolPositions(symbolNodes, filePositionMap);
+
+    return {
+        'dir-only': dirPositions,
+        'dir-file': [...dirPositions, ...filePositions],
+        'file-only': filePositions,
+        'file-symbol': [...filePositions, ...symbolPositions]
+    };
+}
+
+// ディレクトリ座標の導出（含まれるファイルの重心）
+function deriveDirectoryPositions(fileNodes, filePositionMap): LayoutPosition[] {
+    const dirToFiles = new Map<string, string[]>();
+
+    // ディレクトリごとにファイルをグループ化
+    fileNodes.forEach(node => {
+        const parts = node.data.path.split('/');
+        parts.pop(); // ファイル名を除去
+
+        for (let i = 1; i <= parts.length; i++) {
+            const dirPath = parts.slice(0, i).join('/');
+            const dirId = `dir:${dirPath}`;
+            if (!dirToFiles.has(dirId)) {
+                dirToFiles.set(dirId, []);
+            }
+            dirToFiles.get(dirId).push(node.data.id);
+        }
+    });
+
+    // 各ディレクトリの重心を計算
+    const positions: LayoutPosition[] = [];
+    dirToFiles.forEach((fileIds, dirId) => {
+        let sumX = 0, sumY = 0, count = 0;
+        fileIds.forEach(fileId => {
+            const pos = filePositionMap.get(fileId);
+            if (pos) {
+                sumX += pos.x; sumY += pos.y; count++;
+            }
         });
-    });
-
-    // エッジを登録
-    edges.forEach(edge => {
-        g.setEdge(edge.source, edge.target);
-    });
-
-    // レイアウト計算（Node.js環境）
-    dagre.layout(g);
-
-    // 座標を取得
-    const positions = new Map();
-    g.nodes().forEach(nodeId => {
-        const node = g.node(nodeId);
-        positions.set(nodeId, { x: node.x, y: node.y });
+        if (count > 0) {
+            positions.push({ id: dirId, x: sumX / count, y: sumY / count });
+        }
     });
 
     return positions;
 }
 
-// src/relationship/visualization.ts
-const layoutPositions = await this.calculateLayout(elements, startTime);
+// シンボル座標の導出（親ファイル周囲に円形配置）
+function deriveSymbolPositions(symbolNodes, filePositionMap): LayoutPosition[] {
+    const fileToSymbols = new Map<string, any[]>();
 
-// レイアウト座標をWebviewに送信
-await this.panel.webview.postMessage({
-    type: 'layoutPositions',
-    positions: Array.from(layoutPositions.entries()).map(([id, pos]) => ({
-        id, x: pos.x, y: pos.y
-    }))
-});
+    // 親ファイルごとにシンボルをグループ化
+    symbolNodes.forEach(node => {
+        const parentId = node.data.parent;
+        if (parentId) {
+            if (!fileToSymbols.has(parentId)) {
+                fileToSymbols.set(parentId, []);
+            }
+            fileToSymbols.get(parentId).push(node);
+        }
+    });
 
-// src/webview/graphView.ts - メッセージ受信
-if (message.type === 'layoutPositions') {
+    const positions: LayoutPosition[] = [];
+    const BASE_RADIUS = 50;
+    const RADIUS_PER_SYMBOL = 5;
+
+    fileToSymbols.forEach((symbols, parentId) => {
+        const parentPos = filePositionMap.get(parentId);
+        if (!parentPos) return;
+
+        const radius = BASE_RADIUS + symbols.length * RADIUS_PER_SYMBOL;
+        symbols.forEach((symbol, index) => {
+            const angle = (2 * Math.PI * index) / symbols.length;
+            positions.push({
+                id: symbol.data.id,
+                x: parentPos.x + radius * Math.cos(angle),
+                y: parentPos.y + radius * Math.sin(angle)
+            });
+        });
+    });
+
+    return positions;
+}
+```
+
+**WebView側での使用**:
+
+```typescript
+// src/webview/graphView.ts
+
+// 全レベル座標の受信
+if (message.type === 'allLevelPositions') {
     const { positions } = message;
-    positions.forEach(pos => {
-        layoutPositions.set(pos.id, { x: pos.x, y: pos.y });
+    const levels = ['dir-only', 'dir-file', 'file-only', 'file-symbol'];
+
+    levels.forEach(level => {
+        if (positions[level]) {
+            const positionMap = new Map<string, {x: number, y: number}>();
+            positions[level].forEach(pos => {
+                positionMap.set(pos.id, { x: pos.x, y: pos.y });
+            });
+            layoutPositions.set(level, positionMap);
+        }
     });
 }
 
-// レイアウト使用時
-// Webview側ではpresetレイアウトで座標を適用するのみ
+// レベル切り替え時
+function getCommunityLayout(): any {
+    const currentLevel = nodeLevel || 'file-only';
+    const levelPositions = layoutPositions.get(currentLevel);
+
+    if (levelPositions && levelPositions.size > 0) {
+        return {
+            name: 'preset',
+            positions: (node) => levelPositions.get(node.id()) || { x: 0, y: 0 }
+        };
+    }
+
+    // フォールバック: CiSE/COSEで再計算
+    return communityClusterArray.length > 0
+        ? { name: 'cise', clusters: communityClusterArray }
+        : { name: 'cose' };
+}
 ```
 
-**v0.1.31での変更**:
-- `viewType`パラメータを削除（階層ビューのみのため不要）
-- 関数名を簡略化: `calculateHierarchyLayout` → `calculateLayout`
-- ファイル名を簡略化: `graphMultiview.ts` → `graphView.ts`
-
-**新実装の利点**:
-- **UIフリーズの完全解消**: レイアウト計算がNode.jsのバックグラウンドで実行
-- **メモリ制限の緩和**: Webview ~2GB → Node.js ~4GB+
-- **プログレス表示**: リアルタイムで計算進捗を表示可能
-- **キャンセル機能**: AbortSignalで長時間計算を中断可能
-- **レイアウトキャッシング**: DuckDBに座標を保存可能（将来の機能）
-- **制限値の大幅緩和**: 5,000 → 15,000ノード（3倍）
+**利点**:
+- **大規模プロジェクト対応**: 39,000ノード → 1,072ファイルのみ計算
+- **全4レベルで瞬時切り替え**: 事前計算された座標を使用
+- **HTMLエクスポート後も全レベル対応**: スタンドアロンで動作
+- **レベル間で一貫したレイアウト**: ノードが飛ばない
 
 **パフォーマンス比較**:
 
-| データセット | 旧実装（Webview） | 新実装（拡張機能側） |
-|------------|-----------------|---------------------|
-| 5,000ノード | 3-5秒（UIフリーズ） | 2-3秒（フリーズなし） |
-| 10,000ノード | 不可（制限超過） | 5-8秒（フリーズなし） |
-| 15,000ノード | 不可（制限超過） | 10-15秒（フリーズなし） |
-| 20,000ノード+ | 不可（制限超過） | COSEレイアウトに自動切替 |
+| データセット | 旧実装（全ノード計算） | 新実装（階層的導出） |
+|------------|---------------------|---------------------|
+| 1,072ファイル + 38,296シンボル | タイムアウト | 2-3秒 |
+| レベル切り替え | 再計算必要 | 瞬時（0.1秒未満） |
+| HTMLエクスポート | 1レベルのみ | 全4レベル対応 |
 
 ### 7.5 メモリ管理
 
@@ -1654,29 +1690,41 @@ class Queue<T> {
 - `gravity`: 中心への引力
 - `numIter`: レイアウト計算の反復回数
 
-#### B.2 Dagreレイアウト (階層構造グラフ)
+#### B.2 CiSEレイアウト (コミュニティ構造グラフ)
 
 ```typescript
-// 拡張機能側 (dagreLayout.ts) で計算
+// 拡張機能側 (ciseLayout.ts) で計算
 {
-  rankDir: 'TB',      // 上から下へ
-  nodeSep: 150,       // 水平間隔（ファイルノード用に最適化）
-  rankSep: 200,       // 垂直間隔
-  ranker: 'tight-tree' // 高速なランキングアルゴリズム
+  name: 'cise',
+  clusters: communityClusterArray,  // Louvainで検出されたクラスタ
+  animate: false,
+  fit: true,
+  padding: 50,
+  nodeSeparation: 12.5,
+  idealInterClusterEdgeLengthCoefficient: 1.8,
+  allowNodesInsideCircle: false,
+  maxRatioOfNodesInsideCircle: 0.1,
+  springCoeff: 0.45,
+  nodeRepulsion: 4500,
+  gravity: 0.25,
+  gravityRange: 3.8
 }
 
 // Webview側では preset レイアウトで座標を適用
 {
   name: 'preset',
-  positions: (node) => layoutPositions.get(node.id())
+  positions: (node) => layoutPositions.get(currentLevel).get(node.id())
 }
 ```
 
 **パラメータ説明**:
-- `rankDir`: レイアウト方向 ('TB' = 上から下)
-- `nodeSep`: 同じランク内のノード間の間隔（ファイルノード300px幅を考慮）
-- `rankSep`: ランク間の間隔
-- `ranker`: ランキングアルゴリズム（'tight-tree'は高速）
+- `clusters`: コミュニティごとにグループ化されたノードIDの配列
+- `nodeSeparation`: クラスタ内のノード間隔
+- `idealInterClusterEdgeLengthCoefficient`: クラスタ間エッジの理想長係数
+- `springCoeff`: スプリング係数（弾性）
+- `nodeRepulsion`: ノード間反発力
+- `gravity`: 中心への重力
+- `gravityRange`: 重力の影響範囲
 
 ### 付録C: VSCode SymbolKind色マッピング
 
@@ -1721,6 +1769,7 @@ function getSymbolKindColor(kind: number): string {
 
 | バージョン | 日付 | 変更内容 |
 |-----------|------|----------|
+| 1.3 | 2026-01-23 | v0.1.32対応: CiSEレイアウト + 階層的座標導出、Louvainコミュニティ検出、全レベル座標一括送信、dagreLayout.ts削除 |
 | 1.2 | 2026-01-17 | v0.1.31対応: ファイル名更新(graphView.ts, graph-view.html)、4レベルノード表示、テンプレート簡略化 |
 | 1.1 | 2025-12-29 | § 5.6 スタンドアロンHTMLエクスポート実装詳細を追加 |
 | 1.0 | 2025-12-27 | 初回実装仕様書 (SPECIFICATIONS.mdから分割) |

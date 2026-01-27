@@ -13,13 +13,45 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
-### 可視化の改善
+## [0.1.32] - 2026-01-28
 
-重力は中心から周辺に向けて、引力は関連の多さに比例して、自動的に関連の深いノードが集まる様にする方法を検討して下さい。
+### Added
 
-- Cytoscape.js 以外のライブラリも候補に入れて検討して下さい。
-  - D3.js の treemap または sunburst または ELK.js
-- ../tock/tock.code-workspace の様な大規模でも全てのシンボルを扱える事も考慮に入れて下さい。
+- **階層的レイアウト導出（Hierarchical Layout Derivation）**
+  - ファイルレベルのみでCiSEレイアウトを計算し、他レベルは座標を導出
+  - 大規模プロジェクト対応（39,000ノード → 1,072ファイルのみ計算）
+  - `ciseLayout.ts`に以下の関数を追加:
+    - `deriveAllLevelPositions()`: 全4レベルの座標を導出
+    - `deriveDirectoryPositions()`: ディレクトリ座標を重心から計算
+    - `deriveSymbolPositions()`: シンボルを親ファイル周囲に円形配置
+  - `AllLevelPositions`インターフェース: 4レベル分の座標を格納
+
+- **全レベル座標の一括送信**
+  - `allLevelPositions`メッセージタイプを追加
+  - 4レベル（dir-only, dir-file, file-only, file-symbol）の座標を一度に送信
+  - レベル切り替え時は事前計算された座標を使用（瞬時切り替え）
+
+- **Louvainコミュニティ検出**
+  - `communityDetection.ts`: graphology-communities-louvainを使用
+  - ファイルレベルのノードでコミュニティを検出
+  - CiSEレイアウトのクラスタとして使用
+
+### Changed
+
+- **レイアウト計算の最適化**
+  - 全ノードではなくファイルノードのみでCiSE計算
+  - 計算時間の大幅削減（39,000ノード → 1,072ノード）
+  - タイムアウト問題の解消
+
+- **WebView座標管理の改善**
+  - `layoutPositions`を`Map<viewType, Map<nodeId, {x, y}>>`形式に変更
+  - `getCommunityLayout()`が現在の`nodeLevel`に応じた座標を使用
+  - 後方互換性のため旧形式（`layoutPositions`単一配列）もサポート
+
+### Removed
+
+- `docs/LEIDEN_COMMUNITY_DETECTION.md` - 使用しないため削除
+- `docs/DUCKDB_BINDINGS.md` - 古い情報のため削除
 
 ## [0.1.31] - 2026-01-17
 

@@ -31,8 +31,9 @@
 - **ランタイム**: Node.js 18/20/22 (VSCode組み込み)
 - **フレームワーク**: VSCode Extension API 1.96.x
 - **データベース**: DuckDB (埋め込み型SQL)
-- **可視化**: Cytoscape.js 3.26.x
-- **レイアウト計算**: Dagre 0.8.5 (拡張機能側で実行)
+- **可視化**: Cytoscape.js 3.30.x
+- **レイアウト計算**: CiSE (Circular Spring Embedder) + 階層的座標導出
+- **コミュニティ検出**: Louvain アルゴリズム (graphology-communities-louvain)
 
 ### ビルドツール
 
@@ -66,7 +67,8 @@ src/
 ├── relationship/
 │   ├── examine.ts            # 関係抽出メインロジック
 │   ├── codeRelationships.ts  # Relationshipモデル
-│   ├── dagreLayout.ts        # Dagreレイアウト計算（拡張機能側）
+│   ├── ciseLayout.ts         # CiSEレイアウト計算 + 階層的座標導出
+│   ├── communityDetection.ts # Louvainコミュニティ検出
 │   └── visualization.ts      # Webview管理、グラフ生成
 └── webview/
     └── graphView.ts          # グラフUI（TypeScript、Cytoscape制御）
@@ -96,11 +98,15 @@ bindings/
    ↓
 7. グラフ要素生成
    ↓
-8. Dagreレイアウト計算 (拡張機能側/Node.js) ← NEW!
+8. Louvainコミュニティ検出 (ファイルレベルのみ)
    ↓
-9. レイアウト座標 + グラフ要素 → Webviewへチャンク転送 (5000要素/チャンク)
+9. CiSEレイアウト計算 (ファイルレベルのみ, 拡張機能側)
    ↓
-10. Cytoscape.jsで事前計算された座標を使用してレンダリング (presetレイアウト)
+10. 階層的座標導出 (全4レベル: dir-only, dir-file, file-only, file-symbol)
+   ↓
+11. 全レベル座標 + グラフ要素 → Webviewへチャンク転送 (5000要素/チャンク)
+   ↓
+12. Cytoscape.jsで事前計算された座標を使用してレンダリング (presetレイアウト)
 ```
 
 ---
@@ -142,30 +148,33 @@ bindings/
 
 **実装**: `src/relationship/visualization.ts:200-250`
 
-### 4. 拡張機能側でのDagreレイアウト計算（v0.1.30～）
+### 4. 階層的レイアウト導出（v0.1.32～）
 
-**課題**: Webview側でのDagreレイアウト計算がUIをフリーズさせる
+**課題**: 大規模プロジェクト（39,000+ノード）でのCiSEレイアウト計算がタイムアウト
 
-**解決策**: 拡張機能側（Node.js環境）でDagreレイアウトを事前計算
-- レイアウト計算をNode.jsのメインスレッドで実行
-- 計算された座標をWebviewに送信
-- Webviewは`preset`レイアウトで座標を適用するのみ
+**解決策**: ファイルレベルのみCiSE計算し、他レベルは座標を導出
+- ファイルノードのみでCiSEレイアウトを計算（計算量大幅削減）
+- 他の3レベルはファイル座標から導出:
+  - **dir-only**: ディレクトリ座標 = 含まれるファイルの重心
+  - **dir-file**: ディレクトリ（重心） + ファイル（計算済み）
+  - **file-only**: ファイル座標をそのまま使用
+  - **file-symbol**: シンボルは親ファイルの周囲に円形配置
 
 **利点**:
-- UIフリーズの完全解消
-- メモリ制限の緩和（Webview: ~2GB → Node.js: ~4GB+）
-- プログレス表示とキャンセル機能の実装が容易
-- レイアウトキャッシングが可能
+- 大規模プロジェクト対応（39,000ノード → 1,072ファイルのみ計算）
+- 全4レベルで瞬時に切り替え可能
+- HTMLエクスポート後も全レベル対応
+- レベル間で一貫したレイアウト（ノードが飛ばない）
 
-**新しい制限値**:
-- **小規模** (≤ 15,000ノード): シンボルレベル詳細表示
-- **中規模** (≤ 10,000ノード または ≤ 15,000エッジ): Dagreレイアウト（拡張機能側）
-- **大規模** (> 10,000ノード): COSEレイアウト（フォールバック）
+**制限値**:
+- **小規模** (≤ 15,000ノード): 全4レベル使用可能
+- **大規模** (> 15,000ノード): 自動的にfile-onlyに切り替え
 
 **実装**:
-- `src/relationship/dagreLayout.ts`: Dagreレイアウト計算ロジック（viewTypeパラメータ削除済み）
-- `src/relationship/visualization.ts`: `calculateLayout` メソッド
-- `src/webview/graphView.ts`: layoutPositionsメッセージ受信
+- `src/relationship/ciseLayout.ts`: CiSE計算 + `deriveAllLevelPositions()`
+- `src/relationship/communityDetection.ts`: Louvainコミュニティ検出
+- `src/relationship/visualization.ts`: ファイルレベル計算と全レベル送信
+- `src/webview/graphView.ts`: `allLevelPositions`メッセージ受信、レベル別座標適用
 
 ### 5. 適応型レンダリング
 
@@ -326,10 +335,12 @@ ls bindings/
 ## 参考ドキュメント
 
 - **技術仕様書**: `docs/SPECIFICATIONS.md` - 包括的なアーキテクチャと実装詳細
-- **バインディングビルド**: `docs/DUCKDB_BINDINGS.md` - DuckDBネイティブバインディングのビルド手順
+- **機能仕様書**: `docs/FUNCTIONAL_SPECS.md` - 機能仕様の詳細
+- **実装仕様書**: `docs/IMPLEMENTATION_SPECS.md` - 実装仕様の詳細
 - **変更履歴**: `CHANGELOG.md` - バージョンごとの変更内容
 - **VSCode拡張機能API**: https://code.visualstudio.com/api
 - **Cytoscape.js**: https://js.cytoscape.org/
+- **CiSE Layout**: https://github.com/iVis-at-Bilkent/cytoscape.js-cise
 
 ---
 
@@ -389,8 +400,8 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
 
 ## 最終更新
 
-- **日付**: 2026-01-17
-- **バージョン**: 0.1.31
+- **日付**: 2026-01-23
+- **バージョン**: 0.1.32
 - **作成者**: Claude Code
 
 このファイルはプロジェクトの進化に伴い定期的に更新してください。

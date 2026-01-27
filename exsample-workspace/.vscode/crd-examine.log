@@ -1,0 +1,20 @@
+2026-01-27 16:39:29.767 [info] 1/7 Listed file: src/main.c
+2026-01-27 16:39:29.767 [info] 1/7 Listed file: src/math_utils.c
+2026-01-27 16:39:29.768 [info] 1/7 Listed file: src/string_utils.c
+2026-01-27 16:39:29.768 [info] Listed file: 3 files
+2026-01-27 16:39:29.784 [info] 2/7 Extructed symbol: src/main.c
+2026-01-27 16:39:29.801 [info] 2/7 Extructed symbol: src/math_utils.c
+2026-01-27 16:39:29.802 [info] 2/7 Extructed symbol: src/string_utils.c
+2026-01-27 16:39:29.802 [info] Extructed symbols: 3 files undefined
+2026-01-27 16:39:29.802 [info] Not changed symbols 0 files undefined
+2026-01-27 16:39:29.805 [info] Waitied for indexing to complete... attempt 1
+2026-01-27 16:39:32.276 [info] 5/7 Examined relationship: src/main.c 0 references
+2026-01-27 16:39:32.278 [info] 6/7 Saved symbol: src/main.c
+2026-01-27 16:39:32.279 [info] 7/7 Upserted file: src/main.c
+2026-01-27 16:39:35.713 [info] 5/7 Examined relationship: src/string_utils.c 2 references
+2026-01-27 16:39:35.716 [info] 6/7 Saved symbol: src/string_utils.c
+2026-01-27 16:39:35.716 [info] 7/7 Upserted file: src/string_utils.c
+2026-01-27 16:39:39.023 [info] 5/7 Examined relationship: src/math_utils.c 14 references
+2026-01-27 16:39:39.027 [info] 6/7 Saved symbol: src/math_utils.c
+2026-01-27 16:39:39.028 [info] 7/7 Upserted file: src/math_utils.c
+2026-01-27 16:39:39.028 [info] 9 processed 3 files(added 3, updated 0, no changed 0, removed 0) 158 lines, 16 relationships

@@ -39,22 +39,36 @@ window.GRAPH_DATA = {
     {"data":{"id":"symbol-relation-src/main.c/Function.main()@83c873a3749b35bd98f397e873ac266510c77deb79ab7e79664afcc4f1ee0204-src/string_utils.c/Function.string_compare(const char *, const char *)@e55ba43d00495bd07fe0a1846a996cccfb214f10432e71e474d20467ef997f80","source":"src/main.c/Function.main()@83c873a3749b35bd98f397e873ac266510c77deb79ab7e79664afcc4f1ee0204","target":"src/string_utils.c/Function.string_compare(const char *, const char *)@e55ba43d00495bd07fe0a1846a996cccfb214f10432e71e474d20467ef997f80","relationshipType":"symbol-relationship"}}
   ],
   "layoutPositions": {
-    "hierarchy": [
-      {"id":"src/main.c","x":2228,"y":1520},
-      {"id":"src/main.c/Function.main()@83c873a3749b35bd98f397e873ac266510c77deb79ab7e79664afcc4f1ee0204","x":2228,"y":972},
-      {"id":"src/math_utils.c","x":1965,"y":398},
-      {"id":"src/math_utils.c/Function.add(int, int)@a5de93fa2c1b5dc347958d3cbba7522092b1889eac3a357b3aa8c231b28ab611","x":2506,"y":0},
-      {"id":"src/math_utils.c/Function.multiply(int, int)@4bdbac56fe881fc6ea78600d9b93df5925066cf50308f30c70b2a4c092773ceb","x":2096,"y":0},
-      {"id":"src/math_utils.c/Function.calculate_area(double)@13e4bdfc5131c50bdb9a1f81981870ae502f59d05c49dd821aae2b859bb3ba97","x":459,"y":0},
-      {"id":"src/math_utils.c/Function.print_result(const char *, double)@a39b6995b38bc118a599cbe0a900db9ba4742a79c1083f6db2a2d8c01dc24d14","x":2841,"y":0},
-      {"id":"src/math_utils.c/Function.distance(Point, Point)@f0dc335e5f416ec97378b1c84e2c67a9eda00b9f9b1a7ae5d6bcdf330a0f4792","x":1677,"y":0},
-      {"id":"src/math_utils.c/Function.complex_calculation(int, int)@1ad3a5671620230147bb6b9e2c29efe026a834156d1b4cc313b6bc8ead70bc7c","x":111,"y":0},
-      {"id":"src/string_utils.c","x":1260,"y":972},
-      {"id":"src/string_utils.c/Function.string_length(const char *)@19dc8773f4f02312125937e80d0471a56024af3541e733d1b87f8ebeb35528b7","x":659,"y":398},
-      {"id":"src/string_utils.c/Function.string_copy(char *, const char *)@a5a1aea023553d234f31f68e45743b6f1f0a5150ee17c483e78263347e51eec7","x":1037,"y":398},
-      {"id":"src/string_utils.c/Function.string_compare(const char *, const char *)@e55ba43d00495bd07fe0a1846a996cccfb214f10432e71e474d20467ef997f80","x":1464,"y":398},
-      {"id":"src/string_utils.c/Function.print_string_info(const char *)@4d1e2c786b2c952504897bced9710510a9cfdecf84d6a828664b006de6338318","x":2430,"y":398},
-      {"id":"src/string_utils.c/Function.string_statistics(const char * [], int)@8c1eeac3e7cb668f07fefcbf659579d0c46e8b2e50e4a741035b002343f1426a","x":2861,"y":398}
+    "dir-only": [
+      {"id":"dir:src","x":34,"y":29}
+    ],
+    "dir-file": [
+      {"id":"dir:src","x":34,"y":29},
+      {"id":"src/main.c","x":43,"y":44},
+      {"id":"src/math_utils.c","x":45,"y":15},
+      {"id":"src/string_utils.c","x":15,"y":29}
+    ],
+    "file-only": [
+      {"id":"src/main.c","x":43,"y":44},
+      {"id":"src/math_utils.c","x":45,"y":15},
+      {"id":"src/string_utils.c","x":15,"y":29}
+    ],
+    "file-symbol": [
+      {"id":"src/main.c","x":43,"y":44},
+      {"id":"src/math_utils.c","x":45,"y":15},
+      {"id":"src/string_utils.c","x":15,"y":29},
+      {"id":"src/main.c/Function.main()@83c873a3749b35bd98f397e873ac266510c77deb79ab7e79664afcc4f1ee0204","x":98,"y":44},
+      {"id":"src/math_utils.c/Function.add(int, int)@a5de93fa2c1b5dc347958d3cbba7522092b1889eac3a357b3aa8c231b28ab611","x":125,"y":15},
+      {"id":"src/math_utils.c/Function.multiply(int, int)@4bdbac56fe881fc6ea78600d9b93df5925066cf50308f30c70b2a4c092773ceb","x":85,"y":84},
+      {"id":"src/math_utils.c/Function.calculate_area(double)@13e4bdfc5131c50bdb9a1f81981870ae502f59d05c49dd821aae2b859bb3ba97","x":5,"y":84},
+      {"id":"src/math_utils.c/Function.print_result(const char *, double)@a39b6995b38bc118a599cbe0a900db9ba4742a79c1083f6db2a2d8c01dc24d14","x":-35,"y":15},
+      {"id":"src/math_utils.c/Function.distance(Point, Point)@f0dc335e5f416ec97378b1c84e2c67a9eda00b9f9b1a7ae5d6bcdf330a0f4792","x":5,"y":-54},
+      {"id":"src/math_utils.c/Function.complex_calculation(int, int)@1ad3a5671620230147bb6b9e2c29efe026a834156d1b4cc313b6bc8ead70bc7c","x":85,"y":-54},
+      {"id":"src/string_utils.c/Function.string_length(const char *)@19dc8773f4f02312125937e80d0471a56024af3541e733d1b87f8ebeb35528b7","x":90,"y":29},
+      {"id":"src/string_utils.c/Function.string_copy(char *, const char *)@a5a1aea023553d234f31f68e45743b6f1f0a5150ee17c483e78263347e51eec7","x":38,"y":100},
+      {"id":"src/string_utils.c/Function.string_compare(const char *, const char *)@e55ba43d00495bd07fe0a1846a996cccfb214f10432e71e474d20467ef997f80","x":-46,"y":73},
+      {"id":"src/string_utils.c/Function.print_string_info(const char *)@4d1e2c786b2c952504897bced9710510a9cfdecf84d6a828664b006de6338318","x":-46,"y":-15},
+      {"id":"src/string_utils.c/Function.string_statistics(const char * [], int)@8c1eeac3e7cb668f07fefcbf659579d0c46e8b2e50e4a741035b002343f1426a","x":38,"y":-42}
     ]
   }
 };
