@@ -12,14 +12,23 @@
 import { Logs } from '../logs';
 import { HierarchicalCommunity, HierarchicalCommunityResult, CommunityEdge } from './communityDetection';
 
-// Cytoscape.jsとCiSE拡張をNode.js環境で読み込み
+// Cytoscape.jsとCiSE拡張をNode.js環境で読み込み（遅延ロード）
+let cytoscape: any = null;
+let cytoscapeInitialized = false;
 
-const cytoscape = require('cytoscape');
-
-const cise = require('cytoscape-cise');
-
-// CiSE拡張を登録
-cytoscape.use(cise);
+/**
+ * Cytoscapeを遅延初期化
+ * activate時ではなく、実際に使用する時に初めてロードする
+ */
+function initCytoscape(): any {
+    if (!cytoscapeInitialized) {
+        cytoscape = require('cytoscape');
+        const cise = require('cytoscape-cise');
+        cytoscape.use(cise);
+        cytoscapeInitialized = true;
+    }
+    return cytoscape;
+}
 
 /**
  * レイアウト計算結果
@@ -71,8 +80,8 @@ export async function calculateCiSELayout(
 
     return new Promise((resolve, reject) => {
         try {
-            // Cytoscape.jsをheadlessモードで初期化
-            const cy = cytoscape({
+            // Cytoscape.jsをheadlessモードで初期化（遅延ロード）
+            const cy = initCytoscape()({
                 headless: true,
                 styleEnabled: true,  // レイアウト計算にはスタイル情報が必要
                 elements: {
@@ -362,8 +371,8 @@ export async function calculateCOSELayout(
 
     return new Promise((resolve, reject) => {
         try {
-            // Cytoscape.jsをheadlessモードで初期化
-            const cy = cytoscape({
+            // Cytoscape.jsをheadlessモードで初期化（遅延ロード）
+            const cy = initCytoscape()({
                 headless: true,
                 styleEnabled: true,
                 elements: {
@@ -719,8 +728,8 @@ async function calculateCommunityPositions(
 
     logs.log(`[Community Positions] Calculating for ${communityNodes.length} communities, ${communityEdges.length} edges`);
 
-    // Cytoscape.jsでレイアウト計算
-    const cy = cytoscape({
+    // Cytoscape.jsでレイアウト計算（遅延ロード）
+    const cy = initCytoscape()({
         headless: true,
         styleEnabled: true,
         elements: {

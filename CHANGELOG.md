@@ -13,6 +13,15 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.1.33] - 2026-01-30
+
+### Fixed
+
+- **Ubuntu起動エラーの修正**
+  - `esbuild.js`: npm版`events`パッケージをNode.js組み込み`node:events`にエイリアス
+  - `ciseLayout.ts`: Cytoscape.jsの遅延ロード対応（activate時ではなく使用時にロード）
+  - graphologyがnpm版eventsを依存として持つ問題を解消
+
 ## [0.1.32] - 2026-01-28
 
 ### Added
@@ -55,7 +64,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [0.1.31] - 2026-01-17
 
-### Added
+### 0.1.31 Added
 
 - 4レベルのノード表示切り替え機能
   - **Directory Only**: ディレクトリノードのみを表示
@@ -74,7 +83,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - **大規模**（> 50,000ノード）: dir-only, dir-file, file-only のみ
   - 大規模データセットでは自動的にfile-onlyに切り替え
 
-### Changed
+### 0.1.31 Changed
 
 - マルチビューからシングルビュー（階層構造のみ）に変更
   - タブナビゲーションを削除
@@ -107,7 +116,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - スタンドアロンHTMLでエクスポートボタンが一瞬表示される問題を修正
   - `EXPORT_BUTTON_PLACEHOLDER` でスタンドアロン版は空文字列を返すことで解決
 
-### Removed
+### 0.1.31 Removed
 
 - ファイル依存関係ビュー機能
 - マルチビュー切り替え機能

@@ -41,6 +41,10 @@ async function main() {
 		plugins: [
 			esbuildProblemMatcherPlugin,
 		],
+		// graphologyのnpm版events依存をNode.js組み込みモジュールにエイリアス
+		alias: {
+			'events': 'node:events',
+		},
 	});
 
 	// Build webview script (Browser)
