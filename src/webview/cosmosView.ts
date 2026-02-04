@@ -5,8 +5,8 @@
  * WebView内で動作する
  */
 
-// @ts-ignore - Cosmos.glはグローバルにロードされる
-declare const CosmosGraph: {
+// @ts-ignore - Cosmos.glはグローバルにロードされる（UMDビルドは "Cosmos" として公開）
+declare const Cosmos: {
     Graph: new (container: HTMLDivElement, config?: any) => any;
 };
 
@@ -416,10 +416,10 @@ class CosmosGraphView {
 
         // Cosmos.glインスタンスを作成
         try {
-            // @ts-ignore
-            const Graph = window.CosmosGraph?.Graph || CosmosGraph?.Graph;
+            // @ts-ignore - UMDビルドは "Cosmos" として公開
+            const Graph = (window as any).Cosmos?.Graph || Cosmos?.Graph;
             if (!Graph) {
-                this.log('Cosmos Graph class not found');
+                this.log('Cosmos Graph class not found. Make sure @cosmos.gl/graph is loaded.');
                 return;
             }
 
