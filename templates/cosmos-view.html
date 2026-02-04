@@ -220,32 +220,90 @@
             text-align: center;
         }
 
-        /* Tooltip */
+        /* Tooltip - Phase 3 Enhanced */
         .cosmos-tooltip {
             position: absolute;
             display: none;
             background: CONTROLS_BG_PLACEHOLDER;
             border: BORDER_STYLE_PLACEHOLDER;
-            border-radius: 4px;
-            padding: 8px 12px;
+            border-radius: 6px;
+            padding: 10px 14px;
             font-size: 12px;
             color: CONTROLS_COLOR_PLACEHOLDER;
-            max-width: 300px;
+            max-width: 350px;
             z-index: 1000;
             pointer-events: auto;
-            box-shadow: 0 2px 8px BOX_SHADOW_COLOR_PLACEHOLDER;
+            box-shadow: 0 4px 12px BOX_SHADOW_COLOR_PLACEHOLDER;
         }
-        .cosmos-tooltip a {
+        .cosmos-tooltip .tooltip-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+        }
+        .cosmos-tooltip .tooltip-icon {
+            font-size: 16px;
+        }
+        .cosmos-tooltip .tooltip-path {
+            color: #888;
+            font-size: 11px;
+            word-break: break-all;
+            margin-bottom: 4px;
+        }
+        .cosmos-tooltip .tooltip-info {
+            color: #aaa;
+            font-size: 11px;
+        }
+        .cosmos-tooltip .tooltip-connections {
+            margin-top: 6px;
+            padding-top: 6px;
+        }
+        .cosmos-tooltip .tooltip-section {
+            margin-top: 6px;
+        }
+        .cosmos-tooltip .tooltip-label {
+            display: block;
+            color: #888;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .cosmos-tooltip .tooltip-link {
+            display: flex;
+            flex-direction: column;
             color: #4A90E2;
             text-decoration: none;
-            display: block;
-            padding: 2px 0;
+            padding: 4px 6px;
+            margin: 2px 0;
+            border-radius: 3px;
+            background: rgba(74, 144, 226, 0.1);
+            transition: background 0.15s ease;
         }
-        .cosmos-tooltip a:hover {
-            text-decoration: underline;
+        .cosmos-tooltip .tooltip-link:hover {
+            background: rgba(74, 144, 226, 0.25);
+            text-decoration: none;
+        }
+        .cosmos-tooltip .tooltip-outgoing {
+            border-left: 2px solid #4A90E2;
+        }
+        .cosmos-tooltip .tooltip-incoming {
+            border-left: 2px solid #7CB342;
+        }
+        .cosmos-tooltip .tooltip-location {
+            font-size: 10px;
+            color: #888;
+            margin-top: 2px;
+        }
+        .cosmos-tooltip .tooltip-more {
+            display: block;
+            color: #666;
+            font-size: 11px;
+            font-style: italic;
+            margin-top: 4px;
         }
         .cosmos-tooltip hr {
-            margin: 4px 0;
+            margin: 6px 0;
             border: none;
             border-top: BORDER_STYLE_PLACEHOLDER;
         }
@@ -307,6 +365,9 @@
 
     <!-- Graph container (Cosmos.gl canvas will be added here) -->
     <div id="graph-container"></div>
+
+    <!-- Tooltip (Phase 3) -->
+    <div id="cosmos-tooltip" class="cosmos-tooltip"></div>
 
     <!-- Main script -->
     GRAPH_SCRIPT_URI_PLACEHOLDER

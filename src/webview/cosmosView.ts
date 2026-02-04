@@ -84,6 +84,12 @@ class CosmosGraphView {
     private nodeLevel: 'dir-only' | 'dir-file' | 'file-only' | 'file-symbol' = 'file-only';
     private nodeIndexMap: Map<string, number> = new Map();
 
+    // Phase 3: リンク関連の状態
+    private highlightedLinks: Set<number> = new Set();
+    private originalLinkColors: Float32Array | null = null;
+    private currentVisibleNodes: CosmosNodeData[] = [];
+    private currentVisibleLinks: CosmosLinkData[] = [];
+
     constructor(containerId: string) {
         // VS Code API（スタンドアロンの場合はnull）
         if (typeof acquireVsCodeApi !== 'undefined') {
@@ -343,6 +349,11 @@ class CosmosGraphView {
         const visibleNodes = this.getVisibleNodes();
         const visibleLinks = this.getVisibleLinks(visibleNodes);
 
+        // Phase 3: 表示中のノード・リンクをキャッシュ
+        this.currentVisibleNodes = visibleNodes;
+        this.currentVisibleLinks = visibleLinks;
+        this.highlightedLinks.clear();
+
         // データを配列に変換
         const positions = new Float32Array(visibleNodes.length * 2);
         const sizes = new Float32Array(visibleNodes.length);
@@ -422,6 +433,16 @@ class CosmosGraphView {
             if (visibleLinks.length > 0) {
                 this.graph.setLinks(linkArray);
                 this.graph.setLinkWidths(linkWidths);
+
+                // Phase 3: 元のリンク色を保存（後でハイライト解除時に復元用）
+                this.originalLinkColors = new Float32Array(visibleLinks.length * 4);
+                for (let i = 0; i < visibleLinks.length; i++) {
+                    // デフォルトのリンク色（グレー）
+                    this.originalLinkColors[i * 4] = 0.4;
+                    this.originalLinkColors[i * 4 + 1] = 0.4;
+                    this.originalLinkColors[i * 4 + 2] = 0.4;
+                    this.originalLinkColors[i * 4 + 3] = 0.5;
+                }
             }
 
             // レンダリング開始（シミュレーションは停止）
@@ -549,50 +570,190 @@ class CosmosGraphView {
         if (index === undefined || !this.data || !this.tooltip) {
             this.hideTooltip();
             this.hoveredNodeIndex = null;
+            // Phase 3: リンクハイライトを解除
+            this.clearLinkHighlights();
             return;
         }
 
         this.hoveredNodeIndex = index;
-        const visibleNodes = this.getVisibleNodes();
-        const node = visibleNodes[index];
+        const node = this.currentVisibleNodes[index];
         if (!node) {return;}
 
+        // 元のデータでのインデックスを取得
+        const originalIndex = this.data.nodes.indexOf(node);
+
+        // Phase 3: 関連リンクをハイライト
+        this.highlightLinksForNode(originalIndex);
+
         // ツールチップ内容を生成
-        let content = `<strong>${node.label}</strong><br>`;
-        content += `<span style="color:#888">${node.path}</span><br>`;
+        let content = `<div class="tooltip-header">`;
+        content += `<span class="tooltip-icon">${this.getNodeIcon(node)}</span>`;
+        content += `<strong>${node.label}</strong>`;
+        content += `</div>`;
+        content += `<div class="tooltip-path">${node.path}</div>`;
 
         if (node.level === 'directory') {
-            content += `${node.childCount} files`;
+            content += `<div class="tooltip-info">${node.childCount} files</div>`;
         } else if (node.level === 'file') {
-            content += `${node.childCount} symbols`;
+            content += `<div class="tooltip-info">${node.childCount} symbols</div>`;
         } else if (node.line !== undefined) {
-            content += `Line ${node.line + 1}`;
+            content += `<div class="tooltip-info">Line ${node.line + 1}</div>`;
         }
 
-        // 関係線の情報を追加
-        const originalIndex = this.data.nodes.indexOf(node);
+        // Phase 3: 関係線の情報を追加（改善版）
         const relatedLinks = this.data.links.filter(
             l => l.source === originalIndex || l.target === originalIndex
         );
 
         if (relatedLinks.length > 0) {
             content += `<hr>`;
-            content += `<strong>${relatedLinks.length} connections</strong><br>`;
+            content += `<div class="tooltip-connections">`;
+            content += `<strong>🔗 ${relatedLinks.length} connections</strong>`;
+            content += `</div>`;
 
-            // 詳細をクリック可能なリンクとして表示
-            const details = relatedLinks.slice(0, 5).flatMap(l => l.details.slice(0, 2));
-            for (const detail of details) {
-                content += `<a href="#" class="tooltip-link" data-path="${detail.targetPath}" data-line="${detail.targetLine}">`;
-                content += `&rarr; ${detail.targetName} (${detail.targetPath.split('/').pop()}:${detail.targetLine + 1})`;
-                content += `</a><br>`;
+            // 出力方向と入力方向を分けて表示
+            const outgoing: Array<{ detail: CosmosLinkData['details'][0], link: CosmosLinkData }> = [];
+            const incoming: Array<{ detail: CosmosLinkData['details'][0], link: CosmosLinkData }> = [];
+
+            for (const link of relatedLinks) {
+                for (const detail of link.details.slice(0, 3)) {
+                    if (link.source === originalIndex) {
+                        outgoing.push({ detail, link });
+                    } else {
+                        incoming.push({ detail, link });
+                    }
+                }
             }
 
-            if (relatedLinks.length > 5) {
-                content += `<span style="color:#888">...and ${relatedLinks.length - 5} more</span>`;
+            // 出力方向（このノードから参照）
+            if (outgoing.length > 0) {
+                content += `<div class="tooltip-section">`;
+                content += `<span class="tooltip-label">→ References:</span>`;
+                for (const { detail } of outgoing.slice(0, 3)) {
+                    content += `<a href="#" class="tooltip-link tooltip-outgoing" `;
+                    content += `data-path="${detail.targetPath}" data-line="${detail.targetLine}">`;
+                    content += `${detail.targetName}`;
+                    content += `<span class="tooltip-location">${detail.targetPath.split('/').pop()}:${detail.targetLine + 1}</span>`;
+                    content += `</a>`;
+                }
+                if (outgoing.length > 3) {
+                    content += `<span class="tooltip-more">+${outgoing.length - 3} more</span>`;
+                }
+                content += `</div>`;
+            }
+
+            // 入力方向（このノードを参照）
+            if (incoming.length > 0) {
+                content += `<div class="tooltip-section">`;
+                content += `<span class="tooltip-label">← Referenced by:</span>`;
+                for (const { detail } of incoming.slice(0, 3)) {
+                    content += `<a href="#" class="tooltip-link tooltip-incoming" `;
+                    content += `data-path="${detail.sourcePath}" data-line="${detail.sourceLine}">`;
+                    content += `${detail.sourceName}`;
+                    content += `<span class="tooltip-location">${detail.sourcePath.split('/').pop()}:${detail.sourceLine + 1}</span>`;
+                    content += `</a>`;
+                }
+                if (incoming.length > 3) {
+                    content += `<span class="tooltip-more">+${incoming.length - 3} more</span>`;
+                }
+                content += `</div>`;
             }
         }
 
         this.showTooltip(content);
+    }
+
+    /**
+     * ノードアイコンを取得
+     */
+    private getNodeIcon(node: CosmosNodeData): string {
+        if (node.level === 'directory') {
+            return '📁';
+        } else if (node.level === 'file') {
+            return '📄';
+        } else {
+            // シンボル種別に応じたアイコン
+            switch (node.kind) {
+                case 4: return '🏛️';  // Class
+                case 10: return '🔧';  // Interface
+                case 11: return '⚡';  // Function
+                case 5: return '🔹';  // Method
+                case 12: return '📊';  // Variable
+                case 13: return '🔒';  // Constant
+                case 9: return '📋';  // Enum
+                default: return '◉';
+            }
+        }
+    }
+
+    /**
+     * Phase 3: 指定ノードに接続されたリンクをハイライト
+     */
+    private highlightLinksForNode(originalNodeIndex: number): void {
+        if (!this.data || !this.graph || this.currentVisibleLinks.length === 0) {return;}
+
+        // リマップされたインデックスを取得
+        const nodeIndexRemap = new Map<number, number>();
+        this.currentVisibleNodes.forEach((node, newIndex) => {
+            const origIndex = this.data!.nodes.indexOf(node);
+            nodeIndexRemap.set(origIndex, newIndex);
+        });
+
+        const remappedNodeIndex = nodeIndexRemap.get(originalNodeIndex);
+        if (remappedNodeIndex === undefined) {return;}
+
+        // ハイライトするリンクを特定
+        this.highlightedLinks.clear();
+        const linkColors = new Float32Array(this.currentVisibleLinks.length * 4);
+
+        for (let i = 0; i < this.currentVisibleLinks.length; i++) {
+            const link = this.currentVisibleLinks[i];
+            const sourceRemap = nodeIndexRemap.get(link.source);
+            const targetRemap = nodeIndexRemap.get(link.target);
+
+            if (sourceRemap === remappedNodeIndex || targetRemap === remappedNodeIndex) {
+                // ハイライト色（オレンジ）
+                this.highlightedLinks.add(i);
+                linkColors[i * 4] = 1.0;      // R
+                linkColors[i * 4 + 1] = 0.6;  // G
+                linkColors[i * 4 + 2] = 0.0;  // B
+                linkColors[i * 4 + 3] = 0.9;  // A
+            } else {
+                // 元の色（薄いグレー）
+                linkColors[i * 4] = 0.3;
+                linkColors[i * 4 + 1] = 0.3;
+                linkColors[i * 4 + 2] = 0.3;
+                linkColors[i * 4 + 3] = 0.2;
+            }
+        }
+
+        // リンク色を更新
+        try {
+            if (this.graph.setLinkColors) {
+                this.graph.setLinkColors(linkColors);
+            }
+        } catch (e) {
+            // Cosmos.glバージョンによってはsetLinkColorsが無い場合がある
+            this.log(`Link color update not supported: ${e}`);
+        }
+    }
+
+    /**
+     * Phase 3: リンクハイライトをクリア
+     */
+    private clearLinkHighlights(): void {
+        if (!this.graph || !this.originalLinkColors || this.highlightedLinks.size === 0) {return;}
+
+        this.highlightedLinks.clear();
+
+        // 元の色に戻す
+        try {
+            if (this.graph.setLinkColors) {
+                this.graph.setLinkColors(this.originalLinkColors);
+            }
+        } catch (e) {
+            // 無視
+        }
     }
 
     /**
