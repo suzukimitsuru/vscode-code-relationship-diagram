@@ -1621,6 +1621,98 @@ export class Visualization {
         }
     }
 
+    // ========================================
+    // Phase 4: VSCode統合 - エディタイベント連携
+    // ========================================
+
+    /**
+     * パネルがアクティブかどうかを確認
+     */
+    public isActive(): boolean {
+        return this.panel !== null;
+    }
+
+    /**
+     * 現在のビュータイプを取得
+     */
+    public getViewType(): ViewType {
+        return this.viewType;
+    }
+
+    /**
+     * エディタでファイルが開かれた時にWebviewに通知
+     * @param filePath ワークスペースからの相対パス
+     */
+    public sendEditorFileOpen(filePath: string): void {
+        if (!this.panel) {return;}
+
+        const relativePath = path.relative(this.wsFolder, filePath);
+        this.panel.webview.postMessage({
+            type: 'editorFileOpen',
+            path: relativePath
+        });
+        this.logs.log(`[Phase4] Sent editorFileOpen: ${relativePath}`);
+    }
+
+    /**
+     * エディタのカーソル位置が変更された時にWebviewに通知
+     * @param filePath ワークスペースからの相対パス
+     * @param line 行番号（0-indexed）
+     */
+    public sendEditorCursorChange(filePath: string, line: number): void {
+        if (!this.panel) {return;}
+
+        const relativePath = path.relative(this.wsFolder, filePath);
+        this.panel.webview.postMessage({
+            type: 'editorCursorChange',
+            path: relativePath,
+            line: line
+        });
+    }
+
+    /**
+     * 特定のファイルにズーム
+     * @param filePath ワークスペースからの相対パス
+     */
+    public zoomToFile(filePath: string): void {
+        if (!this.panel) {return;}
+
+        const relativePath = path.relative(this.wsFolder, filePath);
+        this.panel.webview.postMessage({
+            type: 'zoomToFile',
+            path: relativePath
+        });
+        this.logs.log(`[Phase4] Sent zoomToFile: ${relativePath}`);
+    }
+
+    /**
+     * 関連コードを表示（選択範囲のシンボルとその依存関係）
+     * @param filePath ファイルパス
+     * @param startLine 開始行
+     * @param endLine 終了行
+     */
+    public showRelatedCode(filePath: string, startLine: number, endLine: number): void {
+        if (!this.panel) {return;}
+
+        const relativePath = path.relative(this.wsFolder, filePath);
+        this.panel.webview.postMessage({
+            type: 'showRelatedCode',
+            path: relativePath,
+            startLine: startLine,
+            endLine: endLine
+        });
+        this.logs.log(`[Phase4] Sent showRelatedCode: ${relativePath}:${startLine}-${endLine}`);
+    }
+
+    /**
+     * パネル破棄時のコールバックを設定
+     */
+    public onDidDispose(callback: () => void): void {
+        if (this.panel) {
+            this.panel.onDidDispose(callback);
+        }
+    }
+
     public dispose() {
         if (this.panel) {
             this.panel.dispose();

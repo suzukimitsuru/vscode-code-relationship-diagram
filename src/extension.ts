@@ -84,6 +84,22 @@ class IntervalProcess {
 let _logs: Logs | null = null;
 const _interval_processe = new IntervalProcess();
 
+// Phase 4: アクティブなグラフビジュアライゼーションの参照
+let _activeGraphViz: Relationship.Visualization | null = null;
+
+/**
+ * デバウンス関数
+ */
+function debounce<T extends (...args: any[]) => void>(fn: T, delay: number): T {
+	let timeoutId: NodeJS.Timeout | undefined;
+	return ((...args: any[]) => {
+		if (timeoutId) {
+			clearTimeout(timeoutId);
+		}
+		timeoutId = setTimeout(() => fn(...args), delay);
+	}) as T;
+}
+
 /**
  * @function 拡張機能の有効化イベント
  * @param context extention contexest
@@ -324,18 +340,30 @@ export function activate(context: vscode.ExtensionContext) {
 						}
 
 						// グラフを表示
-						const graphViz = new Relationship.Visualization(context, workspace_folder, workspace_basename + '.crd.html', logs);
-						if (viewType === 'cosmos') {
-							logs.log('Using Cosmos.gl view');
-							await graphViz.showCosmosDiagram(all_symbols, all_rels);
-						} else {
-							logs.log('Using Cytoscape.js view');
-							await graphViz.showDiagram(all_symbols, all_rels);
-						}
-						logs.log('Show Diagram completed');
+					const graphViz = new Relationship.Visualization(context, workspace_folder, workspace_basename + '.crd.html', logs);
 
-						db.dispose();
-						logs.info('Code relationship diagram displayed');
+					// Phase 4: アクティブなグラフビジュアライゼーションを保存
+					_activeGraphViz = graphViz;
+
+					// パネル破棄時に参照をクリア
+					graphViz.onDidDispose(() => {
+						if (_activeGraphViz === graphViz) {
+							_activeGraphViz = null;
+							logs.log('[Phase4] Graph panel disposed');
+						}
+					});
+
+					if (viewType === 'cosmos') {
+						logs.log('Using Cosmos.gl view');
+						await graphViz.showCosmosDiagram(all_symbols, all_rels);
+					} else {
+						logs.log('Using Cytoscape.js view');
+						await graphViz.showDiagram(all_symbols, all_rels);
+					}
+					logs.log('Show Diagram completed');
+
+					db.dispose();
+					logs.info('Code relationship diagram displayed');
 					} catch (error) {
 						logs.error('Failed to show graph: ', error);
 					} finally {
@@ -349,6 +377,70 @@ export function activate(context: vscode.ExtensionContext) {
 				logs.closeLogFile();
 			}
 		}));
+
+		// ========================================
+		// Phase 4: VSCode統合 - 新しいコマンドとエディタイベント
+		// ========================================
+
+		// 現在のファイルにズームするコマンド
+		context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.zoomToCurrentFile', () => {
+			if (!_activeGraphViz || !_activeGraphViz.isActive()) {
+				vscode.window.showWarningMessage('Code Relationship Diagram is not open. Please run "Show Code Relationship Diagram" first.');
+				return;
+			}
+
+			const editor = vscode.window.activeTextEditor;
+			if (editor) {
+				_activeGraphViz.zoomToFile(editor.document.uri.fsPath);
+				logs.log(`[Phase4] Zoom to current file: ${editor.document.uri.fsPath}`);
+			} else {
+				vscode.window.showWarningMessage('No active editor.');
+			}
+		}));
+
+		// 選択範囲の関連コードを表示するコマンド
+		context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.showRelatedInGraph', () => {
+			if (!_activeGraphViz || !_activeGraphViz.isActive()) {
+				vscode.window.showWarningMessage('Code Relationship Diagram is not open. Please run "Show Code Relationship Diagram" first.');
+				return;
+			}
+
+			const editor = vscode.window.activeTextEditor;
+			if (editor) {
+				const selection = editor.selection;
+				_activeGraphViz.showRelatedCode(
+					editor.document.uri.fsPath,
+					selection.start.line,
+					selection.end.line
+				);
+				logs.log(`[Phase4] Show related code: ${editor.document.uri.fsPath}:${selection.start.line}-${selection.end.line}`);
+			} else {
+				vscode.window.showWarningMessage('No active editor.');
+			}
+		}));
+
+		// エディタイベントリスナー（デバウンス付き）
+		const debouncedCursorChange = debounce((event: vscode.TextEditorSelectionChangeEvent) => {
+			if (_activeGraphViz && _activeGraphViz.isActive()) {
+				_activeGraphViz.sendEditorCursorChange(
+					event.textEditor.document.uri.fsPath,
+					event.selections[0].start.line
+				);
+			}
+		}, 300);
+
+		// アクティブエディタ変更時
+		context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
+			if (editor && _activeGraphViz && _activeGraphViz.isActive()) {
+				_activeGraphViz.sendEditorFileOpen(editor.document.uri.fsPath);
+			}
+		}));
+
+		// カーソル位置変更時（デバウンス付き）
+		context.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(debouncedCursorChange));
+
+		logs.log('[Phase4] Editor event listeners registered');
+
 	} catch (activationError) {
 		console.error('CRITICAL: Extension activation failed:', activationError);
 		if (activationError instanceof Error) {

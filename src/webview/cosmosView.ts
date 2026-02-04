@@ -228,6 +228,15 @@ class CosmosGraphView {
             case 'progress':
                 this.updateProgress(message.percent, message.message);
                 break;
+
+            // Phase 4: 新しいコマンド用ハンドラ
+            case 'zoomToFile':
+                this.onZoomToFile(message.path);
+                break;
+
+            case 'showRelatedCode':
+                this.onShowRelatedCode(message.path, message.startLine, message.endLine);
+                break;
         }
     }
 
@@ -933,6 +942,65 @@ class CosmosGraphView {
             const relatedIds = this.getRelatedNodeIds(file.id);
             this.zoomToNodes([file.id, ...relatedIds]);
         }
+    }
+
+    /**
+     * Phase 4: 特定ファイルにズーム
+     */
+    private onZoomToFile(filePath: string): void {
+        if (!this.data) {return;}
+
+        const file = this.data.nodes.find(
+            n => n.level === 'file' && n.path === filePath
+        );
+
+        if (file) {
+            this.highlightNode(file.id);
+            this.zoomToNode(file.id);
+            this.log(`Zoomed to file: ${filePath}`);
+        } else {
+            this.log(`File not found in graph: ${filePath}`);
+        }
+    }
+
+    /**
+     * Phase 4: 関連コードを表示（選択範囲のシンボルとその依存関係）
+     */
+    private onShowRelatedCode(filePath: string, startLine: number, endLine: number): void {
+        if (!this.data) {return;}
+
+        // 選択範囲内のシンボルを探す
+        const symbolsInRange = this.data.nodes.filter(
+            n => n.level === 'symbol' &&
+                 n.path === filePath &&
+                 n.line !== undefined &&
+                 n.line >= startLine &&
+                 n.line <= endLine
+        );
+
+        if (symbolsInRange.length === 0) {
+            // シンボルが見つからない場合はファイルレベルで表示
+            this.onZoomToFile(filePath);
+            return;
+        }
+
+        // 選択されたシンボルの関連ノードを取得
+        const relatedIds = new Set<string>();
+        symbolsInRange.forEach(symbol => {
+            relatedIds.add(symbol.id);
+            this.getRelatedNodeIds(symbol.id).forEach(id => relatedIds.add(id));
+        });
+
+        // 関連ノードにズーム
+        const nodeIds = Array.from(relatedIds);
+        this.zoomToNodes(nodeIds);
+
+        // 最初のシンボルをハイライト
+        if (symbolsInRange.length > 0) {
+            this.highlightNode(symbolsInRange[0].id);
+        }
+
+        this.log(`Showing ${symbolsInRange.length} symbols with ${nodeIds.length} related nodes`);
     }
 
     /**

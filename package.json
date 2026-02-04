@@ -43,6 +43,18 @@
         "title": "Show Code Relationship Diagram",
         "category": "CRD",
         "description": "%show-diagram-description%"
+      },
+      {
+        "command": "vscode-code-relationship-diagram.zoomToCurrentFile",
+        "title": "Zoom to Current File in Graph",
+        "category": "CRD",
+        "description": "Zoom the graph view to the currently active file"
+      },
+      {
+        "command": "vscode-code-relationship-diagram.showRelatedInGraph",
+        "title": "Show Related Code in Graph",
+        "category": "CRD",
+        "description": "Show the selected code and its dependencies in the graph"
       }
     ],
     "configuration": {
