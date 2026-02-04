@@ -13,6 +13,52 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.2.34] - 2026-02-04
+
+### Added
+
+- **Cosmos.gl移行 Phase 1: 基盤コンポーネント**
+  - `@cosmos.gl/graph` (v2.6.4): GPU加速WebGLグラフレンダリングエンジンを追加
+  - `d3-hierarchy` (v3.1.2): 階層的データ構造のサポートを追加
+  - `graphology-types` (v0.24.8): graphologyの型定義を追加
+
+- **新規ファイル作成**
+  - `src/relationship/cosmosAdapter.ts`: シンボルデータをCosmos.gl形式に変換
+    - `CosmosNode`/`CosmosLink`インターフェース定義
+    - `convertToCosmosFormat()`: シンボルとリレーションシップをCosmos形式に変換
+    - `getPositionsAsFloat32Array()`, `getLinksAsUint32Array()`, `getSizesAsFloat32Array()`, `getColorsAsFloat32Array()`: GPU向けデータ配列生成
+  - `src/relationship/hierarchicalLayout.ts`: 階層的円パッキングレイアウト
+    - `calculateHierarchicalLayout()`: ディレクトリ→ファイル→シンボルの階層配置
+    - `packNodesInCircle()`: シンボルを親ノード内に円パッキング配置
+    - `applyForceLayout()`: フォースシミュレーションによる位置調整
+    - `filterByDirectory()`: ディレクトリ可視性フィルタリング
+    - `getRelatedNodes()`, `calculateBoundingBox()`: ズーム計算用ユーティリティ
+  - `src/webview/cosmosView.ts`: Cosmos.gl WebViewコンポーネント
+    - `CosmosGraphView`クラス: グラフの初期化、レンダリング、インタラクション
+    - ノードレベル切り替え（dir-only, dir-file, file-only, file-symbol）
+    - ディレクトリチェックボックスによる可視性制御
+    - ツールチップ表示とファイルジャンプ機能
+    - ズーム/フィット機能
+  - `templates/cosmos-view.html`: Cosmos.gl用HTMLテンプレート
+    - プログレスバー、コントロールパネル、ディレクトリパネル
+    - ズームコントロール、統計表示
+
+- **ビルド設定の更新**
+  - `esbuild.js`: cosmosView.ts用のビルドコンテキストを追加
+    - ブラウザプラットフォーム向けIIFE形式でバンドル
+    - Cosmos.glをexternal指定（CDNロード想定）
+
+### Changed
+
+- **パッケージ依存関係の更新**
+  - `@cosmograph/cosmos` → `@cosmos.gl/graph`に移行（パッケージ名変更対応）
+
+### Technical Notes
+
+- Phase 1は基盤コンポーネントの作成のみ
+- 既存のCytoscape.jsベースの実装（graphView.ts）は維持
+- Phase 2以降でvisualization.tsとの統合を予定
+
 ## [0.1.33] - 2026-01-30
 
 ### Fixed
