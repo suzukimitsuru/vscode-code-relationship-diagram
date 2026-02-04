@@ -101,9 +101,9 @@ const NODE_COLORS = {
 };
 
 /**
- * リンク色
+ * リンク色（#3498DB - graph-view.htmlと同じ青）
  */
-const LINK_COLOR = 0x666666;
+const LINK_COLOR = 0x3498DB;
 
 /**
  * コミュニティカラーパレット
