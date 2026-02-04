@@ -542,6 +542,19 @@ export class Visualization {
                                 this.logs.error(`[Cosmos] Failed to open file: ${error instanceof Error ? error.message : error}`);
                             }
                             break;
+
+                        // Phase 5: HTMLエクスポート
+                        case 'exportCosmosHTML':
+                            try {
+                                await this.exportCosmosStandaloneHTML(
+                                    path.join(this.wsFolder, this.htmlFilename.replace('.crd.html', '.cosmos.html')),
+                                    message.data
+                                );
+                                this.logs.log('[Cosmos] HTML export completed');
+                            } catch (error) {
+                                this.logs.error(`[Cosmos] Failed to export HTML: ${error instanceof Error ? error.message : error}`);
+                            }
+                            break;
                     }
                 },
                 undefined,
@@ -1427,6 +1440,178 @@ export class Visualization {
                 reject(error);
             }
         });
+    }
+
+    // ========================================
+    // Phase 5: Cosmos.gl HTMLエクスポート
+    // ========================================
+
+    /**
+     * Cosmos.glスタンドアロンHTMLをエクスポート
+     */
+    private async exportCosmosStandaloneHTML(
+        defaultFilename: string,
+        data: {
+            nodes: any[];
+            links: any[];
+            directories: string[];
+        }
+    ): Promise<void> {
+        try {
+            // ファイル保存ダイアログを表示
+            const saveUri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(defaultFilename),
+                filters: {
+                    'HTML Files': ['html'],
+                    'All Files': ['*']
+                }
+            });
+
+            if (!saveUri) {
+                this.logs.log('[Cosmos Export] Cancelled by user');
+                return;
+            }
+
+            const htmlPath = saveUri.fsPath;
+            const dataJsPath = htmlPath.replace(/\.html$/i, '.data.js');
+            const dataJsFilename = path.basename(dataJsPath);
+
+            this.logs.log(`[Cosmos Export] Exporting to: ${htmlPath}`);
+            this.logs.log(`[Cosmos Export] Data file: ${dataJsPath}`);
+
+            // データJSファイルを書き込み
+            await this.writeCosmosDataJsFile(dataJsPath, data);
+            this.logs.log(`[Cosmos Export] Data file written: ${data.nodes.length} nodes, ${data.links.length} links`);
+
+            // HTMLテンプレートを生成
+            const html_template = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'cosmos-view.html'));
+            const html_content = this.replaceCosmosPlaceholdersStandalone(html_template, dataJsFilename, data);
+
+            // HTMLファイルを書き込み
+            await vscode.workspace.fs.writeFile(saveUri, Buffer.from(html_content, 'utf8'));
+            this.logs.log(`[Cosmos Export] HTML file written (${html_content.length} bytes)`);
+
+            // 成功メッセージを表示
+            const action = await vscode.window.showInformationMessage(
+                `Cosmos.gl HTML exported to: ${htmlPath}`,
+                'Open File', 'Open in Browser'
+            );
+
+            if (action === 'Open File') {
+                const document = await vscode.workspace.openTextDocument(saveUri);
+                await vscode.window.showTextDocument(document);
+            } else if (action === 'Open in Browser') {
+                vscode.env.openExternal(saveUri);
+            }
+
+        } catch (error) {
+            this.logs.error(`[Cosmos Export] Failed: ${error instanceof Error ? error.message : error}`);
+            vscode.window.showErrorMessage(`Cosmos HTML export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+
+    /**
+     * Cosmos.glデータJSファイルを書き込み
+     */
+    private async writeCosmosDataJsFile(
+        filepath: string,
+        data: {
+            nodes: any[];
+            links: any[];
+            directories: string[];
+        }
+    ): Promise<void> {
+        return new Promise((resolve, reject) => {
+            try {
+                const writeStream = fs.createWriteStream(filepath, { encoding: 'utf8' });
+
+                writeStream.on('error', (error) => {
+                    this.logs.error(`[Cosmos Export] Write stream error: ${error.message}`);
+                    reject(error);
+                });
+
+                writeStream.on('finish', () => {
+                    resolve();
+                });
+
+                // JavaScriptファイルの開始
+                writeStream.write('// Cosmos.gl Graph Data for Standalone HTML\n');
+                writeStream.write('window.COSMOS_GRAPH_DATA = {\n');
+
+                // ノード配列
+                writeStream.write('  "nodes": [\n');
+                for (let i = 0; i < data.nodes.length; i++) {
+                    const nodeJson = JSON.stringify(data.nodes[i]);
+                    const comma = i < data.nodes.length - 1 ? ',' : '';
+                    writeStream.write(`    ${nodeJson}${comma}\n`);
+                }
+                writeStream.write('  ],\n');
+
+                // リンク配列
+                writeStream.write('  "links": [\n');
+                for (let i = 0; i < data.links.length; i++) {
+                    const linkJson = JSON.stringify(data.links[i]);
+                    const comma = i < data.links.length - 1 ? ',' : '';
+                    writeStream.write(`    ${linkJson}${comma}\n`);
+                }
+                writeStream.write('  ],\n');
+
+                // ディレクトリ配列
+                writeStream.write(`  "directories": ${JSON.stringify(data.directories)}\n`);
+
+                writeStream.write('};\n');
+                writeStream.end();
+
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
+    /**
+     * Cosmos.glスタンドアロン版用プレースホルダー置換
+     */
+    private replaceCosmosPlaceholdersStandalone(
+        template: string,
+        dataJsFilename: string,
+        data: { nodes: any[]; links: any[]; directories: string[] }
+    ): string {
+        const replacements: { [key: string]: string } = {
+            'IS_STANDALONE_PLACEHOLDER': 'true',
+            'TITLE_PLACEHOLDER': `${this.htmlFilename.replace('.crd.html', '')} - Cosmos.gl (Standalone)`,
+            'FONT_AWWSOME_CSS_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css',
+            'FONT_AWESOME_WOFF2_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.woff2',
+            'FONT_AWESOME_WOFF_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.woff',
+            'FONT_AWESOME_TTF_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.ttf',
+            // Cosmos.glをCDNから読み込み
+            'COSMOS_URI_PLACEHOLDER': 'https://unpkg.com/@cosmos.gl/graph@2.6.4/dist/index.min.js',
+            // スタンドアロン用スクリプト（データファイル読み込み + インライン化）
+            'GRAPH_SCRIPT_URI_PLACEHOLDER': `<script src="${dataJsFilename}"></script>\n<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'cosmosView.js'), 'utf8')}</script>`,
+            'NODES_COUNT_PLACEHOLDER': data.nodes.length.toString(),
+            'LINKS_COUNT_PLACEHOLDER': data.links.length.toString(),
+            'GRAPH_DATA_JS_URI_PLACEHOLDER': dataJsFilename,
+            'WORKSPACE_NAME_PLACEHOLDER': this.htmlFilename.replace('.crd.html', ''),
+
+            // テーマカラー（ダークテーマ固定）
+            'BACKGROUND_COLOR_PLACEHOLDER': '#1e1e1e',
+            'PROGRESS_BG_COLOR_PLACEHOLDER': '#333',
+            'CONTROLS_COLOR_PLACEHOLDER': '#cccccc',
+            'CONTROLS_BG_PLACEHOLDER': '#2d2d30',
+            'BOX_SHADOW_COLOR_PLACEHOLDER': 'rgba(0,0,0,0.5)',
+            'BORDER_STYLE_PLACEHOLDER': '1px solid #3e3e42',
+            'BUTTON_NO_POINT_BG_PLACEHOLDER': '#0e639c',
+            'BUTTON_HOVER_BG_PLACEHOLDER': '#1177bb',
+
+            // スタンドアロン版ではエクスポートボタンなし
+            'EXPORT_BUTTON_PLACEHOLDER': ''
+        };
+
+        let result = template;
+        for (const [placeholder, value] of Object.entries(replacements)) {
+            result = result.replace(new RegExp(placeholder, 'g'), value);
+        }
+
+        return result;
     }
 
     /**

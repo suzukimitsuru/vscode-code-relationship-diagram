@@ -22,6 +22,13 @@ declare const IS_STANDALONE: boolean;
 declare const GRAPH_NODES_COUNT: number;
 declare const GRAPH_LINKS_COUNT: number;
 
+// Phase 5: スタンドアロン用グラフデータ
+declare const COSMOS_GRAPH_DATA: {
+    nodes: CosmosNodeData[];
+    links: CosmosLinkData[];
+    directories: string[];
+} | undefined;
+
 /**
  * ノードデータ（拡張機能から受信）
  */
@@ -1046,6 +1053,66 @@ class CosmosGraphView {
             message: `[CosmosView] ${message}`,
         });
     }
+
+    // ========================================
+    // Phase 5: HTMLエクスポート機能
+    // ========================================
+
+    /**
+     * HTMLエクスポートを実行
+     */
+    public exportHTML(): void {
+        if (!this.data) {
+            this.log('No data to export');
+            return;
+        }
+
+        this.log('Starting HTML export...');
+
+        // グラフデータを収集
+        const exportData = {
+            nodes: this.data.nodes.map(node => ({
+                id: node.id,
+                x: node.x,
+                y: node.y,
+                size: node.size,
+                color: node.color,
+                parentId: node.parentId,
+                level: node.level,
+                label: node.label,
+                path: node.path,
+                kind: node.kind,
+                line: node.line,
+                communityId: node.communityId,
+                childCount: node.childCount,
+                visible: node.visible
+            })),
+            links: this.data.links.map(link => ({
+                source: link.source,
+                target: link.target,
+                width: link.width,
+                color: link.color,
+                details: link.details
+            })),
+            directories: this.data.directories
+        };
+
+        // 拡張機能にエクスポートリクエストを送信
+        this.postMessage({
+            type: 'exportCosmosHTML',
+            data: exportData
+        });
+
+        this.log(`Export data prepared: ${exportData.nodes.length} nodes, ${exportData.links.length} links`);
+    }
+
+    /**
+     * スタンドアロンモード用：グローバルデータを読み込み
+     */
+    public loadStandaloneData(data: GraphData): void {
+        this.log(`Loading standalone data: ${data.nodes.length} nodes, ${data.links.length} links`);
+        this.setGraphData(data);
+    }
 }
 
 // グローバルインスタンス
@@ -1056,7 +1123,37 @@ let graphView: CosmosGraphView | null = null;
  */
 function initCosmosView(): void {
     graphView = new CosmosGraphView('graph-container');
+
+    // Phase 5: スタンドアロンモードの場合、グローバルデータを読み込み
+    if (typeof IS_STANDALONE !== 'undefined' && IS_STANDALONE) {
+        if (typeof COSMOS_GRAPH_DATA !== 'undefined' && COSMOS_GRAPH_DATA) {
+            console.log('[CosmosView] Loading standalone data...');
+            // 少し遅延させてグラフの初期化を待つ
+            setTimeout(() => {
+                if (graphView) {
+                    graphView.loadStandaloneData(COSMOS_GRAPH_DATA);
+                }
+            }, 100);
+        } else {
+            console.error('[CosmosView] Standalone mode but no COSMOS_GRAPH_DATA found');
+        }
+    }
 }
+
+/**
+ * Phase 5: HTMLエクスポート（グローバル関数）
+ * HTMLテンプレートのボタンから呼び出される
+ */
+function exportHTML(): void {
+    if (graphView) {
+        graphView.exportHTML();
+    } else {
+        console.error('Graph view not initialized');
+    }
+}
+
+// グローバルスコープに公開
+(window as any).exportHTML = exportHTML;
 
 // DOMロード後に初期化
 if (document.readyState === 'loading') {
