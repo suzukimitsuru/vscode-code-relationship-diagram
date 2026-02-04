@@ -48,6 +48,22 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
     - ブラウザプラットフォーム向けIIFE形式でバンドル
     - Cosmos.glをexternal指定（CDNロード想定）
 
+- **Cosmos.gl移行 Phase 2: 統合**
+  - `src/relationship/visualization.ts`: Cosmos.gl統合
+    - `ViewType`型エクスポート（'cytoscape' | 'cosmos'）
+    - `showCosmosDiagram()`: Cosmos.glを使用したグラフ表示メソッド
+    - `sendCosmosDataToWebview()`: Cosmos形式データのWebview送信
+    - `replaceCosmosPlaceholders()`: Cosmos用テンプレートプレースホルダー置換
+  - `src/extension.ts`: ビュータイプ選択の統合
+    - 大規模データ（50,000要素以上）の場合にCosmos.glを推奨するQuickPick表示
+    - 設定`codeRelationshipDiagram.viewType`に基づくビュー選択
+
+- **設定オプションの追加**
+  - `codeRelationshipDiagram.viewType`: グラフレンダリングエンジン選択
+    - `cytoscape`: 標準レンダリング（デフォルト）
+    - `cosmos`: GPU加速WebGLレンダリング（大規模データ向け）
+  - `codeRelationshipDiagram.useHierarchicalLayout`: 階層的コミュニティレイアウトの使用
+
 ### Changed
 
 - **パッケージ依存関係の更新**
@@ -55,9 +71,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Technical Notes
 
-- Phase 1は基盤コンポーネントの作成のみ
+- Phase 1: 基盤コンポーネントの作成
+- Phase 2: visualization.tsとの統合、ビュータイプ選択機能
 - 既存のCytoscape.jsベースの実装（graphView.ts）は維持
-- Phase 2以降でvisualization.tsとの統合を予定
+- Phase 3以降で完全なCosmos.gl機能実装を予定
 
 ## [0.1.33] - 2026-01-30
 

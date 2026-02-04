@@ -44,7 +44,23 @@
         "category": "CRD",
         "description": "%show-diagram-description%"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Code Relationship Diagram",
+      "properties": {
+        "codeRelationshipDiagram.viewType": {
+          "type": "string",
+          "enum": ["cytoscape", "cosmos"],
+          "default": "cytoscape",
+          "description": "Select the graph rendering engine. 'cytoscape' for standard rendering, 'cosmos' for GPU-accelerated WebGL rendering (recommended for large datasets)."
+        },
+        "codeRelationshipDiagram.useHierarchicalLayout": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use hierarchical community layout for better visualization of code structure."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "yarn run package",
