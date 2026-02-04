@@ -438,7 +438,8 @@ class CosmosGraphView {
                 },
                 renderLinks: true,
                 linkWidth: 1,
-                linkColor: [0.4, 0.4, 0.4, 0.5],
+                // #3498DB (graph-view.htmlと同じ青色)
+                linkColor: [0.204, 0.596, 0.859, 0.7],
             });
 
             // データを設定
@@ -453,11 +454,11 @@ class CosmosGraphView {
                 // Phase 3: 元のリンク色を保存（後でハイライト解除時に復元用）
                 this.originalLinkColors = new Float32Array(visibleLinks.length * 4);
                 for (let i = 0; i < visibleLinks.length; i++) {
-                    // デフォルトのリンク色（グレー）
-                    this.originalLinkColors[i * 4] = 0.4;
-                    this.originalLinkColors[i * 4 + 1] = 0.4;
-                    this.originalLinkColors[i * 4 + 2] = 0.4;
-                    this.originalLinkColors[i * 4 + 3] = 0.5;
+                    // デフォルトのリンク色（#3498DB 青）
+                    this.originalLinkColors[i * 4] = 0.204;
+                    this.originalLinkColors[i * 4 + 1] = 0.596;
+                    this.originalLinkColors[i * 4 + 2] = 0.859;
+                    this.originalLinkColors[i * 4 + 3] = 0.7;
                 }
             }
 
@@ -735,10 +736,10 @@ class CosmosGraphView {
                 linkColors[i * 4 + 2] = 0.0;  // B
                 linkColors[i * 4 + 3] = 0.9;  // A
             } else {
-                // 元の色（薄いグレー）
-                linkColors[i * 4] = 0.3;
-                linkColors[i * 4 + 1] = 0.3;
-                linkColors[i * 4 + 2] = 0.3;
+                // 元の色（薄い青 #3498DB）
+                linkColors[i * 4] = 0.204;
+                linkColors[i * 4 + 1] = 0.596;
+                linkColors[i * 4 + 2] = 0.859;
                 linkColors[i * 4 + 3] = 0.2;
             }
         }
