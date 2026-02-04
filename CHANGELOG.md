@@ -64,6 +64,41 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
     - `cosmos`: GPU加速WebGLレンダリング（大規模データ向け）
   - `codeRelationshipDiagram.useHierarchicalLayout`: 階層的コミュニティレイアウトの使用
 
+- **Cosmos.gl移行 Phase 3: 関係線機能**
+  - ノードホバー時の関連リンクハイライト機能
+    - 接続されたリンクをオレンジ色でハイライト
+    - 非関連リンクは薄いグレーにフェードアウト
+  - ツールチップの改善
+    - ノードアイコン（📁 ディレクトリ、📄 ファイル、🏛️ クラス等）を追加
+    - 出力方向（→ References）と入力方向（← Referenced by）を分離表示
+    - クリック可能なリンクでエディタにジャンプ
+    - 左ボーダー色分け（青: 参照先、緑: 参照元）
+  - `cosmos-view.html`: ツールチップスタイルの強化
+
+- **Cosmos.gl移行 Phase 4: VSCode統合**
+  - 新しいコマンドを追加
+    - `CRD: Zoom to Current File in Graph`: 現在のファイルにグラフをズーム
+    - `CRD: Show Related Code in Graph`: 選択範囲の関連コードを表示
+  - エディタイベント連携
+    - アクティブエディタ変更時にグラフを同期
+    - カーソル位置変更時に該当シンボルをハイライト（300msデバウンス）
+  - `visualization.ts`: エディタイベント送信メソッド群を追加
+    - `sendEditorFileOpen()`, `sendEditorCursorChange()`
+    - `zoomToFile()`, `showRelatedCode()`
+  - `cosmosView.ts`: `onZoomToFile()`, `onShowRelatedCode()`ハンドラを追加
+
+- **Cosmos.gl移行 Phase 5: HTMLエクスポート**
+  - スタンドアロンHTMLエクスポート機能
+    - `*.cosmos.html`: HTMLファイル（Cosmos.glをCDNから読み込み）
+    - `*.cosmos.data.js`: グラフデータ（COSMOS_GRAPH_DATA変数）
+  - `visualization.ts`: エクスポート関連メソッドを追加
+    - `exportCosmosStandaloneHTML()`: スタンドアロンHTMLエクスポート
+    - `writeCosmosDataJsFile()`: データJSファイル書き込み
+    - `replaceCosmosPlaceholdersStandalone()`: スタンドアロン用プレースホルダー置換
+  - `cosmosView.ts`: エクスポート機能を追加
+    - `exportHTML()`: エクスポートデータを収集して拡張機能に送信
+    - `loadStandaloneData()`: スタンドアロンモード用データ読み込み
+
 ### Changed
 
 - **パッケージ依存関係の更新**
@@ -71,10 +106,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Technical Notes
 
-- Phase 1: 基盤コンポーネントの作成
-- Phase 2: visualization.tsとの統合、ビュータイプ選択機能
+- **Cosmos.gl移行完了**
+  - Phase 1: 基盤コンポーネントの作成（cosmosAdapter, hierarchicalLayout, cosmosView）
+  - Phase 2: visualization.tsとの統合、ビュータイプ選択機能
+  - Phase 3: 関係線機能（ハイライト、ツールチップ改善）
+  - Phase 4: VSCode統合（新コマンド、エディタイベント連携）
+  - Phase 5: HTMLエクスポート対応（スタンドアロンHTML生成）
 - 既存のCytoscape.jsベースの実装（graphView.ts）は維持
-- Phase 3以降で完全なCosmos.gl機能実装を予定
+- GPU加速WebGLレンダリングにより大規模グラフ（50,000+ノード）のパフォーマンス向上
 
 ## [0.1.33] - 2026-01-30
 
