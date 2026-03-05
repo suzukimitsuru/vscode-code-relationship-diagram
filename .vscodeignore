@@ -22,7 +22,5 @@ exsample-workspace/**
 !node_modules/consola/**
 !node_modules/semver/**
 !node_modules/detect-libc/**
-!node_modules/cytoscape/dist/cytoscape.min.js
-!node_modules/cytoscape-dagre/cytoscape-dagre.js
 !node_modules/font-awesome/css/font-awesome.min.css
 !node_modules/font-awesome/fonts/**

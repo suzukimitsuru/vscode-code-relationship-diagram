@@ -1,99 +1,32 @@
-2026-01-27 16:40:34.357 [info] === SHOWDIAGRAM COMMAND STARTED ===
-2026-01-27 16:40:34.358 [info] Attempting to open database: /Users/suzukimitsuru/Documents/Projects/vscode-code-relationship-diagram/exsample-workspace/.vscode/crd.duckdb
-2026-01-27 16:40:34.358 [info] Checking database file existence: /Users/suzukimitsuru/Documents/Projects/vscode-code-relationship-diagram/exsample-workspace/.vscode/crd.duckdb
-2026-01-27 16:40:34.376 [info] Loaded symbol: 15 counts
-2026-01-27 16:40:34.379 [info] Loaded relationships: 16 counts
-2026-01-27 16:40:34.380 [info] [0.000s][  0.00%] Starting code relationship diagram generation...
-2026-01-27 16:40:34.380 [info] [0.000s][  0.00%] Input: 15 symbols, 16 relationships
-2026-01-27 16:40:34.380 [info] [0.000s][  0.00%] Symbol 1: main.c (File) in src/main.c
-2026-01-27 16:40:34.380 [info] [0.000s][  0.00%] Symbol 2: main() (Function) in src/main.c
-2026-01-27 16:40:34.380 [info] [0.000s][  0.00%] Symbol 3: math_utils.c (File) in src/math_utils.c
-2026-01-27 16:40:34.382 [info] 0.001s  10.00%: Created new webview panel
-2026-01-27 16:40:34.383 [info] 0.003s  15.00%: Generated loading content
-2026-01-27 16:40:34.599 [info] Progress updated: 20% - Processing symbols...
-2026-01-27 16:40:34.600 [info] 0.220s  20.00%: Creating graph elements from symbols and relationships (multi-view)...
-2026-01-27 16:40:34.600 [info] 0.220s  30.00%: Created 3 file nodes and 15 total symbol nodes
-2026-01-27 16:40:34.600 [info] 0.220s  30.50%: Nodes with parent: 12 (80.00%)
-2026-01-27 16:40:34.600 [info] Symbol 0: id=src/main.c, name=main.c, kind=0, path=src/main.c
-2026-01-27 16:40:34.600 [info] Symbol 1: id=src/main.c/Function.main()@83c873a3749b35bd98f397e873ac266510c77deb79ab7e79664afcc4f1ee0204, name=main(), kind=11, path=src/main.c
-2026-01-27 16:40:34.600 [info] Symbol 2: id=src/math_utils.c, name=math_utils.c, kind=0, path=src/math_utils.c
-2026-01-27 16:40:34.600 [info] Symbol 3: id=src/math_utils.c/Function.add(int, int)@a5de93fa2c1b5dc347958d3cbba7522092b1889eac3a357b3aa8c231b28ab611, name=add(int, int), kind=11, path=src/math_utils.c
-2026-01-27 16:40:34.600 [info] Symbol 4: id=src/math_utils.c/Function.multiply(int, int)@4bdbac56fe881fc6ea78600d9b93df5925066cf50308f30c70b2a4c092773ceb, name=multiply(int, int), kind=11, path=src/math_utils.c
-2026-01-27 16:40:34.600 [info] [0.22047045900000375s][ 34.50%] Created symbol index with 15 entries
-2026-01-27 16:40:34.600 [info] [0.22052258400000574s][ 35.00%] Starting to process 16 relationships...
-2026-01-27 16:40:34.600 [info] [0.2206240000000107s][ 35.01%] Relationship 1: src/main.c -> src/math_utils.c
-2026-01-27 16:40:34.601 [info] Debug ref 0: from.id=src/main.c/Function.main()@83c873a3749b35bd98f397e873ac266510c77deb79ab7e79664afcc4f1ee0204, to.id=src/math_utils.c/Function.distance(Point, Point)@f0dc335e5f416ec97378b1c84e2c67a9eda00b9f9b1a7ae5d6bcdf330a0f4792
-2026-01-27 16:40:34.601 [info] Debug symbols total count: 15
-2026-01-27 16:40:34.601 [info] Found referenceSymbol: main()
-2026-01-27 16:40:34.601 [info] Found defineSymbol: distance(Point, Point)
-2026-01-27 16:40:34.602 [info] [0.22174604199999884s][ 35.02%] Relationship 2: src/string_utils.c -> src/math_utils.c
-2026-01-27 16:40:34.602 [info] Debug ref 1: from.id=src/string_utils.c/Function.print_string_info(const char *)@4d1e2c786b2c952504897bced9710510a9cfdecf84d6a828664b006de6338318, to.id=src/math_utils.c/Function.print_result(const char *, double)@a39b6995b38bc118a599cbe0a900db9ba4742a79c1083f6db2a2d8c01dc24d14
-2026-01-27 16:40:34.602 [info] Debug symbols total count: 15
-2026-01-27 16:40:34.602 [info] Found referenceSymbol: print_string_info(const char *)
-2026-01-27 16:40:34.603 [info] Found defineSymbol: print_result(const char *, double)
-2026-01-27 16:40:34.603 [info] [0.2227601250000007s][ 35.03%] Relationship 3: src/string_utils.c -> src/math_utils.c
-2026-01-27 16:40:34.603 [info] Debug ref 2: from.id=src/string_utils.c/Function.string_statistics(const char * [], int)@8c1eeac3e7cb668f07fefcbf659579d0c46e8b2e50e4a741035b002343f1426a, to.id=src/math_utils.c/Function.print_result(const char *, double)@a39b6995b38bc118a599cbe0a900db9ba4742a79c1083f6db2a2d8c01dc24d14
-2026-01-27 16:40:34.603 [info] Debug symbols total count: 15
-2026-01-27 16:40:34.603 [info] Found referenceSymbol: string_statistics(const char * [], int)
-2026-01-27 16:40:34.603 [info] Found defineSymbol: print_result(const char *, double)
-2026-01-27 16:40:34.603 [info] [0.22325625000000582s][ 35.04%] Relationship 4: src/main.c -> src/math_utils.c
-2026-01-27 16:40:34.603 [info] [0.22330999999999768s][ 35.05%] Relationship 5: src/string_utils.c -> src/math_utils.c
-2026-01-27 16:40:34.603 [info] 0.223s  40.00%: Processed 16 relationships into 3 file relations
-2026-01-27 16:40:34.603 [info] [0.22343908399999782s][ 42.00%] Added 15 nodes to graph
-2026-01-27 16:40:34.603 [info] [0.22349104200000874s][ 45.00%] Starting to generate edges from 3 file relations...
-2026-01-27 16:40:34.603 [info] [0.22363079200001085s][ 45.01%] Processing relation: main.c -> math_utils.c (count: 9)
-2026-01-27 16:40:34.604 [info] 0.224s  47.01%: Created edge: main.c → math_utils.c (9 relations)
-2026-01-27 16:40:34.604 [info] [0.2237915420000063s][ 45.02%] Processing relation: string_utils.c -> math_utils.c (count: 5)
-2026-01-27 16:40:34.604 [info] 0.224s  47.02%: Created edge: string_utils.c → math_utils.c (5 relations)
-2026-01-27 16:40:34.604 [info] [0.22391212500000257s][ 45.03%] Processing relation: main.c -> string_utils.c (count: 2)
-2026-01-27 16:40:34.604 [info] 0.224s  47.03%: Created edge: main.c → string_utils.c (2 relations)
-2026-01-27 16:40:34.604 [info] 0.224s  50.00%: Generated 3 file-level edges from 3 file relations
-2026-01-27 16:40:34.604 [info] 0.224s  51.00%: Generated 16 symbol-level edges from 16 relationships
-2026-01-27 16:40:34.604 [info] 0.224s  52.00%: Relationship details:
-2026-01-27 16:40:34.604 [info] 0.224s  52.33%:   main.c → math_utils.c: 9 relationships
-2026-01-27 16:40:34.604 [info] 0.224s  52.67%:   string_utils.c → math_utils.c: 5 relationships
-2026-01-27 16:40:34.604 [info] 0.224s  52.100%:   main.c → string_utils.c: 2 relationships
-2026-01-27 16:40:34.604 [info] 0.224s  53.00%: Relations statistics: Total=16, Avg=5.33, Max=9, Min=2
-2026-01-27 16:40:34.604 [info] 0.224s  58.00%: Multi-view graph summary:
-2026-01-27 16:40:34.604 [info] 0.224s  58.50%:   - Total nodes: 15 (3 files, 12 symbols)
-2026-01-27 16:40:34.604 [info] 0.224s  59.00%:   - Total edges: 19 (3 file-level, 16 symbol-level)
-2026-01-27 16:40:34.604 [info] 0.224s  59.50%:   - Total symbols in files: 12
-2026-01-27 16:40:34.604 [info] 0.225s  60.00%: Created graph elements: 15 nodes, 19 edges (5.071ms)
-2026-01-27 16:40:34.712 [info] Progress updated: 50% - Generating graph...
-2026-01-27 16:40:34.712 [info] 0.332s  70.00%: Generated webview content (multi-view) (0.352ms)
-2026-01-27 16:40:34.731 [info] 0.351s  62.00%: Webview initialization complete (received ready signal)
-2026-01-27 16:40:34.819 [info] Progress updated: 60% - Sending graph data...
-2026-01-27 16:40:34.819 [info] 0.439s  61.00%: Waiting for webview initialization...
-2026-01-27 16:40:34.819 [info] 0.440s  63.00%: Webview ready confirmed, starting data transmission...
-2026-01-27 16:40:34.926 [info] Progress updated: 64% - Detecting hierarchical communities...
-2026-01-27 16:40:34.926 [info] 0.546s  76.00%: ⚠️  No communities detected, webview will use default layout
-2026-01-27 16:40:35.032 [info] Progress updated: 80% - Calculating layout...
-2026-01-27 16:40:35.032 [info] 0.652s  80.00%: File-level elements: 3 files, 3 edges
-2026-01-27 16:40:35.032 [info] 0.652s  81.00%: Calculating COSE layout for file-level only...
-2026-01-27 16:40:35.032 [info] [COSE Layout] Starting calculation for 3 nodes, 3 edges
-2026-01-27 16:40:35.037 [info] [COSE Layout] Cytoscape instance created
-2026-01-27 16:40:35.037 [info] [COSE Layout] Running layout...
-2026-01-27 16:40:35.041 [info] [COSE Layout] Layout ready: 0.009s
-2026-01-27 16:40:35.043 [info] [COSE Layout] Layout stop: 0.010s
-2026-01-27 16:40:35.043 [info] [COSE Layout] Extracted 3 node positions
-2026-01-27 16:40:35.043 [info] [COSE Layout] Calculation complete: 0.011s
-2026-01-27 16:40:35.043 [info] 0.663s  83.00%: File-level layout calculated: 3 positions
-2026-01-27 16:40:35.043 [info] 0.663s  84.00%: Deriving positions for all levels...
-2026-01-27 16:40:35.043 [info] [Derive Positions] Starting derivation from 3 file positions
-2026-01-27 16:40:35.043 [info] [Derive Positions] Nodes: 3 files, 12 symbols
-2026-01-27 16:40:35.044 [info] [Derive Positions] Found 1 directories
-2026-01-27 16:40:35.044 [info] [Derive Positions] dir-only: 1 positions
-2026-01-27 16:40:35.044 [info] [Derive Positions] dir-file: 4 positions
-2026-01-27 16:40:35.044 [info] [Derive Positions] file-only: 3 positions
-2026-01-27 16:40:35.044 [info] [Derive Positions] file-symbol: 15 positions
-2026-01-27 16:40:35.044 [info] [Derive Positions] Derivation complete: 0.001s
-2026-01-27 16:40:35.044 [info] 0.665s  85.00%: All level positions derived (0.012s)
-2026-01-27 16:40:35.046 [info] 0.666s  87.00%: ✓ Sent all level positions to webview (23 total)
-2026-01-27 16:40:35.046 [info] [0.6661272500000051s][ 61.00%] Sending 34 elements in chunks of 5000...
-2026-01-27 16:40:35.101 [info] [0.7211334170000046s][ 61.00%] Sent nodes chunk 1/1 (15 nodes)
-2026-01-27 16:40:35.157 [info] [0.7768099999999977s][ 71.00%] Sent edges chunk 1/1 (19 edges)
-2026-01-27 16:40:35.157 [info] [0.7773497500000085s][ 86.00%] Data transmission complete
-2026-01-27 16:40:35.157 [info] 0.778s  95.00%: Sent graph data to webview (111.459ms)
-2026-01-27 16:40:35.157 [info] 0.778s 100.00%: Code relationship diagram generation completed in 0.778s
-2026-01-27 16:40:35.157 [info] Show Diagram completed
-2026-01-27 16:40:35.158 [info] Code relationship diagram displayed
+2026-02-13 13:33:34.138 [info] === SHOWDIAGRAM COMMAND STARTED ===
+2026-02-13 13:33:34.138 [info] Attempting to open database: /Users/suzukimitsuru/Documents/Projects/vscode-code-relationship-diagram/exsample-workspace/.vscode/crd.duckdb
+2026-02-13 13:33:34.138 [info] Checking database file existence: /Users/suzukimitsuru/Documents/Projects/vscode-code-relationship-diagram/exsample-workspace/.vscode/crd.duckdb
+2026-02-13 13:33:34.145 [info] Loaded symbol: 15 counts
+2026-02-13 13:33:34.147 [info] Loaded relationships: 16 counts
+2026-02-13 13:33:34.147 [info] Using Cosmos.gl view
+2026-02-13 13:33:34.147 [info] [Cosmos] Starting Cosmos.gl graph generation...
+2026-02-13 13:33:34.147 [info] [Cosmos] Input: 15 symbols, 16 relationships
+2026-02-13 13:33:34.148 [info] [Cosmos] 0.000s: Created webview panel
+2026-02-13 13:33:34.327 [info] Progress updated: 20% - Converting data to Cosmos format...
+2026-02-13 13:33:34.328 [info] [Cosmos] 0.000s: Converted to Cosmos format: 16 nodes, 3 links
+2026-02-13 13:33:34.429 [info] Progress updated: 40% - Calculating hierarchical layout...
+2026-02-13 13:33:34.431 [info] [Cosmos] 0.002s: Layout calculated
+2026-02-13 13:33:34.537 [info] Progress updated: 60% - Loading Cosmos view...
+2026-02-13 13:33:34.537 [info] [Cosmos] Waiting for webview ready...
+2026-02-13 13:33:34.561 [info] [Cosmos] Webview ready
+2026-02-13 13:33:34.561 [info] [Cosmos] Webview ready confirmed
+2026-02-13 13:33:34.562 [info] [GraphView] Graph view initialized
+2026-02-13 13:33:34.662 [info] Progress updated: 80% - Sending graph data...
+2026-02-13 13:33:34.663 [info] [Cosmos] Sent graph data: 16 nodes, 3 links
+2026-02-13 13:33:34.663 [info] [Cosmos] 0.516s: Cosmos.gl diagram generation completed
+2026-02-13 13:33:34.663 [info] Show Diagram completed
+2026-02-13 13:33:34.663 [info] Code relationship diagram displayed
+2026-02-13 13:33:34.716 [info] [GraphView] Graph initialized: 16 nodes, 3 links
+2026-02-13 13:33:37.675 [info] [GraphView] Starting HTML export...
+2026-02-13 13:33:37.676 [info] [GraphView] Export data prepared: 16 nodes, 3 links
+2026-02-13 13:33:40.518 [info] [Cosmos Export] Exporting to: /Users/suzukimitsuru/Documents/Projects/vscode-code-relationship-diagram/exsample-workspace/exsample-workspace.crd.html
+2026-02-13 13:33:40.519 [info] [Cosmos Export] Data file: /Users/suzukimitsuru/Documents/Projects/vscode-code-relationship-diagram/exsample-workspace/exsample-workspace.crd.data.js
+2026-02-13 13:33:40.520 [info] [Cosmos Export] Data file written: 16 nodes, 3 links
+2026-02-13 13:33:40.527 [info] [Cosmos Export] HTML file written (49236 bytes)
+2026-02-13 13:33:42.343 [info] [Cosmos] HTML export completed
+2026-02-13 13:33:57.726 [info] extension is now deactivate!

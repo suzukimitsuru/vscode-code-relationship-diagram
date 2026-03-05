@@ -47,7 +47,7 @@ async function main() {
 		},
 	});
 
-	// Build webview script (Browser) - Cytoscape version
+	// Build webview script (Browser) - Cosmos.gl version
 	const webviewCtx = await esbuild.context({
 		entryPoints: [
 			'src/webview/graphView.ts'
@@ -63,24 +63,6 @@ async function main() {
 		plugins: [
 			esbuildProblemMatcherPlugin,
 		],
-	});
-
-	// Build webview script (Browser) - Cosmos.gl version
-	const cosmosViewCtx = await esbuild.context({
-		entryPoints: [
-			'src/webview/cosmosView.ts'
-		],
-		bundle: true,
-		format: 'iife',
-		minify: production,
-		sourcemap: !production,
-		sourcesContent: !production,
-		platform: 'browser',
-		outfile: 'dist/webview/cosmosView.js',
-		logLevel: 'silent',
-		plugins: [
-			esbuildProblemMatcherPlugin,
-		],
 		// Cosmos.glはグローバルにロードされるため外部化
 		external: ['cosmos'],
 	});
@@ -88,14 +70,11 @@ async function main() {
 	if (watch) {
 		await extensionCtx.watch();
 		await webviewCtx.watch();
-		await cosmosViewCtx.watch();
 	} else {
 		await extensionCtx.rebuild();
 		await webviewCtx.rebuild();
-		await cosmosViewCtx.rebuild();
 		await extensionCtx.dispose();
 		await webviewCtx.dispose();
-		await cosmosViewCtx.dispose();
 	}
 }
 

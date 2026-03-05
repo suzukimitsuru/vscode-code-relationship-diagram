@@ -13,111 +13,57 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
-## [0.2.34] - 2026-02-04
+## [0.2.34] - 2026-03-05
 
 ### Added
 
-- **Cosmos.gl移行 Phase 1: 基盤コンポーネント**
-  - `@cosmos.gl/graph` (v2.6.4): GPU加速WebGLグラフレンダリングエンジンを追加
-  - `d3-hierarchy` (v3.1.2): 階層的データ構造のサポートを追加
-  - `graphology-types` (v0.24.8): graphologyの型定義を追加
-
-- **新規ファイル作成**
-  - `src/relationship/cosmosAdapter.ts`: シンボルデータをCosmos.gl形式に変換
-    - `CosmosNode`/`CosmosLink`インターフェース定義
-    - `convertToCosmosFormat()`: シンボルとリレーションシップをCosmos形式に変換
-    - `getPositionsAsFloat32Array()`, `getLinksAsUint32Array()`, `getSizesAsFloat32Array()`, `getColorsAsFloat32Array()`: GPU向けデータ配列生成
-  - `src/relationship/hierarchicalLayout.ts`: 階層的円パッキングレイアウト
+- **Cosmos.gl GPU加速レンダリングエンジンの統合**
+  - `@cosmos.gl/graph` (v2.6.4): GPU加速WebGLグラフレンダリングエンジン
+  - `d3-hierarchy` (v3.1.2): 階層的データ構造のサポート
+  - `graphology-types` (v0.24.8): graphologyの型定義
+  - `src/relationship/cosmosAdapter.ts`: シンボルデータをCosmos.gl形式（Float32Array/Uint32Array）に変換
+  - `src/relationship/hierarchicalLayout.ts`: 階層的円パッキングレイアウト計算
     - `calculateHierarchicalLayout()`: ディレクトリ→ファイル→シンボルの階層配置
     - `packNodesInCircle()`: シンボルを親ノード内に円パッキング配置
-    - `applyForceLayout()`: フォースシミュレーションによる位置調整
     - `filterByDirectory()`: ディレクトリ可視性フィルタリング
-    - `getRelatedNodes()`, `calculateBoundingBox()`: ズーム計算用ユーティリティ
-  - `src/webview/cosmosView.ts`: Cosmos.gl WebViewコンポーネント
-    - `CosmosGraphView`クラス: グラフの初期化、レンダリング、インタラクション
-    - ノードレベル切り替え（dir-only, dir-file, file-only, file-symbol）
-    - ディレクトリチェックボックスによる可視性制御
-    - ツールチップ表示とファイルジャンプ機能
-    - ズーム/フィット機能
-  - `templates/cosmos-view.html`: Cosmos.gl用HTMLテンプレート
-    - プログレスバー、コントロールパネル、ディレクトリパネル
-    - ズームコントロール、統計表示
 
-- **ビルド設定の更新**
-  - `esbuild.js`: cosmosView.ts用のビルドコンテキストを追加
-    - ブラウザプラットフォーム向けIIFE形式でバンドル
-    - Cosmos.glをexternal指定（CDNロード想定）
+- **VSCode統合コマンドの追加**
+  - `CRD: Zoom to Current File in Graph`: 現在のファイルにグラフをズーム
+  - `CRD: Show Related Code in Graph`: 選択範囲の関連コードを表示
+  - エディタイベント連携: アクティブエディタ変更・カーソル位置変更時にグラフを同期（300msデバウンス）
 
-- **Cosmos.gl移行 Phase 2: 統合**
-  - `src/relationship/visualization.ts`: Cosmos.gl統合
-    - `ViewType`型エクスポート（'cytoscape' | 'cosmos'）
-    - `showCosmosDiagram()`: Cosmos.glを使用したグラフ表示メソッド
-    - `sendCosmosDataToWebview()`: Cosmos形式データのWebview送信
-    - `replaceCosmosPlaceholders()`: Cosmos用テンプレートプレースホルダー置換
-  - `src/extension.ts`: ビュータイプ選択の統合
-    - 大規模データ（50,000要素以上）の場合にCosmos.glを推奨するQuickPick表示
-    - 設定`codeRelationshipDiagram.viewType`に基づくビュー選択
-
-- **設定オプションの追加**
-  - `codeRelationshipDiagram.viewType`: グラフレンダリングエンジン選択
-    - `cytoscape`: 標準レンダリング（デフォルト）
-    - `cosmos`: GPU加速WebGLレンダリング（大規模データ向け）
-  - `codeRelationshipDiagram.useHierarchicalLayout`: 階層的コミュニティレイアウトの使用
-
-- **Cosmos.gl移行 Phase 3: 関係線機能**
-  - ノードホバー時の関連リンクハイライト機能
-    - 接続されたリンクをオレンジ色でハイライト
-    - 非関連リンクは薄いグレーにフェードアウト
-  - ツールチップの改善
-    - ノードアイコン（📁 ディレクトリ、📄 ファイル、🏛️ クラス等）を追加
-    - 出力方向（→ References）と入力方向（← Referenced by）を分離表示
-    - クリック可能なリンクでエディタにジャンプ
-    - 左ボーダー色分け（青: 参照先、緑: 参照元）
-  - `cosmos-view.html`: ツールチップスタイルの強化
-
-- **Cosmos.gl移行 Phase 4: VSCode統合**
-  - 新しいコマンドを追加
-    - `CRD: Zoom to Current File in Graph`: 現在のファイルにグラフをズーム
-    - `CRD: Show Related Code in Graph`: 選択範囲の関連コードを表示
-  - エディタイベント連携
-    - アクティブエディタ変更時にグラフを同期
-    - カーソル位置変更時に該当シンボルをハイライト（300msデバウンス）
-  - `visualization.ts`: エディタイベント送信メソッド群を追加
-    - `sendEditorFileOpen()`, `sendEditorCursorChange()`
-    - `zoomToFile()`, `showRelatedCode()`
-  - `cosmosView.ts`: `onZoomToFile()`, `onShowRelatedCode()`ハンドラを追加
-
-- **Cosmos.gl移行 Phase 5: HTMLエクスポート**
-  - スタンドアロンHTMLエクスポート機能
-    - `*.cosmos.html`: HTMLファイル（Cosmos.glをCDNから読み込み）
-    - `*.cosmos.data.js`: グラフデータ（COSMOS_GRAPH_DATA変数）
-  - `visualization.ts`: エクスポート関連メソッドを追加
-    - `exportCosmosStandaloneHTML()`: スタンドアロンHTMLエクスポート
-    - `writeCosmosDataJsFile()`: データJSファイル書き込み
-    - `replaceCosmosPlaceholdersStandalone()`: スタンドアロン用プレースホルダー置換
-  - `cosmosView.ts`: エクスポート機能を追加
-    - `exportHTML()`: エクスポートデータを収集して拡張機能に送信
-    - `loadStandaloneData()`: スタンドアロンモード用データ読み込み
+- **グラフ表示機能の強化**
+  - ノードホバー時の関連リンクハイライト（接続リンクをオレンジ、非関連リンクをフェードアウト）
+  - ツールチップ改善: ノードアイコン（📁 ディレクトリ、📄 ファイル、🏛️ クラス等）、References/Referenced by の分離表示
+  - スタンドアロンHTMLエクスポート機能（`*.crd.html` + `*.crd.data.js`）
 
 ### Changed
 
-- **パッケージ依存関係の更新**
-  - `@cosmograph/cosmos` → `@cosmos.gl/graph`に移行（パッケージ名変更対応）
+- **`src/webview/graphView.ts` を Cosmos.gl ベースに全面書き換え**
+  - Cytoscape.js → Cosmos.gl (WebGL) に移行
+  - ノードレベル切り替え（dir-only / dir-file / file-only / file-symbol）をCosmos.glで再実装
+  - ディレクトリチェックボックスによる可視性制御
+- **`templates/graph-view.html`**: CytoscapeスクリプトタグをCosmos.glに置き換え
+- **`src/relationship/visualization.ts`**: CiSEレイアウト・ViewType・Cytoscape関連コードを削除してシンプル化
+- **`src/extension.ts`**: viewType選択QuickPickを廃止し、常にCosmos.glビューを使用
+- **`esbuild.js`**: 別途cosmosViewCtxビルドコンテキストを廃止（graphView.tsに統合）
+- **`.vscodeignore`**: cytoscape / cytoscape-dagre をパッケージから除外
+- **パッケージ管理**: `yarn.lock` を削除、`package-lock.json` を `.gitignore` に追加してGit管理から除外
 
-### Technical Notes
+### Removed
 
-- **Cosmos.gl移行完了**
-  - Phase 1: 基盤コンポーネントの作成（cosmosAdapter, hierarchicalLayout, cosmosView）
-  - Phase 2: visualization.tsとの統合、ビュータイプ選択機能
-  - Phase 3: 関係線機能（ハイライト、ツールチップ改善）
-  - Phase 4: VSCode統合（新コマンド、エディタイベント連携）
-  - Phase 5: HTMLエクスポート対応（スタンドアロンHTML生成）
-- 既存のCytoscape.jsベースの実装（graphView.ts）は維持
-- GPU加速WebGLレンダリングにより大規模グラフ（50,000+ノード）のパフォーマンス向上
+- **Cytoscape.js の完全廃止**
+  - npm パッケージ `cytoscape`, `cytoscape-cise`, `dagre`, `@types/dagre` を削除
+  - `src/relationship/ciseLayout.ts`: CiSEレイアウト計算モジュールを削除
+- **旧Cosmos専用ビューの削除**（graphView.tsに統合済み）
+  - `src/webview/cosmosView.ts` を削除
+  - `templates/cosmos-view.html` を削除
+- **`codeRelationshipDiagram.viewType` 設定を廃止**（常にCosmos.glを使用）
+- **`ViewType` 型** (`'cytoscape' | 'cosmos'`) を visualization.ts から削除
 
 ## [0.1.33] - 2026-01-30
 
-### Fixed
+### 0.1.33　Fixed
 
 - **Ubuntu起動エラーの修正**
   - `esbuild.js`: npm版`events`パッケージをNode.js組み込み`node:events`にエイリアス
@@ -126,7 +72,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [0.1.32] - 2026-01-28
 
-### Added
+### 0.1.32 Added
 
 - **階層的レイアウト導出（Hierarchical Layout Derivation）**
   - ファイルレベルのみでCiSEレイアウトを計算し、他レベルは座標を導出
@@ -147,7 +93,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - ファイルレベルのノードでコミュニティを検出
   - CiSEレイアウトのクラスタとして使用
 
-### Changed
+### 0.1.32 Changed
 
 - **レイアウト計算の最適化**
   - 全ノードではなくファイルノードのみでCiSE計算
@@ -159,7 +105,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - `getCommunityLayout()`が現在の`nodeLevel`に応じた座標を使用
   - 後方互換性のため旧形式（`layoutPositions`単一配列）もサポート
 
-### Removed
+### 0.1.32 Removed
 
 - `docs/LEIDEN_COMMUNITY_DETECTION.md` - 使用しないため削除
 - `docs/DUCKDB_BINDINGS.md` - 古い情報のため削除
@@ -209,7 +155,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - `EXPORT_BUTTON_PLACEHOLDER` によるスタンドアロン/VSCode版の切り替え
 - ノードレベルドロップダウンの幅を160pxから120pxに変更
 
-### Fixed
+### 0.1.31 Fixed
 
 - 階層ビューでファイルノードが重なる問題を修正
   - Dagreレイアウト計算時のノードサイズを実際の描画サイズ（300px正方形）に合わせて調整
@@ -347,7 +293,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### 0.1.24 - Language Server Processing Optimization and Progress Enhancement
 
-### [0.1.24] 主要な改善点
+### 0.1.24 主要な改善点
 
 - **処理効率向上**: 言語サーバー処理の排除
 - **進捗表示強化**: 残り時間予測機能付き詳細な進捗表示システム
@@ -382,7 +328,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### 0.1.23 - Gitignore Integration and Layout Optimization
 
-### [0.1.23] 主要な改善点
+### 0.1.23 主要な改善点
 
 - **ファイル除外機能**: .gitignoreファイル対応による不要ファイルの自動除外
 - **パフォーマンス向上**: ファイル検索対象の最適化と重複処理の削除
@@ -437,7 +383,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### 0.1.22 - Template System Implementation and Architecture Refactoring
 
-### [0.1.22] 主要な改善点
+### 0.1.22 主要な改善点
 
 - **アーキテクチャ改善**: HTMLテンプレートシステムの導入
 - **アイコンシステム変更**: VSCode Codiconsから Font Awesome 4.7.0への移行
@@ -504,7 +450,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### 0.1.21 - Advanced Node Selection and Graph Interaction Features
 
-### [0.1.21] 主要な改善点
+### 0.1.21 主要な改善点
 
 - **直感的操作**: 範囲選択とドラッグ移動による効率的なノード整理
 - **精密ナビゲーション**: エッジから直接ソースコードの該当行にジャンプ

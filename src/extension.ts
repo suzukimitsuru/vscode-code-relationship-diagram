@@ -310,35 +310,6 @@ export function activate(context: vscode.ExtensionContext) {
 						const all_rels = await db.relationship_quaryAll();
 						logs.log(`Loaded relationships: ${all_rels.length} counts`);
 
-						// ビュータイプを選択
-						const viewTypeConfig = vscode.workspace.getConfiguration('codeRelationshipDiagram')
-							.get<string>('viewType', 'cytoscape');
-
-						// 設定値またはQuickPickでビュータイプを決定
-						let viewType: Relationship.ViewType = viewTypeConfig as Relationship.ViewType;
-
-						// 大規模データの場合はCosmos.glを推奨
-						const totalElements = all_symbols.length + all_rels.length;
-						if (totalElements > 50000 && viewType === 'cytoscape') {
-							const choice = await vscode.window.showQuickPick([
-								{
-									label: '$(rocket) Cosmos.gl (Recommended)',
-									description: 'GPU-accelerated WebGL rendering for large graphs',
-									viewType: 'cosmos' as Relationship.ViewType
-								},
-								{
-									label: '$(graph) Cytoscape.js',
-									description: 'Standard graph rendering',
-									viewType: 'cytoscape' as Relationship.ViewType
-								}
-							], {
-								placeHolder: `Large dataset detected (${totalElements.toLocaleString()} elements). Select view type:`
-							});
-							if (choice) {
-								viewType = choice.viewType;
-							}
-						}
-
 						// グラフを表示
 					const graphViz = new Relationship.Visualization(context, workspace_folder, workspace_basename + '.crd.html', logs);
 
@@ -353,21 +324,18 @@ export function activate(context: vscode.ExtensionContext) {
 						}
 					});
 
-					if (viewType === 'cosmos') {
-						logs.log('Using Cosmos.gl view');
-						await graphViz.showCosmosDiagram(all_symbols, all_rels);
-					} else {
-						logs.log('Using Cytoscape.js view');
-						await graphViz.showDiagram(all_symbols, all_rels);
-					}
+					logs.log('Using Cosmos.gl view');
+					await graphViz.showDiagram(all_symbols, all_rels);
 					logs.log('Show Diagram completed');
 
 					db.dispose();
 					logs.info('Code relationship diagram displayed');
+					// WebViewが閉じられたときにログファイルを閉じる
+					graphViz.onDispose(() => {
+						logs.closeLogFile();
+					});
 					} catch (error) {
 						logs.error('Failed to show graph: ', error);
-					} finally {
-						// ログファイルを閉じる
 						logs.closeLogFile();
 					}
 				}

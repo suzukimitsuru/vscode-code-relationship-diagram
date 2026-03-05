@@ -17,21 +17,14 @@
         }
     </style>
 
-    <script src="CYTOSCAPE_URI_PLACEHOLDER"></script>
-    <!-- CiSE layout dependencies -->
-    <script src="LAYOUT_BASE_URI_PLACEHOLDER"></script>
-    <script src="COSE_BASE_URI_PLACEHOLDER"></script>
-    <script src="AVSDF_BASE_URI_PLACEHOLDER"></script>
-    <script src="CYTOSCAPE_CISE_URI_PLACEHOLDER"></script>
-    <!-- Note: Community detection is performed on extension side (Louvain algorithm) -->
-    <!-- Webview uses CiSE layout with community clusters for visualization -->
+    <!-- Cosmos.gl (WebGL graph renderer) -->
+    <script src="COSMOS_URI_PLACEHOLDER"></script>
 
     <!-- Data passed from extension to webview -->
     <script>
         // Global variables for the graph script
-        window.GRAPH_ELEMENTS = ELEMENTS_PLACEHOLDER;
-        window.GRAPH_NODES_COUNT = ELEMENTS_NODES_LENGTH_PLACEHOLDER;
-        window.GRAPH_EDGES_COUNT = ELEMENTS_EDGES_LENGTH_PLACEHOLDER;
+        window.GRAPH_NODES_COUNT = NODES_COUNT_PLACEHOLDER;
+        window.GRAPH_LINKS_COUNT = LINKS_COUNT_PLACEHOLDER;
         window.IS_STANDALONE = IS_STANDALONE_PLACEHOLDER;
         window.GRAPH_DATA_JS_URI = "GRAPH_DATA_JS_URI_PLACEHOLDER";
         window.WORKSPACE_NAME = "WORKSPACE_NAME_PLACEHOLDER";
@@ -46,7 +39,7 @@
             overflow: hidden;
         }
 
-        /* プログレスバー */
+        /* Progress bar */
         #progress-container {
             position: fixed;
             top: 0;
@@ -76,22 +69,18 @@
             transition: opacity 0.3s ease;
         }
 
-        /* ビューコンテナ（シングルビュー） */
-        .view-container {
+        /* Graph container */
+        #graph-container {
             width: 100%;
             height: 100vh;
             background-color: BACKGROUND_COLOR_PLACEHOLDER;
-            padding-top: 0;
         }
-        .view-container.active {
-            display: block;
-        }
-        .cy-container {
-            width: 100%;
-            height: 100%;
+        #graph-container canvas {
+            width: 100% !important;
+            height: 100% !important;
         }
 
-        /* コントロールパネル */
+        /* Control panel */
         .controls {
             position: absolute;
             top: 10px;
@@ -106,12 +95,12 @@
             display: flex;
             flex-direction: column;
             align-items: flex-start;
+            gap: 6px;
         }
         .button-row {
             display: flex;
             flex-direction: row;
             gap: 5px;
-            margin: 2px 0;
         }
         button {
             margin: 0;
@@ -125,34 +114,12 @@
             align-items: center;
             gap: 6px;
             font-size: 13px;
-            min-width: auto;
         }
         button:hover {
             background: BUTTON_HOVER_BG_PLACEHOLDER;
         }
-        button i.codicon {
-            font-size: 16px;
-        }
-        button span {
-            font-weight: normal;
-        }
-        .node-level-selector {
-            margin: 2px 0;
-            padding: 6px 6px;
-            border: none;
-            border-radius: 3px;
-            background: BUTTON_NO_POINT_BG_PLACEHOLDER;
-            color: white;
-            font-size: 13px;
-            cursor: pointer;
-            width: 120px;
-        }
-        .node-level-selector:hover {
-            background: BUTTON_HOVER_BG_PLACEHOLDER;
-        }
-        .node-level-selector:focus {
-            outline: none;
-            border-color: #007ACC;
+        button i {
+            font-size: 14px;
         }
 
         /* Custom Panzoom control */
@@ -214,6 +181,7 @@
         .pan-arrow.down { bottom: 4px; left: 50%; transform: translateX(-50%); }
         .pan-arrow.left { left: 4px; top: 50%; transform: translateY(-50%); }
         .pan-arrow.right { right: 4px; top: 50%; transform: translateY(-50%); }
+
         /* Zoom controls */
         .zoom-controls {
             display: flex;
@@ -270,66 +238,157 @@
             font-size: 11px;
             text-align: center;
         }
+
+        /* Tooltip - Phase 3 Enhanced */
+        .cosmos-tooltip {
+            position: absolute;
+            display: none;
+            background: CONTROLS_BG_PLACEHOLDER;
+            border: BORDER_STYLE_PLACEHOLDER;
+            border-radius: 6px;
+            padding: 10px 14px;
+            font-size: 12px;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            max-width: 350px;
+            z-index: 1000;
+            pointer-events: auto;
+            box-shadow: 0 4px 12px BOX_SHADOW_COLOR_PLACEHOLDER;
+        }
+        .cosmos-tooltip .tooltip-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+        }
+        .cosmos-tooltip .tooltip-icon {
+            font-size: 16px;
+        }
+        .cosmos-tooltip .tooltip-path {
+            color: #888;
+            font-size: 11px;
+            word-break: break-all;
+            margin-bottom: 4px;
+        }
+        .cosmos-tooltip .tooltip-info {
+            color: #aaa;
+            font-size: 11px;
+        }
+        .cosmos-tooltip .tooltip-connections {
+            margin-top: 6px;
+            padding-top: 6px;
+        }
+        .cosmos-tooltip .tooltip-section {
+            margin-top: 6px;
+        }
+        .cosmos-tooltip .tooltip-label {
+            display: block;
+            color: #888;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .cosmos-tooltip .tooltip-link {
+            display: flex;
+            flex-direction: column;
+            color: #4A90E2;
+            text-decoration: none;
+            padding: 4px 6px;
+            margin: 2px 0;
+            border-radius: 3px;
+            background: rgba(74, 144, 226, 0.1);
+            transition: background 0.15s ease;
+        }
+        .cosmos-tooltip .tooltip-link:hover {
+            background: rgba(74, 144, 226, 0.25);
+            text-decoration: none;
+        }
+        .cosmos-tooltip .tooltip-outgoing {
+            border-left: 2px solid #4A90E2;
+        }
+        .cosmos-tooltip .tooltip-incoming {
+            border-left: 2px solid #7CB342;
+        }
+        .cosmos-tooltip .tooltip-location {
+            font-size: 10px;
+            color: #888;
+            margin-top: 2px;
+        }
+        .cosmos-tooltip .tooltip-more {
+            display: block;
+            color: #666;
+            font-size: 11px;
+            font-style: italic;
+            margin-top: 4px;
+        }
+        .cosmos-tooltip hr {
+            margin: 6px 0;
+            border: none;
+            border-top: BORDER_STYLE_PLACEHOLDER;
+        }
+
+        /* Statistics display */
+        .stats-display {
+            font-size: 11px;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            opacity: 0.8;
+            padding: 4px 0;
+        }
     </style>
 </head>
 <body>
-    <!-- プログレスバー -->
+    <!-- Progress bar -->
     <div id="progress-container">
         <div id="progress-bar"></div>
     </div>
     <h2 id="progress-text">Loading...</h2>
 
-    <!-- グラフビュー -->
-    <div id="view-graph" class="view-container active">
-        <div class="controls">
-            <div class="button-row">
-                <button onclick="fitGraph()" title="Fit to Screen">
-                    <i class="icon fa fa-expand" aria-hidden="true"></i>
-                </button>
-                <button onclick="resetLayout()" title="Reset Layout">
-                    <i class="fa fa-refresh" aria-hidden="true"></i>
-                </button>
-                EXPORT_BUTTON_PLACEHOLDER
+    <!-- Control panel -->
+    <div class="controls">
+        <div class="button-row">
+            <button id="btn-fit" title="Fit to Screen">
+                <i class="fa fa-expand" aria-hidden="true"></i>
+            </button>
+            <button id="btn-reset" title="Reset View">
+                <i class="fa fa-refresh" aria-hidden="true"></i>
+            </button>
+            EXPORT_BUTTON_PLACEHOLDER
+        </div>
+        <div class="stats-display" id="stats-display">
+            Nodes: 0 | Links: 0
+        </div>
+        <!-- Custom Panzoom Controls -->
+        <div class="panzoom-controls">
+            <div class="pan-circle" id="pan-circle" title="Drag to pan">
+                <div class="pan-direction-indicator">
+                    <span class="pan-arrow up"><i class="fa fa-caret-up"></i></span>
+                    <span class="pan-arrow down"><i class="fa fa-caret-down"></i></span>
+                    <span class="pan-arrow left"><i class="fa fa-caret-left"></i></span>
+                    <span class="pan-arrow right"><i class="fa fa-caret-right"></i></span>
+                </div>
+                <div class="pan-handle" id="pan-handle"></div>
             </div>
-            <select id="node-level" class="node-level-selector" onchange="changeNodeLevel(this.value)">
-                <option value="dir-only">Directory Only</option>
-                <option value="dir-file">Directory + File</option>
-                <option value="file-only">File Only</option>
-                <option value="file-symbol" selected>File + Symbol</option>
-            </select>
-            <select id="community-drag-level" class="node-level-selector" title="Select drag scope for Alt+Drag">
-                <option value="single">Drag: Single Node</option>
-                <option value="community" selected>Drag: Community</option>
-                <option value="parent">Drag: Parent Community</option>
-            </select>
-            <!-- Custom Panzoom Controls -->
-            <div class="panzoom-controls">
-                <div class="pan-circle" id="pan-circle" title="Drag to pan">
-                    <div class="pan-direction-indicator">
-                        <span class="pan-arrow up"><i class="fa fa-caret-up"></i></span>
-                        <span class="pan-arrow down"><i class="fa fa-caret-down"></i></span>
-                        <span class="pan-arrow left"><i class="fa fa-caret-left"></i></span>
-                        <span class="pan-arrow right"><i class="fa fa-caret-right"></i></span>
-                    </div>
-                    <div class="pan-handle" id="pan-handle"></div>
+            <div class="zoom-controls">
+                <div class="zoom-slider-row">
+                    <button id="zoom-out-btn" title="Zoom Out">
+                        <i class="fa fa-minus" aria-hidden="true"></i>
+                    </button>
+                    <input type="range" class="zoom-slider" id="zoom-slider"
+                           min="0.1" max="3" step="0.1" value="1">
+                    <button id="zoom-in-btn" title="Zoom In">
+                        <i class="fa fa-plus" aria-hidden="true"></i>
+                    </button>
                 </div>
-                <div class="zoom-controls">
-                    <div class="zoom-slider-row">
-                        <button id="zoom-out-btn" title="Zoom Out">
-                            <i class="fa fa-minus" aria-hidden="true"></i>
-                        </button>
-                        <input type="range" class="zoom-slider" id="zoom-slider"
-                               min="0.1" max="3" step="0.1" value="1">
-                        <button id="zoom-in-btn" title="Zoom In">
-                            <i class="fa fa-plus" aria-hidden="true"></i>
-                        </button>
-                    </div>
-                    <span class="zoom-level" id="zoom-level">100%</span>
-                </div>
+                <span class="zoom-level" id="zoom-level">100%</span>
             </div>
         </div>
-        <div id="cy-graph" class="cy-container"></div>
     </div>
+
+    <!-- Graph container (Cosmos.gl canvas will be added here) -->
+    <div id="graph-container"></div>
+
+    <!-- Tooltip (Phase 3) -->
+    <div id="cosmos-tooltip" class="cosmos-tooltip"></div>
 
     <!-- Main script -->
     GRAPH_SCRIPT_URI_PLACEHOLDER

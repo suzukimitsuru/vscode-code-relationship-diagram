@@ -257,7 +257,7 @@ export function generateCommunityNodes(
 /**
  * ファイルレベルのノードのみを抽出（コミュニティ検出用）
  *
- * @param elements Cytoscapeノード配列
+ * @param elements ノード配列
  * @returns ファイルノードのみの配列
  */
 export function extractFileNodes(elements: { nodes: Array<{ data: { id: string; label: string; kind?: number } }> }): CommunityNode[] {
@@ -273,7 +273,7 @@ export function extractFileNodes(elements: { nodes: Array<{ data: { id: string; 
 /**
  * ファイル間のエッジのみを抽出（コミュニティ検出用）
  *
- * @param elements Cytoscapeエッジ配列
+ * @param elements エッジ配列
  * @param fileNodeIds ファイルノードIDのセット
  * @returns ファイル間エッジの配列
  */
