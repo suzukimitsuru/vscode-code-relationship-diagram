@@ -13,6 +13,42 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.3.35] - 2026-07-31
+
+### Added
+
+- **円形階層グラフ可視化への刷新**
+  - BFS深度に基づく同心円レイアウト（エントリポイントを中心に参照先を外周へ配置）
+    - `src/webview/graphView.ts`: `computeBfsDepths()` でマルチソースBFS深度計算、`computeRadialPositions()` でリング配置（`RING_SPACING = 220px`、リング容量超過時はサブリングへ被参照数の昇順で振り分け）
+    - 公開シンボルを起点に親ファイル周囲へ階層配置するシンボルレイアウトを追加
+  - カスタム力学シミュレーション（ユーザー起動、`enableSimulation: false`）
+    - Barnes-Hut四分木によるO(n log n)斥力計算（θ=1.2）、エッジ幅比例スプリング引力、シンボル→親ファイル引力、径方向スプリング（BFS深度リング維持）を実装
+    - 全ノード速度二乗和が閾値以下で自動収束
+  - 保守性スコア・Dead code・循環参照のハイライト
+    - `src/relationship/cosmosAdapter.ts`: 行数・出次数から保守性スコアを算出し4段階（良好/注意/警告/危険）で色分け、DFSバック辺検出による循環参照リンクのハイライト、命名パターンによるエントリポイント判定
+  - BFS深度スライダー（Min/Max）・Dead Code/Circular Refs/Symbols表示切り替えチェックボックス・凡例パネルを追加（`templates/graph-view.html`）
+
+- **ファイル差分キューによる調査処理の刷新**（`src/relationship/fileDifference/`）
+  - `QueueProcessor`: ファイル単位の関係調査タスクを並列実行するキュープロセッサを新設（同時実行数上限4、計算フェーズは並列・コミットフェーズは直列）
+  - `Item`/`Difference`: 操作を upsert・delete の2種類に統合（旧: 追加・更新・不変・削除の4種類）
+  - `SymbolCache`: 変更ファイルに関係する参照先ファイルのみをオンデマンドで読み込む遅延キャッシュ（旧: 不変ファイル全件の事前ロード）
+  - fan-out再調査: 変更・削除されたシンボルの参照元ファイルを自動的に再キュー登録（`codeDb.ts`に`relationship_queryReferencesTo()`を追加）
+  - 詳細仕様は `docs/file-difference-queue.md` を参照
+  - `verification/lsp-parallel/`: DocumentSymbolProvider/ReferenceProviderの並列発行が安全かつ高速であることを検証するテストを追加
+
+- **VSCode統合の強化**（`src/extension.ts`）
+  - 拡張機能の有効化(`activate`)時にDBとキュープロセッサを常駐生成し、`FileSystemWatcher`のイベントごとに該当1ファイルのみをキューへ追加（旧: `examineRelationships`コマンド実行時の全ファイル一括バッチ処理）
+  - `files.associations`設定の変更を検知し、watcherの再構築と全走査を自動実行
+
+### Changed
+
+- **`src/relationship/cosmosAdapter.ts`**: ノードモデルに`lineCount`/`inDegree`/`outDegree`/`isEntryPoint`/`isDeadCode`/`isCyclic`/`maintenanceScore`/`hotspotScore`を追加し、ファイルノードサイズを行数の√スケールで算出するよう変更
+- **`docs/`構成の見直し**: `COSMOS_MIGRATION_PLAN.md` / `FUNCTIONAL_SPECS.md` / `IMPLEMENTATION_SPECS.md` を統合・整理し、`docs/diagram-specs.md`（機能・実装仕様）・`docs/analysis-plan.md`・`docs/file-difference-queue.md`として再構成
+
+### Removed
+
+- **旧バッチ処理の全面廃止**: `src/extension.ts`の`IntervalProcess`クラス、`examine.fileAdditions`/`fileUpdates`/`fileNotchanges`/`fileRemoves`など4種別のバッチ処理経路を削除（`QueueProcessor`に統合）
+
 ## [0.2.34] - 2026-03-05
 
 ### Added

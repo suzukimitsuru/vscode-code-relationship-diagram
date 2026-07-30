@@ -1,5 +1,5 @@
 /**
- * Cosmos.gl Adapter
+ * Cosmos.gl Adapter: GPU加速WebGLレンダリングで大規模グラフに対応
  *
  * シンボルデータをCosmos.gl形式に変換し、階層的レイアウトを計算する
  */
@@ -41,6 +41,22 @@ export interface CosmosNode {
     childCount: number;
     /** 表示状態 */
     visible: boolean;
+    /** コードの行数（ノードサイズ計算用） */
+    lineCount: number;
+    /** 入次数（このノードへの参照数） */
+    inDegree: number;
+    /** 出次数（このノードからの参照数） */
+    outDegree: number;
+    /** エントリポイントか */
+    isEntryPoint: boolean;
+    /** デッドコードか（in-degree=0 かつ非エントリポイント） */
+    isDeadCode: boolean;
+    /** 循環参照に含まれるか */
+    isCyclic: boolean;
+    /** 保守性スコア（0-1） */
+    maintenanceScore: number;
+    /** ホットスポットスコア */
+    hotspotScore: number;
 }
 
 /**
@@ -75,6 +91,8 @@ export interface CosmosLink {
     color: number;
     /** 関係の詳細リスト */
     details: RelationshipDetail[];
+    /** リンクレベル: file=ファイル間集約リンク、symbol=シンボル間リンク */
+    level: 'file' | 'symbol';
 }
 
 /**
@@ -89,29 +107,153 @@ export interface CosmosData {
     nodeIndex: Map<string, number>;
     /** ディレクトリパス一覧 */
     directories: string[];
+    /** エントリポイントノードIDリスト */
+    entryPoints: string[];
+    /** 循環参照リンクインデックスリスト */
+    circularLinkIndices: number[];
 }
+
+/**
+ * ファイルノードサイズの基準行数（この行数のファイルが基準サイズになる）
+ * 調整時はこの定数を変更する
+ */
+export const FILE_NODE_BASE_LINES = 100;
+const FILE_NODE_BASE_SIZE = 12;   // 基準行数のときのサイズ（px）
+const FILE_NODE_MIN_SIZE  = 5;    // 最小サイズ
+const FILE_NODE_MAX_SIZE  = 60;   // 最大サイズ
 
 /**
  * 色定義（ノードレベル別）
  */
 const NODE_COLORS = {
     directory: 0x4a9eff,  // 青
-    file: 0x7cb342,       // 緑
     symbol: 0xff9800,     // オレンジ
 };
 
 /**
- * リンク色（#3498DB - graph-view.htmlと同じ青）
+ * 保守性カラースキーム（circle-diagram.md 仕様）
+ */
+const MAINTENANCE_COLORS = {
+    good:       0x4CAF50,  // 緑（スコア 0〜0.33）
+    caution:    0xFFC107,  // 黄（スコア 0.33〜0.5）
+    warning:    0xFF9800,  // 橙（スコア 0.5〜0.66）
+    danger:     0xF44336,  // 赤（スコア 0.66〜1.0）
+    deadCode:   0x9E9E9E,  // グレー（デッドコード）
+    entryPoint: 0x2196F3,  // 青（エントリポイント）
+    godFunc:    0xFFD700,  // 金（God Function）
+};
+
+/**
+ * リンク色（#3498DB - 通常青）
  */
 const LINK_COLOR = 0x3498DB;
 
 /**
- * コミュニティカラーパレット
+ * 循環参照リンク色（赤）
+ */
+const CIRCULAR_LINK_COLOR = 0xFF4444;
+
+/**
+ * エントリポイントとみなす命名パターン
+ */
+const ENTRY_POINT_PATTERNS = [
+    /^(main|index|app|server|start|activate|bootstrap|init)\.(ts|js|tsx|jsx|py|go|rs|java|cs|cpp|c)$/i,
+    /^(main|index|app|server|start|activate|bootstrap|init)$/i,
+    /^App\.(ts|js|tsx|jsx)$/,
+];
+
+/**
+ * コミュニティカラーパレット（非エントリポイント/非デッドコードのフォールバック）
  */
 const COMMUNITY_COLORS = [
     0xe53935, 0x1e88e5, 0x43a047, 0xfb8c00, 0x8e24aa,
     0x00acc1, 0xffb300, 0x5e35b1, 0x00897b, 0xd81b60,
 ];
+
+/**
+ * 保守性スコアを算出（0.0〜1.0）
+ */
+function calcMaintenanceScore(lineCount: number, outDegree: number): number {
+    const lineScore = Math.min(lineCount / 500, 1.0);
+    const refScore = Math.min(outDegree / 20, 1.0);
+    return lineScore * 0.6 + refScore * 0.4;
+}
+
+/**
+ * 保守性スコアから色を取得
+ */
+function getMaintenanceColor(score: number): number {
+    if (score < 0.33) { return MAINTENANCE_COLORS.good; }
+    if (score < 0.5)  { return MAINTENANCE_COLORS.caution; }
+    if (score < 0.66) { return MAINTENANCE_COLORS.warning; }
+    return MAINTENANCE_COLORS.danger;
+}
+
+/**
+ * ファイル行数からノードサイズを計算（√スケール、FILE_NODE_BASE_LINES行が基準）
+ */
+function calcNodeSizeByLineCount(lineCount: number): number {
+    const ratio = Math.sqrt(Math.max(lineCount, 1) / FILE_NODE_BASE_LINES);
+    return Math.min(Math.max(FILE_NODE_MIN_SIZE, FILE_NODE_BASE_SIZE * ratio), FILE_NODE_MAX_SIZE);
+}
+
+/**
+ * 循環参照をDFS（バック辺検出）で特定
+ * Returns { circularLinkIndices, cyclicNodeIndices }
+ */
+function detectCircularReferences(
+    nodes: CosmosNode[],
+    links: CosmosLink[]
+): { circularLinkIndices: number[]; cyclicNodeIndices: Set<number> } {
+    // ファイルノードのインデックスセット
+    const fileNodeIndices = new Set<number>();
+    nodes.forEach((node, i) => {
+        if (node.level === 'file') { fileNodeIndices.add(i); }
+    });
+
+    // 隣接リスト（ファイル→ファイルのリンクのみ）
+    const adj = new Map<number, Array<{ neighbor: number; linkIdx: number }>>();
+    links.forEach((link, linkIdx) => {
+        if (fileNodeIndices.has(link.source) && fileNodeIndices.has(link.target)) {
+            if (!adj.has(link.source)) { adj.set(link.source, []); }
+            adj.get(link.source)!.push({ neighbor: link.target, linkIdx });
+        }
+    });
+
+    const visited = new Set<number>();
+    const inStack = new Set<number>();
+    const backEdgeKeys = new Set<string>(); // "source-target"
+
+    function dfs(v: number): void {
+        visited.add(v);
+        inStack.add(v);
+        for (const { neighbor } of (adj.get(v) || [])) {
+            if (!visited.has(neighbor)) {
+                dfs(neighbor);
+            } else if (inStack.has(neighbor)) {
+                backEdgeKeys.add(`${v}-${neighbor}`);
+            }
+        }
+        inStack.delete(v);
+    }
+
+    for (const idx of fileNodeIndices) {
+        if (!visited.has(idx)) { dfs(idx); }
+    }
+
+    // バック辺に対応するリンクインデックスを収集
+    const circularLinkIndices: number[] = [];
+    const cyclicNodeIndices = new Set<number>();
+    links.forEach((link, i) => {
+        if (backEdgeKeys.has(`${link.source}-${link.target}`)) {
+            circularLinkIndices.push(i);
+            cyclicNodeIndices.add(link.source);
+            cyclicNodeIndices.add(link.target);
+        }
+    });
+
+    return { circularLinkIndices, cyclicNodeIndices };
+}
 
 /**
  * シンボルとリレーションシップをCosmos.gl形式に変換
@@ -126,17 +268,28 @@ export function convertToCosmosFormat(
     const nodeIndex = new Map<string, number>();
     const directorySet = new Set<string>();
 
+    /** 新フィールドのデフォルト値 */
+    const newNodeDefaults = {
+        lineCount: 0,
+        inDegree: 0,
+        outDegree: 0,
+        isEntryPoint: false,
+        isDeadCode: false,
+        isCyclic: false,
+        maintenanceScore: 0,
+        hotspotScore: 0,
+    };
+
     // 1. ディレクトリノードを生成
     const directoryNodes = new Map<string, CosmosNode>();
     for (const symbol of symbols) {
         if (symbol.kind === vscode.SymbolKind.File) {
-            const dirPath = path.dirname(symbol.path);
-            collectDirectories(dirPath, directoryNodes, directorySet);
+            collectDirectories(path.dirname(symbol.path), directoryNodes, directorySet);
         }
     }
 
     // ディレクトリノードを追加
-    for (const [dirPath, dirNode] of directoryNodes) {
+    for (const [, dirNode] of directoryNodes) {
         nodeIndex.set(dirNode.id, nodes.length);
         nodes.push(dirNode);
     }
@@ -150,13 +303,14 @@ export function convertToCosmosFormat(
             const communityId = communities?.get(symbol.id);
 
             const fileNode: CosmosNode = {
+                ...newNodeDefaults,
                 id: symbol.id,
                 x: 0,
                 y: 0,
-                size: calculateFileSize(symbol),
+                size: 12,  // 後でlineCountベースに更新
                 color: communityId !== undefined
                     ? COMMUNITY_COLORS[communityId % COMMUNITY_COLORS.length]
-                    : NODE_COLORS.file,
+                    : MAINTENANCE_COLORS.good,
                 parentId: parentId,
                 level: 'file',
                 label: path.basename(symbol.path),
@@ -166,6 +320,7 @@ export function convertToCosmosFormat(
                 communityId: communityId,
                 childCount: countSymbols(symbol),
                 visible: true,
+                lineCount: symbol.lineCount,
             };
 
             fileNodes.set(symbol.path, fileNode);
@@ -174,9 +329,7 @@ export function convertToCosmosFormat(
 
             // ディレクトリの子ノード数を更新
             const dirNode = directoryNodes.get(dirPath);
-            if (dirNode) {
-                dirNode.childCount++;
-            }
+            if (dirNode) { dirNode.childCount++; }
         }
     }
 
@@ -184,6 +337,7 @@ export function convertToCosmosFormat(
     for (const symbol of symbols) {
         if (symbol.kind !== vscode.SymbolKind.File) {
             const symbolNode: CosmosNode = {
+                ...newNodeDefaults,
                 id: symbol.id,
                 x: 0,
                 y: 0,
@@ -197,6 +351,7 @@ export function convertToCosmosFormat(
                 line: symbol.define.line,
                 childCount: 0,
                 visible: true,
+                lineCount: symbol.lineCount,
             };
 
             nodeIndex.set(symbolNode.id, nodes.length);
@@ -222,9 +377,92 @@ export function convertToCosmosFormat(
                     width: calculateLinkWidth(details.length),
                     color: LINK_COLOR,
                     details: details,
+                    level: 'file',
                 });
             }
         }
+    }
+
+    // 5. 入次数・出次数を計算（ファイルノード対象）
+    for (const link of links) {
+        const srcNode = nodes[link.source];
+        const tgtNode = nodes[link.target];
+        if (srcNode) { srcNode.outDegree++; }
+        if (tgtNode) { tgtNode.inDegree++; }
+    }
+
+    // 6. エントリポイント・デッドコードを判定
+    const entryPoints: string[] = [];
+    for (const node of nodes) {
+        if (node.level !== 'file') { continue; }
+        const isNaming = ENTRY_POINT_PATTERNS.some(re => re.test(node.label));
+        node.isEntryPoint = (node.inDegree === 0 && node.outDegree > 0) || isNaming;
+        if (node.isEntryPoint) { entryPoints.push(node.id); }
+        node.isDeadCode = (node.inDegree === 0 && !node.isEntryPoint);
+    }
+
+    // 7. 循環参照を検出
+    const { circularLinkIndices, cyclicNodeIndices } = detectCircularReferences(nodes, links);
+    for (const idx of cyclicNodeIndices) {
+        nodes[idx].isCyclic = true;
+    }
+
+    // 8. 循環リンクの色を変更
+    for (const i of circularLinkIndices) {
+        links[i].color = CIRCULAR_LINK_COLOR;
+    }
+
+    // 9. ファイルノードの保守性スコア・色・サイズを更新
+    for (const node of nodes) {
+        if (node.level !== 'file') { continue; }
+        node.maintenanceScore = calcMaintenanceScore(node.lineCount, node.outDegree);
+        node.hotspotScore = node.lineCount * (node.inDegree + node.outDegree + 1);
+        node.size = calcNodeSizeByLineCount(node.lineCount);
+
+        if (node.isEntryPoint) {
+            node.color = MAINTENANCE_COLORS.entryPoint;
+        } else if (node.isDeadCode) {
+            node.color = MAINTENANCE_COLORS.deadCode;
+        } else if (node.lineCount > 200 && node.outDegree > 20) {
+            node.color = MAINTENANCE_COLORS.godFunc;  // God Function
+        } else {
+            node.color = getMaintenanceColor(node.maintenanceScore);
+        }
+    }
+
+    // 10. シンボル間リンクを生成（シンボルモード表示用、§2-2-1）
+    const symbolRelationMap = new Map<string, RelationshipDetail[]>();
+    for (const rel of relationships) {
+        const sourceIdx = nodeIndex.get(rel.reference.id);
+        const targetIdx = nodeIndex.get(rel.define.id);
+        if (sourceIdx === undefined || targetIdx === undefined) { continue; }
+        if (sourceIdx === targetIdx) { continue; }
+
+        const key = `${sourceIdx}|||${targetIdx}`;
+        if (!symbolRelationMap.has(key)) {
+            symbolRelationMap.set(key, []);
+        }
+        const sourceNode = nodes[sourceIdx];
+        const targetNode = nodes[targetIdx];
+        symbolRelationMap.get(key)!.push({
+            sourceName: sourceNode?.label || 'Unknown',
+            targetName: targetNode?.label || 'Unknown',
+            sourceLine: rel.reference.startLine,
+            targetLine: rel.define.startLine,
+            sourcePath: rel.reference.path,
+            targetPath: rel.define.path,
+        });
+    }
+    for (const [key, details] of symbolRelationMap) {
+        const parts = key.split('|||');
+        links.push({
+            source: parseInt(parts[0]),
+            target: parseInt(parts[1]),
+            width: calculateLinkWidth(details.length),
+            color: LINK_COLOR,
+            details,
+            level: 'symbol',
+        });
     }
 
     return {
@@ -232,6 +470,8 @@ export function convertToCosmosFormat(
         links,
         nodeIndex,
         directories: Array.from(directorySet).sort(),
+        entryPoints,
+        circularLinkIndices,
     };
 }
 
@@ -267,6 +507,14 @@ function collectDirectories(
         kind: -1,  // ディレクトリ用の特殊値
         childCount: 0,
         visible: true,
+        lineCount: 0,
+        inDegree: 0,
+        outDegree: 0,
+        isEntryPoint: false,
+        isDeadCode: false,
+        isCyclic: false,
+        maintenanceScore: 0,
+        hotspotScore: 0,
     };
 
     directoryNodes.set(dirPath, dirNode);
@@ -275,15 +523,6 @@ function collectDirectories(
     if (parentPath !== '.' && parentPath !== '') {
         collectDirectories(parentPath, directoryNodes, directorySet);
     }
-}
-
-/**
- * ファイルサイズを計算（シンボル数に基づく）
- */
-function calculateFileSize(fileSymbol: SYMBOL.SymbolModel): number {
-    const symbolCount = countSymbols(fileSymbol);
-    // 10-50の範囲でスケール
-    return Math.min(10 + Math.sqrt(symbolCount) * 5, 50);
 }
 
 /**
@@ -344,21 +583,17 @@ function aggregateFileRelationships(
             continue;
         }
 
+        // 方向付きリンク: 参照元(source) → 定義先(target)
         const key = `${sourcePath}|||${targetPath}`;
-        const reverseKey = `${targetPath}|||${sourcePath}`;
 
-        // 双方向をまとめる
-        const actualKey = fileRelations.has(key) ? key :
-                          fileRelations.has(reverseKey) ? reverseKey : key;
-
-        if (!fileRelations.has(actualKey)) {
-            fileRelations.set(actualKey, []);
+        if (!fileRelations.has(key)) {
+            fileRelations.set(key, []);
         }
 
         const sourceSymbol = symbolIndex.get(rel.reference.id);
         const targetSymbol = symbolIndex.get(rel.define.id);
 
-        fileRelations.get(actualKey)!.push({
+        fileRelations.get(key)!.push({
             sourceName: sourceSymbol?.name || 'Unknown',
             targetName: targetSymbol?.name || 'Unknown',
             sourceLine: rel.reference.startLine,

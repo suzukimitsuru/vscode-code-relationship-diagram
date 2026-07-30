@@ -60,25 +60,33 @@ export async function indexingCompleteWait(retry: number): Promise<number> {
     return attempt + 1;
 }
 
+/** @description 参照ファイルのシンボル表を解決する関数（見つからなければ空配列） */
+export type SymbolResolver = (refPath: string) => Promise<SYMBOL.SymbolModel[]>;
+
 /**
  * 関係を調査する
- * @param wsFolder      ワークスペースフォルダ
- * @param define_uri    ファイルURI
- * @param root          ルートシンボル
- * @param symbol_all    シンボル辞書
+ * @param wsFolder       ワークスペースフォルダ
+ * @param define_uri     ファイルURI
+ * @param def_symbols    定義側シンボル配列
+ * @param resolveSymbols 参照ファイルのシンボル表を解決する関数
+ * @param retries        リトライ回数
+ * @param checkCancel    中断チェック（中断時は例外を投げる）
  * @returns 関係配列
  */
 export async function examine(wsFolder: string, define_uri: vscode.Uri,
-    def_symbols: SYMBOL.SymbolModel[], symbol_all: Record<string, SYMBOL.SymbolModel[]>, retries: number
+    def_symbols: SYMBOL.SymbolModel[], resolveSymbols: SymbolResolver, retries: number,
+    checkCancel?: () => void
 ): Promise<Relationship[]> {
     const result: Relationship[] = [];
     for (const def_symbol of def_symbols) {
         // 親シンボルはスキップ
-        if (def_symbol.parentId) {            
+        if (def_symbol.parentId) {
             // 関係を抽出する
             try {
                 // 全ての参照を検索
+                checkCancel?.();
                 const ref_locs = await examineWithRetry(define_uri, def_symbol.define, retries);
+                checkCancel?.();
                 for (const ref_loc of ref_locs) {
 
                     // 参照パスが別のファイルで
@@ -86,8 +94,8 @@ export async function examine(wsFolder: string, define_uri: vscode.Uri,
                     if (ref_path !== def_symbol.path) {
 
                         // 参照シンボルが在れば
-                        const ref_root = symbol_all[ref_path];
-                        if (ref_root) {
+                        const ref_root = await resolveSymbols(ref_path);
+                        if (ref_root.length > 0) {
                             const ref_symbol = findSymbol(ref_root, ref_loc.range.start);
                             if (ref_symbol) {
 

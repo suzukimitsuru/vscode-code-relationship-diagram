@@ -48,25 +48,34 @@
             height: 4px;
             background-color: PROGRESS_BG_COLOR_PLACEHOLDER;
             z-index: 2000;
-            opacity: 1;
-            transition: opacity 0.3s ease;
+        }
+        @keyframes progress-shimmer {
+            0%   { transform: translateX(-100%); }
+            100% { transform: translateX(500%); }
         }
         #progress-bar {
+            position: relative;
+            overflow: hidden;
             height: 100%;
             background: linear-gradient(90deg, #007ACC, #4A90E2);
             width: 0%;
             transition: width 0.3s ease;
             border-radius: 0 2px 2px 0;
         }
+        #progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 20%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+            animation: progress-shimmer 1.5s infinite;
+        }
         #progress-text {
-            position: fixed;
-            top: 8px;
-            left: 10px;
             color: CONTROLS_COLOR_PLACEHOLDER;
-            font-size: 12px;
-            z-index: 2001;
-            opacity: 1;
-            transition: opacity 0.3s ease;
+            font-size: 16px;
+            text-align: center;
         }
 
         /* Graph container */
@@ -239,8 +248,8 @@
             text-align: center;
         }
 
-        /* Tooltip - Phase 3 Enhanced */
-        .cosmos-tooltip {
+        /* Tooltip - Enhanced */
+        .node-tooltip {
             position: absolute;
             display: none;
             background: CONTROLS_BG_PLACEHOLDER;
@@ -254,33 +263,33 @@
             pointer-events: auto;
             box-shadow: 0 4px 12px BOX_SHADOW_COLOR_PLACEHOLDER;
         }
-        .cosmos-tooltip .tooltip-header {
+        .node-tooltip .tooltip-header {
             display: flex;
             align-items: center;
             gap: 6px;
             margin-bottom: 4px;
         }
-        .cosmos-tooltip .tooltip-icon {
+        .node-tooltip .tooltip-icon {
             font-size: 16px;
         }
-        .cosmos-tooltip .tooltip-path {
+        .node-tooltip .tooltip-path {
             color: #888;
             font-size: 11px;
             word-break: break-all;
             margin-bottom: 4px;
         }
-        .cosmos-tooltip .tooltip-info {
+        .node-tooltip .tooltip-info {
             color: #aaa;
             font-size: 11px;
         }
-        .cosmos-tooltip .tooltip-connections {
+        .node-tooltip .tooltip-connections {
             margin-top: 6px;
             padding-top: 6px;
         }
-        .cosmos-tooltip .tooltip-section {
+        .node-tooltip .tooltip-section {
             margin-top: 6px;
         }
-        .cosmos-tooltip .tooltip-label {
+        .node-tooltip .tooltip-label {
             display: block;
             color: #888;
             font-size: 10px;
@@ -288,7 +297,7 @@
             letter-spacing: 0.5px;
             margin-bottom: 4px;
         }
-        .cosmos-tooltip .tooltip-link {
+        .node-tooltip .tooltip-link {
             display: flex;
             flex-direction: column;
             color: #4A90E2;
@@ -299,29 +308,29 @@
             background: rgba(74, 144, 226, 0.1);
             transition: background 0.15s ease;
         }
-        .cosmos-tooltip .tooltip-link:hover {
+        .node-tooltip .tooltip-link:hover {
             background: rgba(74, 144, 226, 0.25);
             text-decoration: none;
         }
-        .cosmos-tooltip .tooltip-outgoing {
+        .node-tooltip .tooltip-outgoing {
             border-left: 2px solid #4A90E2;
         }
-        .cosmos-tooltip .tooltip-incoming {
+        .node-tooltip .tooltip-incoming {
             border-left: 2px solid #7CB342;
         }
-        .cosmos-tooltip .tooltip-location {
+        .node-tooltip .tooltip-location {
             font-size: 10px;
             color: #888;
             margin-top: 2px;
         }
-        .cosmos-tooltip .tooltip-more {
+        .node-tooltip .tooltip-more {
             display: block;
             color: #666;
             font-size: 11px;
             font-style: italic;
             margin-top: 4px;
         }
-        .cosmos-tooltip hr {
+        .node-tooltip hr {
             margin: 6px 0;
             border: none;
             border-top: BORDER_STYLE_PLACEHOLDER;
@@ -333,6 +342,130 @@
             color: CONTROLS_COLOR_PLACEHOLDER;
             opacity: 0.8;
             padding: 4px 0;
+        }
+
+        /* Circle diagram controls */
+        .circle-section {
+            width: 100%;
+            border-top: BORDER_STYLE_PLACEHOLDER;
+            padding-top: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .circle-section label {
+            font-size: 11px;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            opacity: 0.7;
+            display: block;
+            margin-bottom: 2px;
+        }
+        .circle-section select {
+            width: 100%;
+            background: PROGRESS_BG_COLOR_PLACEHOLDER;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            border: BORDER_STYLE_PLACEHOLDER;
+            border-radius: 3px;
+            padding: 3px 4px;
+            font-size: 11px;
+        }
+        .depth-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            width: 100%;
+        }
+        .depth-row label {
+            font-size: 10px;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            opacity: 0.7;
+            width: 28px;
+            flex-shrink: 0;
+            margin: 0;
+        }
+        .depth-row input[type="range"] {
+            flex: 1;
+            height: 6px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: PROGRESS_BG_COLOR_PLACEHOLDER;
+            border-radius: 3px;
+            outline: none;
+        }
+        .depth-row input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            background: BUTTON_NO_POINT_BG_PLACEHOLDER;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .depth-row span {
+            font-size: 10px;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            width: 28px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .toggle-row label {
+            font-size: 11px;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            opacity: 0.85;
+            cursor: pointer;
+            margin: 0;
+            flex: 1;
+        }
+        .toggle-row input[type="checkbox"] {
+            cursor: pointer;
+            accent-color: BUTTON_NO_POINT_BG_PLACEHOLDER;
+        }
+
+        /* Legend panel */
+        #legend-panel {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: CONTROLS_BG_PLACEHOLDER;
+            color: CONTROLS_COLOR_PLACEHOLDER;
+            padding: 8px 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px BOX_SHADOW_COLOR_PLACEHOLDER;
+            border: BORDER_STYLE_PLACEHOLDER;
+            font-size: 11px;
+            min-width: 160px;
+        }
+        #legend-panel .legend-title {
+            font-weight: bold;
+            font-size: 11px;
+            margin-bottom: 6px;
+            opacity: 0.9;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin: 3px 0;
+        }
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .legend-label {
+            font-size: 10px;
+            opacity: 0.85;
+        }
+        .legend-sep {
+            border: none;
+            border-top: BORDER_STYLE_PLACEHOLDER;
+            margin: 5px 0;
         }
     </style>
 </head>
@@ -352,11 +485,40 @@
             <button id="btn-reset" title="Reset View">
                 <i class="fa fa-refresh" aria-hidden="true"></i>
             </button>
+            <button id="btn-simulate" title="Start Simulation">
+                <i class="fa fa-play" aria-hidden="true"></i>
+            </button>
             EXPORT_BUTTON_PLACEHOLDER
         </div>
         <div class="stats-display" id="stats-display">
             Nodes: 0 | Links: 0
         </div>
+        <!-- Circle Diagram Controls -->
+        <div class="circle-section">
+            <div class="depth-row">
+                <label>Max</label>
+                <input type="range" id="max-depth-slider" min="1" max="100" step="1" value="100">
+                <span id="max-depth-value">∞</span>
+            </div>
+            <div class="depth-row">
+                <label>Min</label>
+                <input type="range" id="min-depth-slider" min="0" max="99" step="1" value="0">
+                <span id="min-depth-value">0</span>
+            </div>
+            <div class="toggle-row">
+                <input type="checkbox" id="toggle-deadcode" checked>
+                <label for="toggle-deadcode">Dead Code</label>
+            </div>
+            <div class="toggle-row">
+                <input type="checkbox" id="toggle-circular" checked>
+                <label for="toggle-circular">Circular Refs</label>
+            </div>
+            <div class="toggle-row">
+                <input type="checkbox" id="toggle-symbols" checked>
+                <label for="toggle-symbols">Symbols</label>
+            </div>
+        </div>
+
         <!-- Custom Panzoom Controls -->
         <div class="panzoom-controls">
             <div class="pan-circle" id="pan-circle" title="Drag to pan">
@@ -384,11 +546,26 @@
         </div>
     </div>
 
-    <!-- Graph container (Cosmos.gl canvas will be added here) -->
+    <!-- Graph container (canvas will be added here) -->
     <div id="graph-container"></div>
 
-    <!-- Tooltip (Phase 3) -->
-    <div id="cosmos-tooltip" class="cosmos-tooltip"></div>
+    <!-- Tooltip -->
+    <div id="node-tooltip" class="node-tooltip"></div>
+
+    <!-- Legend Panel -->
+    <div id="legend-panel">
+        <div class="legend-title">凡例</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#2196F3"></div><span class="legend-label">Entry Point</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#4CAF50"></div><span class="legend-label">良好（≤100行）</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#FFC107"></div><span class="legend-label">注意（〜300行）</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#FF9800"></div><span class="legend-label">警告（〜500行）</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#F44336"></div><span class="legend-label">危険（500行超）</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#FFD700"></div><span class="legend-label">God Function</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#9E9E9E;opacity:0.6"></div><span class="legend-label">Dead Code</span></div>
+        <hr class="legend-sep">
+        <div class="legend-item"><div class="legend-dot" style="background:#3498DB;border-radius:2px;height:3px;margin-top:5px"></div><span class="legend-label">参照リンク</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#FF4444;border-radius:2px;height:3px;margin-top:5px"></div><span class="legend-label">循環参照</span></div>
+    </div>
 
     <!-- Main script -->
     GRAPH_SCRIPT_URI_PLACEHOLDER

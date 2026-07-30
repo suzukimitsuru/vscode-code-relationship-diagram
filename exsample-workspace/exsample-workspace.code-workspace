@@ -9,7 +9,7 @@
     "C_Cpp.workspaceParsingPriority": "highest",
     "C_Cpp.autoAddFileAssociations": false,
     "files.associations": {
-      "src/**/*.(c|h)": "c"
+      "src/**/*.{c,h}": "c"
     }
   },
   "extensions": {

@@ -10,7 +10,7 @@ int main() {
     printf("Math Operations:\n");
     int a = 10, b = 5;
     int sum = add(a, b);
-    int product = multiply(a, b);
+    int product = 0;//multiply(a, b);
     
     printf("a = %d, b = %d\n", a, b);
     print_result("Addition", (double)sum);

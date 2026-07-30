@@ -7,7 +7,6 @@ import * as codeRelationships from './codeRelationships';
 import { Logs } from '../logs';
 import * as communityDetection from './communityDetection';
 import { CommunityEdge } from './communityDetection';
-// Cosmos.gl integration
 import * as cosmosAdapter from './cosmosAdapter';
 import * as hierarchicalLayout from './hierarchicalLayout';
 
@@ -58,8 +57,7 @@ export class Visualization {
     }
 
     /**
-     * グラフを表示（Cosmos.gl使用）
-     * GPU加速WebGLレンダリングで大規模グラフに対応
+     * グラフを表示
      */
     public async showDiagram(symbols: SYMBOL.SymbolModel[], relationships: codeRelationships.Relationship[]) {
         const startTime = performance.now();
@@ -71,11 +69,11 @@ export class Visualization {
         });
 
         try {
-            this.logs.log('[Cosmos] Starting Cosmos.gl graph generation...');
-            this.logs.log(`[Cosmos] Input: ${symbols.length} symbols, ${relationships.length} relationships`);
+            this.logs.log('Starting graph generation...');
+            this.logs.log(`Input: ${symbols.length} symbols, ${relationships.length} relationships`);
 
             if (symbols.length === 0) {
-                this.logs.error('[Cosmos] No symbols provided');
+                this.logs.error('No symbols provided');
                 return;
             }
 
@@ -86,7 +84,7 @@ export class Visualization {
 
             // Webviewパネル作成
             this.panel = vscode.window.createWebviewPanel(
-                'cosmosGraphDiagram',
+                'codeRelationshipDiagram',
                 locale('window-title'),
                 vscode.ViewColumn.One,
                 {
@@ -112,7 +110,7 @@ export class Visualization {
                 async (message) => {
                     switch (message.type) {
                         case 'webviewReady':
-                            this.logs.log(`[Cosmos] Webview ready`);
+                            this.logs.log(`Webview ready`);
                             if (webviewReadyResolve) {
                                 webviewReadyResolve();
                             }
@@ -133,22 +131,20 @@ export class Visualization {
                                     options.selection = new vscode.Range(message.line, 0, message.line, 0);
                                 }
                                 await vscode.window.showTextDocument(document, options);
-                                this.logs.log(`[Cosmos] Opened file: ${message.path}${message.line !== undefined ? `:${message.line}` : ''}`);
+                                this.logs.log(`Opened file: ${message.path}${message.line !== undefined ? `:${message.line}` : ''}`);
                             } catch (error) {
-                                this.logs.error(`[Cosmos] Failed to open file: ${error instanceof Error ? error.message : error}`);
+                                this.logs.error(`Failed to open file: ${error instanceof Error ? error.message : error}`);
                             }
                             break;
-
-                        // Phase 5: HTMLエクスポート
-                        case 'exportCosmosHTML':
+                        case 'exportStandaloneHTML':
                             try {
-                                await this.exportCosmosStandaloneHTML(
+                                await this.exportStandaloneHTML(
                                     path.join(this.wsFolder, this.htmlFilename),
                                     message.data
                                 );
-                                this.logs.log('[Cosmos] HTML export completed');
+                                this.logs.log('HTML export completed');
                             } catch (error) {
-                                this.logs.error(`[Cosmos] Failed to export HTML: ${error instanceof Error ? error.message : error}`);
+                                this.logs.error(`Failed to export HTML: ${error instanceof Error ? error.message : error}`);
                             }
                             break;
                     }
@@ -158,20 +154,25 @@ export class Visualization {
             );
 
             const panelElapsed = (performance.now() - startTime) / 1000;
-            this.logs.log(`[Cosmos] ${panelElapsed.toFixed(3)}s: Created webview panel`);
+            this.logs.log(`${panelElapsed.toFixed(3)}s: Created webview panel`);
 
             // ローディング画面を表示
             const html_loading = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'loading.html'));
-            const emptyCosmosData: cosmosAdapter.CosmosData = { nodes: [], links: [], directories: [], nodeIndex: new Map() };
-            this.panel.webview.html = this.replaceCosmosPlaceholders(html_loading, locale('window-title'), emptyCosmosData);
+            const emptyData: cosmosAdapter.CosmosData = { nodes: [], links: [], directories: [], nodeIndex: new Map(), entryPoints: [], circularLinkIndices: [] };
+            this.panel.webview.html = this.replacePlaceholdersForWebView(html_loading, locale('window-title'), emptyData);
 
-            // シンボルとリレーションシップをCosmos.gl形式に変換
-            await this.updateProgress(20, 'Converting data to Cosmos format...');
+            // 1/10: 初期化完了
+            await this.updateProgress(5, 'Initializing...');
             const convertStartTime = performance.now();
 
             // コミュニティ検出（オプション）
             let communities: Map<string, number> | undefined;
+            let communityCount = 0;
             const fileSymbols = symbols.filter(s => s.kind === vscode.SymbolKind.File);
+
+            // 2/10: ファイル・シンボル数確定
+            await this.updateProgress(10, `Analyzing symbols: ${fileSymbols.length.toLocaleString()}/${symbols.length.toLocaleString()} files/symbols`);
+
             if (fileSymbols.length > 10) {
                 const communityNodes = fileSymbols.map(s => ({
                     id: s.id,
@@ -207,18 +208,24 @@ export class Visualization {
                 // Louvainコミュニティ検出
                 const communityResult = communityDetection.detectCommunities(communityNodes, communityEdges);
                 communities = communityResult.communities;
-                this.logs.log(`[Cosmos] Detected ${communityResult.communityCount} communities`);
+                communityCount = communityResult.communityCount;
+                this.logs.log(`Detected ${communityCount} communities`);
             }
 
-            // Cosmos形式に変換
-            const cosmosData = cosmosAdapter.convertToCosmosFormat(symbols, relationships, communities);
+            // 3/10: コミュニティ検出完了
+            await this.updateProgress(20, `Communities detected: ${communityCount.toLocaleString()}/${relationships.length.toLocaleString()} communities/relationships`);
+
+            // 描画形式に変換
+            const drawingData = cosmosAdapter.convertToCosmosFormat(symbols, relationships, communities);
             const convertElapsed = (performance.now() - convertStartTime) / 1000;
-            this.logs.log(`[Cosmos] ${convertElapsed.toFixed(3)}s: Converted to Cosmos format: ${cosmosData.nodes.length} nodes, ${cosmosData.links.length} links`);
+            this.logs.log(`${convertElapsed.toFixed(3)}s: Converted to Drawing format: ${drawingData.nodes.length} nodes, ${drawingData.links.length} links`);
+
+            // 4/10: 描画形式変換完了
+            await this.updateProgress(30, `Graph built: ${drawingData.nodes.length.toLocaleString()} nodes, ${drawingData.links.length.toLocaleString()} links`);
 
             // 階層的レイアウトを計算
-            await this.updateProgress(40, 'Calculating hierarchical layout...');
             const layoutStartTime = performance.now();
-            hierarchicalLayout.calculateHierarchicalLayout(cosmosData, {
+            hierarchicalLayout.calculateHierarchicalLayout(drawingData, {
                 width: 4000,
                 height: 4000,
                 directorySpacing: 150,
@@ -227,40 +234,50 @@ export class Visualization {
                 gravity: 0.1
             });
 
+            // 5/10: 階層レイアウト完了
+            await this.updateProgress(40, `Layout calculated: ${drawingData.nodes.length.toLocaleString()} nodes`);
+
             // フォースレイアウトで微調整
-            hierarchicalLayout.applyForceLayout(cosmosData, 50);
+            hierarchicalLayout.applyForceLayout(drawingData, 50);
 
             const layoutElapsed = (performance.now() - layoutStartTime) / 1000;
-            this.logs.log(`[Cosmos] ${layoutElapsed.toFixed(3)}s: Layout calculated`);
+            this.logs.log(`${layoutElapsed.toFixed(3)}s: Layout calculated`);
 
-            // Cosmos用HTMLを設定
-            await this.updateProgress(60, 'Loading Cosmos view...');
-            const html_cosmos = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-view.html'));
-            this.panel.webview.html = this.replaceCosmosPlaceholders(html_cosmos, locale('window-title'), cosmosData);
+            // 6/10: フォースレイアウト完了
+            await this.updateProgress(47, 'Force layout applied');
+
+            // HTMLを設定
+            const template = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-view.html'));
+            this.panel.webview.html = this.replacePlaceholdersForWebView(template, locale('window-title'), drawingData);
+
+            // 7/10: HTMLテンプレート設定完了
+            await this.updateProgress(55, 'Loading view...');
 
             // Webview準備完了を待機
-            this.logs.log(`[Cosmos] Waiting for webview ready...`);
+            this.logs.log(`Waiting for webview ready...`);
             const timeoutPromise = new Promise<void>((_, reject) => {
                 setTimeout(() => reject(new Error('Webview initialization timeout')), 10000);
             });
 
             try {
                 await Promise.race([webviewReadyPromise, timeoutPromise]);
-                this.logs.log(`[Cosmos] Webview ready confirmed`);
+                this.logs.log(`Webview ready confirmed`);
             } catch (error) {
-                this.logs.error(`[Cosmos] Webview timeout - proceeding anyway`);
+                this.logs.error(`Webview timeout - proceeding anyway`);
             }
 
-            // グラフデータを送信
-            await this.updateProgress(80, 'Sending graph data...');
-            await this.sendCosmosDataToWebview(cosmosData, startTime);
+            // 8/10: Webview準備完了
+            await this.updateProgress(65, 'Webview ready');
+
+            // グラフデータを送信（9/10〜10/10：内部でノード数比例バッチ進捗）
+            await this.sendDrawingDataToWebview(drawingData, startTime);
 
             const totalTime = (performance.now() - startTime) / 1000;
-            this.logs.log(`[Cosmos] ${totalTime.toFixed(3)}s: Cosmos.gl diagram generation completed`);
+            this.logs.log(`${totalTime.toFixed(3)}s: Diagram generation completed`);
 
         } catch (error) {
-            this.logs.error(`[Cosmos] Error: ${error instanceof Error ? error.message : error}`);
-            console.error('[Cosmos] Detailed error:', error);
+            this.logs.error(`Error: ${error instanceof Error ? error.message : error}`);
+            console.error('Detailed error:', error);
             if (this.panel) {
                 this.panel.dispose();
                 this.panel = null;
@@ -269,41 +286,55 @@ export class Visualization {
     }
 
     /**
-     * Cosmos.glデータをWebviewに送信
+     * 描画データをWebviewに送信
      */
-    private async sendCosmosDataToWebview(cosmosData: cosmosAdapter.CosmosData, startTime: number): Promise<void> {
+    private async sendDrawingDataToWebview(drawingData: cosmosAdapter.CosmosData, startTime: number): Promise<void> {
         if (!this.panel) {
-            this.logs.error('[Cosmos] Cannot send data: panel is null');
+            this.logs.error('Cannot send data: panel is null');
             return;
         }
 
         try {
-            // グラフデータをシリアライズ可能な形式に変換
+            const totalNodes = drawingData.nodes.length;
+            // 9/10: ノードをバッチシリアライズしながら 66→79% で進捗報告
+            // バッチサイズ = max(500, ceil(nodes / 10)) → 最大10バッチ
+            const batchSize = Math.max(500, Math.ceil(totalNodes / 10));
+            const serializedNodes: any[] = [];
+
+            for (let start = 0; start < totalNodes; start += batchSize) {
+                const end = Math.min(start + batchSize, totalNodes);
+                for (let i = start; i < end; i++) {
+                    const node = drawingData.nodes[i];
+                    serializedNodes.push({
+                        id: node.id, x: node.x, y: node.y, size: node.size, color: node.color,
+                        parentId: node.parentId, level: node.level, label: node.label,
+                        path: node.path, kind: node.kind, line: node.line, communityId: node.communityId,
+                        childCount: node.childCount, visible: node.visible, lineCount: node.lineCount,
+                        inDegree: node.inDegree, outDegree: node.outDegree,
+                        isEntryPoint: node.isEntryPoint, isDeadCode: node.isDeadCode,
+                        isCyclic: node.isCyclic, maintenanceScore: node.maintenanceScore,
+                        hotspotScore: node.hotspotScore,
+                    });
+                }
+                // バッチ完了ごとに 66→79% の進捗更新
+                const batchProgress = Math.min(end / Math.max(totalNodes, 1), 1);
+                const progressPercent = Math.round(66 + batchProgress * 13);
+                await this.updateProgress(progressPercent, `Serializing: ${end.toLocaleString()}/${totalNodes.toLocaleString()} nodes`);
+            }
+
             const serializableData = {
-                nodes: cosmosData.nodes.map(node => ({
-                    id: node.id,
-                    x: node.x,
-                    y: node.y,
-                    size: node.size,
-                    color: node.color,
-                    parentId: node.parentId,
-                    level: node.level,
-                    label: node.label,
-                    path: node.path,
-                    kind: node.kind,
-                    line: node.line,
-                    communityId: node.communityId,
-                    childCount: node.childCount,
-                    visible: node.visible
-                })),
-                links: cosmosData.links.map(link => ({
+                nodes: serializedNodes,
+                links: drawingData.links.map(link => ({
                     source: link.source,
                     target: link.target,
                     width: link.width,
                     color: link.color,
-                    details: link.details
+                    details: link.details,
+                    level: link.level,
                 })),
-                directories: cosmosData.directories
+                directories: drawingData.directories,
+                entryPoints: drawingData.entryPoints,
+                circularLinkIndices: drawingData.circularLinkIndices,
             };
 
             // データを送信
@@ -312,18 +343,21 @@ export class Visualization {
                 data: serializableData
             });
 
-            this.logs.log(`[Cosmos] Sent graph data: ${serializableData.nodes.length} nodes, ${serializableData.links.length} links`);
+            // 10/10: 送信完了 80%
+            await this.updateProgress(80, `Sending complete: ${serializableData.nodes.length.toLocaleString()} nodes, ${serializableData.links.length.toLocaleString()} links`);
+
+            this.logs.log(`Sent graph data: ${serializableData.nodes.length} nodes, ${serializableData.links.length} links`);
 
         } catch (error) {
-            this.logs.error(`[Cosmos] Failed to send data: ${error instanceof Error ? error.message : error}`);
+            this.logs.error(`Failed to send data: ${error instanceof Error ? error.message : error}`);
             throw error;
         }
     }
 
     /**
-     * Cosmos.gl用プレースホルダーを置換
+     * WebView版プレースホルダーを置換
      */
-    private replaceCosmosPlaceholders(template: string, title: string, cosmosData: cosmosAdapter.CosmosData, isStandalone: boolean = false): string {
+    private replacePlaceholdersForWebView(template: string, title: string, drawingData: cosmosAdapter.CosmosData, isStandalone: boolean = false): string {
         const isDarkTheme = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
 
         const replacements: { [key: string]: string } = {
@@ -341,15 +375,14 @@ export class Visualization {
             'FONT_AWESOME_TTF_URI_PLACEHOLDER': isStandalone
                 ? 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.ttf'
                 : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', 'font-awesome', 'fonts', 'fontawesome-webfont.ttf')).toString(),
-            // Cosmos.glライブラリ
             'COSMOS_URI_PLACEHOLDER': isStandalone
                 ? 'https://unpkg.com/@cosmos.gl/graph@2.6.4/dist/index.min.js'
                 : this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'node_modules', '@cosmos.gl', 'graph', 'dist', 'index.min.js')).toString(),
             'GRAPH_SCRIPT_URI_PLACEHOLDER': isStandalone
-                ? `<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphView.js'), 'utf8')}</script>`
+                ? `<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphView.js'), 'utf8').replace(/\/\/# sourceMappingURL=\S+/g, '')}</script>`
                 : `<script src="${this.panel!.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'dist', 'webview', 'graphView.js')).toString()}"></script>`,
-            'NODES_COUNT_PLACEHOLDER': cosmosData.nodes.length.toString(),
-            'LINKS_COUNT_PLACEHOLDER': cosmosData.links.length.toString(),
+            'NODES_COUNT_PLACEHOLDER': drawingData.nodes.length.toString(),
+            'LINKS_COUNT_PLACEHOLDER': drawingData.links.length.toString(),
             'GRAPH_DATA_JS_URI_PLACEHOLDER': '',
             'WORKSPACE_NAME_PLACEHOLDER': this.htmlFilename.replace('.crd.html', ''),
 
@@ -401,14 +434,16 @@ export class Visualization {
     // ========================================
 
     /**
-     * Cosmos.glスタンドアロンHTMLをエクスポート
+     * スタンドアロンHTMLをエクスポート
      */
-    private async exportCosmosStandaloneHTML(
+    private async exportStandaloneHTML(
         defaultFilename: string,
         data: {
             nodes: any[];
             links: any[];
             directories: string[];
+            entryPoints: string[];
+            circularLinkIndices: number[];
         }
     ): Promise<void> {
         try {
@@ -422,7 +457,7 @@ export class Visualization {
             });
 
             if (!saveUri) {
-                this.logs.log('[Cosmos Export] Cancelled by user');
+                this.logs.log('[Export] Cancelled by user');
                 return;
             }
 
@@ -430,24 +465,24 @@ export class Visualization {
             const dataJsPath = htmlPath.replace(/\.html$/i, '.data.js');
             const dataJsFilename = path.basename(dataJsPath);
 
-            this.logs.log(`[Cosmos Export] Exporting to: ${htmlPath}`);
-            this.logs.log(`[Cosmos Export] Data file: ${dataJsPath}`);
+            this.logs.log(`[Export] HTML: ${htmlPath}`);
+            this.logs.log(`[Export] Data: ${dataJsPath}`);
 
             // データJSファイルを書き込み
-            await this.writeCosmosDataJsFile(dataJsPath, data);
-            this.logs.log(`[Cosmos Export] Data file written: ${data.nodes.length} nodes, ${data.links.length} links`);
+            await this.writeDataJsFile(dataJsPath, data);
+            this.logs.log(`[Export] Data file written: ${data.nodes.length} nodes, ${data.links.length} links`);
 
             // HTMLテンプレートを生成
             const html_template = this.loadHtmlTemplate(path.join(this.extensionPath, 'templates', 'graph-view.html'));
-            const html_content = this.replaceCosmosPlaceholdersStandalone(html_template, dataJsFilename, data);
+            const html_content = this.replacePlaceholdersForExport(html_template, dataJsFilename, data);
 
             // HTMLファイルを書き込み
             await vscode.workspace.fs.writeFile(saveUri, Buffer.from(html_content, 'utf8'));
-            this.logs.log(`[Cosmos Export] HTML file written (${html_content.length} bytes)`);
+            this.logs.log(`[Export] HTML file written (${html_content.length} bytes)`);
 
             // 成功メッセージを表示
             const action = await vscode.window.showInformationMessage(
-                `Cosmos.gl HTML exported to: ${htmlPath}`,
+                `HTML exported to: ${htmlPath}`,
                 'Open File', 'Open in Browser'
             );
 
@@ -459,20 +494,22 @@ export class Visualization {
             }
 
         } catch (error) {
-            this.logs.error(`[Cosmos Export] Failed: ${error instanceof Error ? error.message : error}`);
-            vscode.window.showErrorMessage(`Cosmos HTML export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            this.logs.error(`[Export] Failed: ${error instanceof Error ? error.message : error}`);
+            vscode.window.showErrorMessage(`HTML export failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
 
     /**
-     * Cosmos.glデータJSファイルを書き込み
+     * データJSファイルを書き込み
      */
-    private async writeCosmosDataJsFile(
+    private async writeDataJsFile(
         filepath: string,
         data: {
             nodes: any[];
             links: any[];
             directories: string[];
+            entryPoints: string[];
+            circularLinkIndices: number[];
         }
     ): Promise<void> {
         return new Promise((resolve, reject) => {
@@ -480,7 +517,7 @@ export class Visualization {
                 const writeStream = fs.createWriteStream(filepath, { encoding: 'utf8' });
 
                 writeStream.on('error', (error) => {
-                    this.logs.error(`[Cosmos Export] Write stream error: ${error.message}`);
+                    this.logs.error(`[Export] Write stream error: ${error.message}`);
                     reject(error);
                 });
 
@@ -489,7 +526,7 @@ export class Visualization {
                 });
 
                 // JavaScriptファイルの開始
-                writeStream.write('// Cosmos.gl Graph Data for Standalone HTML\n');
+                writeStream.write('// Graph Data for Standalone HTML\n');
                 writeStream.write('window.COSMOS_GRAPH_DATA = {\n');
 
                 // ノード配列
@@ -511,7 +548,13 @@ export class Visualization {
                 writeStream.write('  ],\n');
 
                 // ディレクトリ配列
-                writeStream.write(`  "directories": ${JSON.stringify(data.directories)}\n`);
+                writeStream.write(`  "directories": ${JSON.stringify(data.directories)},\n`);
+
+                // エントリポイント配列
+                writeStream.write(`  "entryPoints": ${JSON.stringify(data.entryPoints)},\n`);
+
+                // 循環リンクインデックス配列
+                writeStream.write(`  "circularLinkIndices": ${JSON.stringify(data.circularLinkIndices)}\n`);
 
                 writeStream.write('};\n');
                 writeStream.end();
@@ -523,24 +566,23 @@ export class Visualization {
     }
 
     /**
-     * Cosmos.glスタンドアロン版用プレースホルダー置換
+     * エクスポート版プレースホルダー置換
      */
-    private replaceCosmosPlaceholdersStandalone(
+    private replacePlaceholdersForExport(
         template: string,
         dataJsFilename: string,
-        data: { nodes: any[]; links: any[]; directories: string[] }
+        data: { nodes: any[]; links: any[]; directories: string[]; entryPoints: string[]; circularLinkIndices: number[] }
     ): string {
         const replacements: { [key: string]: string } = {
             'IS_STANDALONE_PLACEHOLDER': 'true',
-            'TITLE_PLACEHOLDER': `${this.htmlFilename.replace('.crd.html', '')} - Cosmos.gl (Standalone)`,
+            'TITLE_PLACEHOLDER': this.htmlFilename,
             'FONT_AWWSOME_CSS_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css',
             'FONT_AWESOME_WOFF2_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.woff2',
             'FONT_AWESOME_WOFF_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.woff',
             'FONT_AWESOME_TTF_URI_PLACEHOLDER': 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/fonts/fontawesome-webfont.ttf',
-            // Cosmos.glをCDNから読み込み
             'COSMOS_URI_PLACEHOLDER': 'https://unpkg.com/@cosmos.gl/graph@2.6.4/dist/index.min.js',
             // スタンドアロン用スクリプト（データファイル読み込み + インライン化）
-            'GRAPH_SCRIPT_URI_PLACEHOLDER': `<script src="${dataJsFilename}"></script>\n<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphView.js'), 'utf8')}</script>`,
+            'GRAPH_SCRIPT_URI_PLACEHOLDER': `<script src="${dataJsFilename}"></script>\n<script>${fs.readFileSync(path.join(this.extensionPath, 'dist', 'webview', 'graphView.js'), 'utf8').replace(/\/\/# sourceMappingURL=\S+/g, '')}</script>`,
             'NODES_COUNT_PLACEHOLDER': data.nodes.length.toString(),
             'LINKS_COUNT_PLACEHOLDER': data.links.length.toString(),
             'GRAPH_DATA_JS_URI_PLACEHOLDER': dataJsFilename,

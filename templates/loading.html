@@ -23,12 +23,28 @@
             background-color: PROGRESS_BG_COLOR_PLACEHOLDER;
             z-index: 2000;
         }
+        @keyframes progress-shimmer {
+            0%   { transform: translateX(-100%); }
+            100% { transform: translateX(500%); }
+        }
         #progress-bar {
+            position: relative;
+            overflow: hidden;
             height: 100%;
             background: linear-gradient(90deg, #007ACC, #4A90E2);
             width: 0%;
             transition: width 0.3s ease;
             border-radius: 0 2px 2px 0;
+        }
+        #progress-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 20%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+            animation: progress-shimmer 1.5s infinite;
         }
         #progress-text {
             color: CONTROLS_COLOR_PLACEHOLDER;
@@ -42,24 +58,37 @@
         <div id="progress-bar"></div>
     </div>
     <h2 id="progress-text">Initializing...</h2>
-    
+
     <script>
         const progressBar = document.getElementById('progress-bar');
         const progressText = document.getElementById('progress-text');
-        
-        function updateProgress(percent, message) {
-            progressBar.style.width = percent + '%';
-            progressText.textContent = message;
-        }
-        
+
+        let progressPercent = 5;
+        progressBar.style.width = progressPercent + '%';
+        progressText.textContent = 'Starting...';
+
+        // 5秒ごとに0.5%ずつ自動進捗（上限98%）
+        const progressTimer = setInterval(() => {
+            if (progressPercent < 98) {
+                progressPercent = Math.min(progressPercent + 0.5, 98);
+                progressBar.style.width = progressPercent + '%';
+            }
+        }, 5000);
+
         window.addEventListener('message', event => {
             const message = event.data;
             if (message.type === 'progress') {
-                updateProgress(message.percent, message.message);
+                // 実際の進捗値で更新（後退しない）
+                if (message.percent > progressPercent) {
+                    progressPercent = message.percent;
+                }
+                progressBar.style.width = progressPercent + '%';
+                progressText.textContent = message.message;
+                if (message.percent >= 100) {
+                    clearInterval(progressTimer);
+                }
             }
         });
-        
-        updateProgress(5, 'Starting...');
     </script>
 </body>
 </html>
