@@ -14,13 +14,15 @@
 		// "noFallthroughCasesInSwitch": true, /* Report errors for fallthrough cases in switch statement. */
 		// "noUnusedParameters": true,  /* Report errors on unused parameters. */
 		"resolveJsonModule": true,
-        "esModuleInterop": true
+        "esModuleInterop": true,
+        "skipLibCheck": true
 	},
 	"exclude": [
 		"node_modules",
 		"out",
 		"dist",
 		".vscode-test",
-		"verification"
+		"verification",
+		"vitest.config.mts"
 	]
 }
