@@ -1,0 +1,776 @@
+<title>AST導入ロードマップ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=M+PLUS+1+Code:wght@400;500&display=swap">
+
+<style>
+:root {
+  --ground:      #F2F5F6;
+  --surface:     #FFFFFF;
+  --surface-sub: #E9EEF0;
+  --ink:         #10222B;
+  --ink-soft:    #55686F;
+  --ink-faint:   #8496A4;
+  --line:        #D6E0E3;
+  --line-strong: #B6C6CB;
+  --accent:      #0E7C86;
+  --accent-soft: #D5EBEC;
+  --done:        #2C7A57;
+  --done-soft:   #D8EBE0;
+  --active:      #A6650A;
+  --active-soft: #F6E7C9;
+  --shadow:      0 1px 2px rgba(16,34,43,.06), 0 8px 24px -16px rgba(16,34,43,.35);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:      #0D1417;
+    --surface:     #151E22;
+    --surface-sub: #1C282D;
+    --ink:         #E4EDEF;
+    --ink-soft:    #9BAFB6;
+    --ink-faint:   #6C818A;
+    --line:        #26343A;
+    --line-strong: #38494F;
+    --accent:      #46B7BF;
+    --accent-soft: #123239;
+    --done:        #59B187;
+    --done-soft:   #12301F;
+    --active:      #DBA243;
+    --active-soft: #33260D;
+    --shadow:      0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.9);
+  }
+}
+:root[data-theme="dark"] {
+  --ground:      #0D1417;
+  --surface:     #151E22;
+  --surface-sub: #1C282D;
+  --ink:         #E4EDEF;
+  --ink-soft:    #9BAFB6;
+  --ink-faint:   #6C818A;
+  --line:        #26343A;
+  --line-strong: #38494F;
+  --accent:      #46B7BF;
+  --accent-soft: #123239;
+  --done:        #59B187;
+  --done-soft:   #12301F;
+  --active:      #DBA243;
+  --active-soft: #33260D;
+  --shadow:      0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.9);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "Zen Kaku Gothic New", -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  font-size: 15px;
+  line-height: 1.8;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 48px 28px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 56px;
+}
+
+/* ---------- header ---------- */
+
+.masthead { display: flex; flex-direction: column; gap: 14px; }
+
+.eyebrow {
+  font-family: "M PLUS 1 Code", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.eyebrow::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+h1 {
+  font-family: "Zen Old Mincho", "Hiragino Mincho ProN", serif;
+  font-weight: 700;
+  font-size: clamp(30px, 5vw, 46px);
+  line-height: 1.25;
+  letter-spacing: .02em;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.lede {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--ink-soft);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  font-family: "M PLUS 1 Code", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--ink-faint);
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+.meta b { color: var(--ink-soft); font-weight: 500; }
+
+/* ---------- status strip ---------- */
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.status > div {
+  background: var(--surface);
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 220px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.status .k {
+  font-family: "M PLUS 1 Code", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: .12em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+.status .v {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.status .n { font-size: 13px; color: var(--ink-soft); line-height: 1.6; }
+.status .v.is-active { color: var(--active); }
+
+.meter { display: flex; gap: 4px; padding-top: 8px; }
+.meter i {
+  height: 6px;
+  flex: 1;
+  border-radius: 1px;
+  background: var(--surface-sub);
+}
+.meter i.done   { background: var(--done); }
+.meter i.active { background: var(--active); }
+
+/* ---------- sections ---------- */
+
+section { display: flex; flex-direction: column; gap: 22px; }
+
+h2 {
+  font-family: "Zen Old Mincho", "Hiragino Mincho ProN", serif;
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+h2 span {
+  font-family: "M PLUS 1 Code", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: .14em;
+  color: var(--ink-faint);
+  font-weight: 400;
+}
+
+.section-note { margin: -8px 0 0; color: var(--ink-soft); max-width: 62ch; font-size: 14px; }
+
+/* ---------- roadmap spine ---------- */
+
+.spine { display: flex; flex-direction: column; }
+
+.row {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 0;
+}
+
+.rail {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.rail::before {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 2px;
+  background: var(--line);
+}
+.row:first-child .rail::before { top: 30px; }
+.row:last-child  .rail::before { bottom: calc(100% - 30px); }
+
+.node {
+  position: relative;
+  margin-top: 22px;
+  width: 15px; height: 15px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--line-strong);
+  flex: none;
+}
+.node.done   { background: var(--done);   border-color: var(--done); }
+.node.active { background: var(--active); border-color: var(--active); box-shadow: 0 0 0 5px var(--active-soft); }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 18px 22px 20px;
+  margin: 12px 0 12px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow);
+}
+.card.is-active { border-color: var(--active); }
+.card.is-done   { background: var(--surface); opacity: .82; }
+
+.card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+.sid {
+  font-family: "M PLUS 1 Code", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: .06em;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+.card h3 { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.5; }
+.ver {
+  font-family: "M PLUS 1 Code", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--ink-faint);
+  margin-left: auto;
+}
+.pill {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.pill.done   { color: var(--done);   background: var(--done-soft);   border-color: var(--done); }
+.pill.active { color: var(--active); background: var(--active-soft); border-color: var(--active); }
+.pill.plan   { color: var(--ink-faint); background: var(--surface-sub); border-color: var(--line); }
+
+.card p { margin: 0; font-size: 14px; color: var(--ink-soft); }
+
+.criteria { display: flex; flex-direction: column; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.criteria li {
+  font-size: 13px;
+  color: var(--ink-soft);
+  padding-left: 20px;
+  position: relative;
+  line-height: 1.7;
+}
+.criteria li::before {
+  content: "";
+  position: absolute;
+  left: 4px; top: .72em;
+  width: 6px; height: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 1px;
+}
+.criteria-label {
+  font-family: "M PLUS 1 Code", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/* cursor row */
+.cursor {
+  margin: 4px 0 4px 4px;
+  padding: 12px 20px;
+  border: 1px dashed var(--active);
+  border-radius: 4px;
+  background: var(--active-soft);
+  color: var(--active);
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cursor::before { content: "▶"; font-size: 11px; }
+.node.cursor-dot {
+  width: 0; height: 0;
+  margin-top: 26px;
+  border-left: 9px solid var(--active);
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-radius: 0;
+  background: none;
+}
+
+/* gate row */
+.gate {
+  margin: 4px 0 4px 4px;
+  padding: 14px 20px;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: var(--surface-sub);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gate b { font-size: 14px; }
+.gate span { font-size: 13px; color: var(--ink-soft); }
+.node.gate-dot {
+  margin-top: 24px;
+  width: 11px; height: 11px;
+  border-radius: 2px;
+  transform: rotate(45deg);
+  background: var(--surface);
+  border: 2px solid var(--accent);
+}
+
+/* ---------- phase diagram ---------- */
+
+.diagram-wrap { overflow-x: auto; }
+svg { display: block; }
+.svg-card    { fill: var(--surface); stroke: var(--line-strong); }
+.svg-card-sub{ fill: var(--surface-sub); stroke: var(--line); }
+.svg-line    { stroke: var(--line-strong); fill: none; }
+.svg-arrow   { fill: var(--line-strong); }
+.svg-title   { fill: var(--ink); font-weight: 700; }
+.svg-body    { fill: var(--ink-soft); }
+.svg-mono    { fill: var(--accent); font-family: "M PLUS 1 Code", ui-monospace, monospace; }
+.svg-faint   { fill: var(--ink-faint); }
+text { font-family: "Zen Kaku Gothic New", sans-serif; }
+
+/* ---------- table ---------- */
+
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 13.5px; }
+th, td { padding: 11px 16px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th {
+  font-family: "M PLUS 1 Code", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 400;
+  background: var(--surface-sub);
+}
+tr:last-child td { border-bottom: none; }
+td.mono { font-family: "M PLUS 1 Code", ui-monospace, monospace; color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---------- footer ---------- */
+
+.howto {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: var(--surface);
+  padding: 18px 22px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.howto code {
+  font-family: "M PLUS 1 Code", ui-monospace, monospace;
+  background: var(--surface-sub);
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.log li { display: flex; gap: 16px; font-size: 13.5px; color: var(--ink-soft); }
+.log time {
+  font-family: "M PLUS 1 Code", ui-monospace, monospace;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+@media (max-width: 620px) {
+  .page { padding: 32px 18px 64px; gap: 44px; }
+  .row { grid-template-columns: 44px 1fr; }
+  .ver { margin-left: 0; width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">CRD / 解析基盤</div>
+    <h1>AST導入ロードマップ</h1>
+    <p class="lede">
+      依存抽出を VSCode LSP 主体から AST（tree-sitter）主体へ移行する計画の全体像と現在位置。
+      詳細な仕様は <code>docs/ast-plan.md</code> にある。
+    </p>
+    <div class="meta">
+      <span><b>計画書</b> docs/ast-plan.md</span>
+      <span><b>関連</b> docs/analysis-plan.md 計画1</span>
+      <span><b>現行版</b> v0.3.35</span>
+      <span><b>最終更新</b> <span id="updated"></span></span>
+    </div>
+  </header>
+
+  <div class="status" id="status"></div>
+
+  <section>
+    <h2>ステージ <span>STAGE 0 — 6</span></h2>
+    <p class="section-note">
+      Stage 0〜3 は既存動作に影響を与えない（ASTの結果を保存するだけで、表示は従来の関係のまま）。
+      精度ゲートを通過してから Stage 4 で主経路を切り替える。
+    </p>
+    <div class="spine" id="spine"></div>
+  </section>
+
+  <section>
+    <h2>抽出パイプライン <span>PHASE A / B / C</span></h2>
+    <p class="section-note">
+      Phase A はファイル単位で独立するため既存の差分キューにそのまま乗り、Phase B は DuckDB の JOIN に落とす。
+      各フェーズを構築するステージを右肩に示す。
+    </p>
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 980 330" width="980" height="330" role="img" aria-label="Phase A でローカル事実を抽出し、Phase B で名前解決し、Phase C で集約するパイプライン図">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0,0 L10,5 L0,10 z" class="svg-arrow"/>
+          </marker>
+        </defs>
+
+        <!-- source -->
+        <rect x="8" y="120" width="112" height="76" rx="3" class="svg-card-sub"/>
+        <text x="64" y="150" text-anchor="middle" font-size="13" class="svg-title">変更ファイル</text>
+        <text x="64" y="170" text-anchor="middle" font-size="11" class="svg-body">差分キュー</text>
+        <line x1="120" y1="158" x2="158" y2="158" class="svg-line" marker-end="url(#ar)"/>
+
+        <!-- Phase A -->
+        <rect x="164" y="28" width="242" height="262" rx="4" class="svg-card"/>
+        <text x="182" y="54" font-size="13" class="svg-title">Phase A ローカル事実抽出</text>
+        <text x="388" y="54" text-anchor="end" font-size="11" class="svg-mono">Stage 0-1</text>
+        <text x="182" y="74" font-size="11" class="svg-body">tree-sitter パース 1 回 / 並列・中断可能</text>
+        <rect x="182" y="88"  width="206" height="34" rx="3" class="svg-card-sub"/>
+        <text x="194" y="110" font-size="12" class="svg-body">defs → fqn / export_name</text>
+        <rect x="182" y="128" width="206" height="34" rx="3" class="svg-card-sub"/>
+        <text x="194" y="150" font-size="12" class="svg-body">imports → 束縛表</text>
+        <rect x="182" y="168" width="206" height="34" rx="3" class="svg-card-sub"/>
+        <text x="194" y="190" font-size="12" class="svg-body">occurrences → 参照出現</text>
+        <rect x="182" y="208" width="206" height="34" rx="3" class="svg-card-sub"/>
+        <text x="194" y="230" font-size="12" class="svg-faint">metrics（計画2が相乗り）</text>
+        <text x="182" y="268" font-size="11" class="svg-mono">DuckDB へファイル単位で置換</text>
+        <line x1="406" y1="158" x2="444" y2="158" class="svg-line" marker-end="url(#ar)"/>
+
+        <!-- Phase B -->
+        <rect x="450" y="28" width="286" height="262" rx="4" class="svg-card"/>
+        <text x="468" y="54" font-size="13" class="svg-title">Phase B グローバル名前解決</text>
+        <text x="718" y="54" text-anchor="end" font-size="11" class="svg-mono">Stage 2-3</text>
+        <text x="468" y="74" font-size="11" class="svg-body">上位段で当たったら打ち切り / confidence 付与</text>
+        <rect x="468" y="88"  width="250" height="27" rx="3" class="svg-card-sub"/>
+        <text x="480" y="106" font-size="11.5" class="svg-body">1 ローカル束縛</text>
+        <text x="706" y="106" text-anchor="end" font-size="11" class="svg-mono">1.0</text>
+        <rect x="468" y="119" width="250" height="27" rx="3" class="svg-card-sub"/>
+        <text x="480" y="137" font-size="11.5" class="svg-body">2 import 解決</text>
+        <text x="706" y="137" text-anchor="end" font-size="11" class="svg-mono">0.95</text>
+        <rect x="468" y="150" width="250" height="27" rx="3" class="svg-card-sub"/>
+        <text x="480" y="168" font-size="11.5" class="svg-body">3 レシーバ型の軽量推論</text>
+        <text x="706" y="168" text-anchor="end" font-size="11" class="svg-mono">0.8</text>
+        <rect x="468" y="181" width="250" height="27" rx="3" class="svg-card-sub"/>
+        <text x="480" y="199" font-size="11.5" class="svg-body">4 グローバル一意名</text>
+        <text x="706" y="199" text-anchor="end" font-size="11" class="svg-mono">0.6</text>
+        <rect x="468" y="212" width="250" height="27" rx="3" class="svg-card-sub"/>
+        <text x="480" y="230" font-size="11.5" class="svg-faint">5 未解決 → external</text>
+        <text x="706" y="230" text-anchor="end" font-size="11" class="svg-faint">0</text>
+        <text x="468" y="268" font-size="11" class="svg-mono">閾値未満のみ LSP で確定</text>
+        <line x1="736" y1="158" x2="774" y2="158" class="svg-line" marker-end="url(#ar)"/>
+
+        <!-- Phase C -->
+        <rect x="780" y="28" width="192" height="262" rx="4" class="svg-card"/>
+        <text x="798" y="54" font-size="13" class="svg-title">Phase C 集約</text>
+        <text x="954" y="54" text-anchor="end" font-size="11" class="svg-mono">Stage 3-5</text>
+        <text x="798" y="74" font-size="11" class="svg-body">fqn ペアごとの VIEW</text>
+        <rect x="798" y="92" width="156" height="60" rx="3" class="svg-card-sub"/>
+        <text x="810" y="114" font-size="11.5" class="svg-body">strength =</text>
+        <text x="810" y="134" font-size="11.5" class="svg-body">Σ(kind重み × conf)</text>
+        <rect x="798" y="162" width="156" height="40" rx="3" class="svg-card-sub"/>
+        <text x="810" y="187" font-size="11.5" class="svg-body">kind / occurrence 数</text>
+        <text x="798" y="232" font-size="11" class="svg-mono">→ 色 = kind</text>
+        <text x="798" y="252" font-size="11" class="svg-mono">→ 幅 = strength</text>
+        <text x="798" y="272" font-size="11" class="svg-faint">計画3 の入力</text>
+      </svg>
+    </div>
+  </section>
+
+  <section>
+    <h2>他計画との関係 <span>DEPENDENCIES</span></h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>計画</th><th>本計画からの入力</th><th>着手できる時点</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">計画2<br>メトリクス</td>
+            <td>Stage 1 の AST 走査に相乗り（追加コストは走査1回）</td>
+            <td class="mono">Stage 1 完了後</td>
+          </tr>
+          <tr>
+            <td class="mono">計画3 前半<br>円パッキング + LOD</td>
+            <td>なし（現行データで先行実装できる）</td>
+            <td class="mono">いつでも並行可</td>
+          </tr>
+          <tr>
+            <td class="mono">計画3 後半<br>kind/strength 描画</td>
+            <td>view_relationship_strength / is_intra_file / confidence</td>
+            <td class="mono">Stage 5 完了後</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>更新履歴 <span>LOG</span></h2>
+    <ul class="log" id="log"></ul>
+    <div class="howto">
+      <span><b>このページの更新方法</b></span>
+      <span>
+        ファイル末尾の <code>PLAN_STATE</code> だけを書き換える。ステージの <code>status</code> を
+        <code>"done"</code> / <code>"active"</code> / <code>"plan"</code> のいずれかにし、<code>updated</code> と
+        <code>log</code> に日付を追記すれば、現在位置・進捗メーター・ステータス表示はすべて自動で追従する。
+      </span>
+    </div>
+  </section>
+
+</div>
+
+<script>
+/* ===================================================================
+   PLAN_STATE — 計画が進むたびに、ここだけを書き換える
+   status: "done" 完了 / "active" 着手中 / "plan" 未着手
+   =================================================================== */
+const PLAN_STATE = {
+  updated: "2026-08-25",
+  nextAction: "Stage 0: web-tree-sitter 導入とパーササービスの実装",
+  stages: [
+    {
+      id: "計画策定", version: "—", status: "done",
+      title: "計画書の作成",
+      body: "AST主体方式への改訂を docs/ast-plan.md にまとめ、docs/analysis-plan.md 計画1 から接続した。",
+      criteria: ["PR #8 でレビュー中"]
+    },
+    {
+      id: "STAGE 0", version: "0.3.36", status: "plan",
+      title: "AST 基盤",
+      body: "web-tree-sitter 導入、パーササービス、TS/JS 文法、WASM 同梱と遅延ロード。",
+      criteria: [
+        "単体テストで任意の TS/JS をパースできる",
+        ".vsix を実機インストールして WASM がロードされる",
+        "既存機能に影響なし"
+      ]
+    },
+    {
+      id: "STAGE 1", version: "0.3.37", status: "plan",
+      title: "Phase A ローカル事実抽出",
+      body: "defs / imports / occurrences 抽出、fqn・export_name 付与、スキーマ v2 と移行。まだ関係抽出には使わない。",
+      criteria: [
+        "自リポジトリ全ファイルで occurrences が保存される",
+        "fqn がファイル内で一意",
+        "パース時間 中央値 < 20ms/ファイル",
+        "v1 DB から無停止で移行できる"
+      ]
+    },
+    {
+      id: "STAGE 2", version: "0.3.38", status: "plan",
+      title: "名前解決 段1〜2",
+      body: "ローカル束縛と import 解決、kind 付与、table_relationships_v2 への保存。表示は従来の関係のまま。",
+      criteria: [
+        "import 由来の関係の再現率 ≥ 95%（対 LSP）",
+        "検証レポートをスクリプトで再生成できる"
+      ]
+    },
+    {
+      id: "STAGE 3", version: "0.3.39", status: "plan",
+      title: "名前解決 段3〜4' と集約",
+      body: "レシーバ型の軽量推論、一意名・曖昧候補、confidence、Phase C の集約 VIEW。",
+      criteria: [
+        "再現率 ≥ 90%、適合率 ≥ 90%（閾値 0.7 時）",
+        "段別の解決内訳がレポートに出る"
+      ]
+    },
+    {
+      id: "STAGE 4", version: "0.4.0", status: "plan",
+      title: "主経路の切替",
+      body: "examine() を AST 主体へ。LSP は低 confidence 検証と未対応言語フォールバックに降格。旧テーブルを DROP。",
+      criteria: [
+        "examineRelationships 実行時間が現行比 ≤ 50%",
+        "言語サーバ未導入でも TS/JS の関係が出る",
+        "crd.ast.enabled = false でロールバックできる"
+      ]
+    },
+    {
+      id: "STAGE 5", version: "0.4.1", status: "plan",
+      title: "描画への反映",
+      body: "kind の色分け、strength の線幅、kind トグル、strength 閾値スライダー、ファイル内依存トグル。",
+      criteria: [
+        "グラフ上で継承と import が区別できる",
+        "閾値スライダーで幹線のみ表示できる"
+      ]
+    },
+    {
+      id: "STAGE 6", version: "0.4.x", status: "plan",
+      title: "言語追加",
+      body: "需要順に Python → Go → Java/C#。.scm とモジュール解決の追加のみで完結させる。",
+      criteria: [
+        "追加言語で検証レポートが所定値を満たす",
+        "WASM は当該言語のファイルが在るときだけロードされる"
+      ]
+    }
+  ],
+  /* Stage 3 と 4 の間に置く関門 */
+  gate: {
+    after: "STAGE 3",
+    title: "精度ゲート",
+    body: "verification/ast-accuracy/ のレポートが基準を満たすまで Stage 4 の切替は実施しない。"
+  },
+  log: [
+    { date: "2026-08-25", text: "docs/ast-plan.md を作成し、計画1をAST主体方式へ改訂（PR #8）" },
+    { date: "2026-08-25", text: "本ロードマップページを追加" }
+  ]
+};
+
+/* ------------------------------------------------------------------ */
+
+const LABEL = { done: "完了", active: "着手中", plan: "未着手" };
+
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) { n.className = cls; }
+  if (text !== undefined) { n.textContent = text; }
+  return n;
+};
+
+const stages = PLAN_STATE.stages;
+const cursorIndex = stages.findIndex(s => s.status !== "done");
+const current = cursorIndex >= 0 ? stages[cursorIndex] : null;
+const implStages = stages.filter(s => s.id.startsWith("STAGE"));
+const doneCount = implStages.filter(s => s.status === "done").length;
+
+/* --- meta --- */
+document.getElementById("updated").textContent = PLAN_STATE.updated;
+
+/* --- status strip --- */
+const status = document.getElementById("status");
+const tile = (k, v, note, activeStyle) => {
+  const box = el("div");
+  box.append(el("div", "k", k));
+  const val = el("div", "v" + (activeStyle ? " is-active" : ""), v);
+  box.append(val);
+  if (note) { box.append(el("div", "n", note)); }
+  return box;
+};
+status.append(tile(
+  "現在位置",
+  current ? current.id : "全ステージ完了",
+  current ? current.title + "（" + LABEL[current.status] + "）" : "",
+  true
+));
+
+const progress = tile(
+  "進捗",
+  doneCount + " / " + implStages.length + " ステージ",
+  "計画策定は完了済み"
+);
+const meter = el("div", "meter");
+implStages.forEach(s => meter.append(el("i", s.status === "done" ? "done" : s.status === "active" ? "active" : "")));
+progress.append(meter);
+status.append(progress);
+
+status.append(tile("次のアクション", PLAN_STATE.nextAction, ""));
+
+/* --- spine --- */
+const spine = document.getElementById("spine");
+
+const addRow = (dotClass, content) => {
+  const row = el("div", "row");
+  const rail = el("div", "rail");
+  rail.append(el("div", "node " + dotClass));
+  row.append(rail, content);
+  spine.append(row);
+};
+
+stages.forEach((s, i) => {
+  if (i === cursorIndex) {
+    addRow("cursor-dot", el("div", "cursor", "現在位置 — ここから着手する"));
+  }
+
+  const card = el("div", "card " + (s.status === "active" ? "is-active" : s.status === "done" ? "is-done" : ""));
+  const head = el("div", "card-head");
+  head.append(el("span", "sid", s.id));
+  head.append(el("h3", null, s.title));
+  head.append(el("span", "pill " + s.status, LABEL[s.status]));
+  head.append(el("span", "ver", s.version === "—" ? "" : "v" + s.version));
+  card.append(head);
+  card.append(el("p", null, s.body));
+
+  if (s.criteria && s.criteria.length) {
+    card.append(el("div", "criteria-label", s.id === "計画策定" ? "状態" : "受け入れ基準"));
+    const ul = el("ul", "criteria");
+    s.criteria.forEach(c => ul.append(el("li", null, c)));
+    card.append(ul);
+  }
+  addRow(s.status === "done" ? "done" : s.status === "active" ? "active" : "", card);
+
+  if (PLAN_STATE.gate && PLAN_STATE.gate.after === s.id) {
+    const gate = el("div", "gate");
+    gate.append(el("b", null, PLAN_STATE.gate.title));
+    gate.append(el("span", null, PLAN_STATE.gate.body));
+    addRow("gate-dot", gate);
+  }
+});
+
+/* --- log --- */
+const log = document.getElementById("log");
+PLAN_STATE.log.forEach(entry => {
+  const li = el("li");
+  const t = el("time", null, entry.date);
+  t.setAttribute("datetime", entry.date);
+  li.append(t, el("span", null, entry.text));
+  log.append(li);
+});
+</script>
