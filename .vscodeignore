@@ -13,6 +13,8 @@ vsc-extension-quickstart.md
 **/*.ts
 **/.vscode-test.*
 exsample-workspace/**
+scripts/**
+verification/**
 
 # AST assets (web-tree-sitter runtime / grammar wasm / queries)
 !dist/wasm/**
