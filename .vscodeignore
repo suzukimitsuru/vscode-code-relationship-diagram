@@ -14,6 +14,10 @@ vsc-extension-quickstart.md
 **/.vscode-test.*
 exsample-workspace/**
 
+# AST assets (web-tree-sitter runtime / grammar wasm / queries)
+!dist/wasm/**
+!dist/queries/**
+
 # bundle modules
 !node_modules/duckdb/*
 !node_modules/duckdb/lib/**

@@ -3,7 +3,7 @@
   "displayName": "CRD: Code Relationship Diagram",
   "shortName": "CRD",
   "description": "コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています",
-  "version": "0.3.35",
+  "version": "0.3.36",
   "preview": true,
   "publisher": "suzukimitsuru",
   "keywords": [
@@ -81,7 +81,8 @@
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "test": "rm -rf .vscode-test/user-data && vscode-test",
-    "test:unit": "vitest run"
+    "test:unit": "vitest run",
+    "verify:ast": "node esbuild.js && node verification/ast-parser/verify.cjs"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -91,6 +92,7 @@
     "@typescript-eslint/parser": "^8.22.0",
     "@vscode/test-cli": "^0.0.11",
     "@vscode/test-electron": "^2.4.1",
+    "@vscode/tree-sitter-wasm": "^0.3.1",
     "esbuild": "^0.25.2",
     "eslint": "^9.19.0",
     "fast-glob": "^3.3.3",
@@ -105,6 +107,7 @@
     "font-awesome": "^4.7.0",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",
-    "graphology-types": "^0.24.8"
+    "graphology-types": "^0.24.8",
+    "web-tree-sitter": "^0.26.13"
   }
 }

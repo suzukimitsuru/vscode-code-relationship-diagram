@@ -336,6 +336,8 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 | 項目 | 対応 |
 | ---- | ---- |
 | `tree-sitter.wasm` と言語 WASM | `esbuild.js` にコピー処理を追加し `dist/wasm/` へ配置。バンドルはしない |
+| 言語 WASM の入手元 | `@vscode/tree-sitter-wasm`（devDependency）。tree-sitter-cli 0.25 系でビルド済みで TS/TSX/JS に加え Python/Go/Java/C# も含むため、Stage 6 の言語追加もパッケージ追加なしで済む |
+| クエリ(`.scm`) | 同じく `dist/queries/` へコピーし、実行時に読んでコンパイルする |
 | 参照方法 | `path.join(__dirname, 'wasm', ...)` で実行時ロード（`bindings/` と同じ流儀） |
 | パッケージ | `.vscodeignore` で `dist/wasm/**` を含める。`vsce package` 後に同梱を確認 |
 | サイズ | TS/JS で概ね数MB。言語追加ごとに増えるため**遅延ロード必須**。総サイズを CHANGELOG に記録 |
@@ -369,7 +371,7 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 
 | Stage | 内容 | 受け入れ基準（Done） | 目安 |
 | ----- | ---- | -------------------- | ---- |
-| **0** | AST 基盤: `web-tree-sitter` 導入、パーササービス、TS/JS 文法、WASM 同梱・遅延ロード | 単体テストで任意の TS/JS をパースできる / `.vsix` を実機インストールして WASM がロードされる / 既存機能に影響なし | 0.3.36 |
+| **0** ✅ | AST 基盤: `web-tree-sitter` 導入、パーササービス、TS/JS 文法、WASM 同梱・遅延ロード | 単体テストで任意の TS/JS をパースできる / `.vsix` を実機インストールして WASM がロードされる / 既存機能に影響なし | 0.3.36 |
 | **1** | Phase A: defs / imports / occurrences 抽出、`fqn`・`export_name` 付与、スキーマ v2 とマイグレーション、DuckDB へ保存（**まだ関係抽出には使わない**） | 自リポジトリ全ファイルで occurrences が保存される / `fqn` がファイル内で一意 / パース時間 中央値 < 20ms/ファイル / v1 DB から無停止で移行できる | 0.3.37 |
 | **2** | Phase B 段1〜2（ローカル + import 解決）、`kind` 付与、`table_relationships_v2` への保存。表示は従来関係のまま | import 由来の関係の再現率 ≥ 95%（対 LSP、§11 のレポート） / 検証レポートが CI or スクリプトで再生成できる | 0.3.38 |
 | **3** | Phase B 段3〜4'（型推論・一意名・曖昧候補）、confidence、Phase C 集約 VIEW | 関係全体の再現率 ≥ 90%、適合率 ≥ 90%（閾値 0.7 時） / 段別内訳がレポートに出る | 0.3.39 |
@@ -415,6 +417,7 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 - 単体テスト（vitest, `*.unit.test.ts`）: クエリ結果 → Occurrence 変換、モジュール解決、各解決段のロジック、fqn 生成。**VSCode API に依存しない純関数として切り出す**（既存の `distributor` / `queue` と同じ構成）
 - 統合テスト（`@vscode/test-electron`）: 差分更新でのファイル置換・再解決・マイグレーション
 - 回帰: §11 の検証レポートを Stage ごとに更新して比較
+- 同梱検証: `verification/ast-parser/`（`yarn verify:ast`）で、配布物と同じ配置（`dist/wasm` / `dist/queries`）から WASM がロードされパースできる事を確認する
 
 ---
 

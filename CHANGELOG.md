@@ -13,6 +13,34 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.3.36] - 2026-08-26
+
+### Added
+
+- **AST基盤の導入**（`docs/ast-plan.md` Stage 0）
+  - `web-tree-sitter` (v0.26.13) を採用。ネイティブビルド不要のWASM版を使い、`bindings/`のようなプラットフォーム別バイナリを増やさない方針とした
+  - `src/extruct/ast/parser.ts`: パーササービスを新設
+    - 本体WASMの初期化は拡張機能の起動時に1回（`Parser.init()` の `locateFile` で `dist/wasm/web-tree-sitter.wasm` を指す）
+    - 言語文法WASMは language id が初めて出現した時に遅延ロードし、文法名でキャッシュ（同時要求の二重ロードも抑止）
+    - 構文木は保持せず、`withTree()` のコールバックを抜けた時点で破棄（メモリ削減）
+    - 未対応の language id は `null` を返し、呼び出し側が従来のLSP経路へフォールバックできる
+    - `captures()` が構文木を持ち出さない素のデータ（キャプチャ名・文字列・位置・マッチ番号）を返す
+  - `src/extruct/ast/resources.ts`: `dist/wasm` / `dist/queries` の配置解決と不足検査
+  - `src/extruct/ast/queries/typescript.scm` / `javascript.scm`: TS/TSX/JS のクエリ定義
+    - キャプチャ名の規約を `def.<種別>` / `imp.<種別>` / `ref.<kind>` に統一し、`ref.` のキャプチャ名がそのまま関係の種類（inheritance / implementation / instantiation / call / type_reference / write / decorator / read）になる構成とした
+    - 言語追加は原則 `.scm` と `AST_LANGUAGES` の追加だけで済む
+  - `scripts/ast-assets.mjs`: WASMとクエリを `dist/wasm` / `dist/queries` へ配置（`esbuild.js` と単体テストの両方から呼ぶ）
+  - `src/extension.ts`: 起動時にパーササービスを生成（失敗しても既存機能に影響しないよう警告のみで続行）
+  - `verification/ast-parser/`: 配布物と同じ配置でWASMがロードされパースできる事を確認する検証スクリプト（`yarn verify:ast`）
+  - 同梱WASMサイズ: 本体 197KB + TypeScript 1,381KB + TSX 1,412KB + JavaScript 402KB = 約3.3MB（言語ごと遅延ロードのためメモリ常駐はしない）
+  - 既知の限界: ソースに制御文字（NUL等）を含むファイルは tree-sitter が構文エラーとして扱う（TypeScriptは受け付ける）。現状 `src/relationship/examine.ts` が該当し、検証では警告として報告する
+
+### Changed
+
+- **`esbuild.js`**: ビルド時に AST 資産（WASM・クエリ）を `dist/` へ複製する処理を追加。WASMはバンドルせず実行時にロードする
+- **`.vscodeignore`**: `dist/wasm/**` と `dist/queries/**` を明示的に同梱対象とした
+- **`vitest.config.mts`**: 単体テスト前に AST 資産を配置する `globalSetup` を追加
+
 ## [0.3.35] - 2026-07-31
 
 ### Added
