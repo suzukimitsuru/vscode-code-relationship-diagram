@@ -70,4 +70,6 @@ dist/queries/javascript.scm
 
 - ソースに制御文字（NUL 等）を含むファイルは tree-sitter が `ERROR` ノードにする。
   TypeScript は受け付けるため、検証では WARN として報告し失敗にはしない
-  - 現状 `src/relationship/examine.ts` が該当する（関係のキーに NUL を区切り文字として使っている）
+  - 現在は該当ファイル無し（0.3.36 で `src/relationship/examine.ts` の生 NUL を解消した）
+  - 生の NUL は tree-sitter だけでなく grep / ripgrep のバイナリ判定も誘発するため、
+    区切り文字が要る箇所では `JSON.stringify([a, b])` のように区切りが曖昧にならない形を使う

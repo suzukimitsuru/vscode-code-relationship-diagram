@@ -34,7 +34,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - `verification/ast-parser/`: 配布物と同じ配置でWASMがロードされパースできる事を確認する検証スクリプト（`yarn verify:ast`）
   - `src/test/astParser.test.ts`: 拡張機能ホスト上で `context.extensionPath` から WASM がロードされる事を確認する統合テスト
   - 同梱WASMサイズ: 本体 197KB + TypeScript 1,381KB + TSX 1,412KB + JavaScript 402KB = 約3.3MB（言語ごと遅延ロードのためメモリ常駐はしない）
-  - 既知の限界: ソースに制御文字（NUL等）を含むファイルは tree-sitter が構文エラーとして扱う（TypeScriptは受け付ける）。現状 `src/relationship/examine.ts` が該当し、検証では警告として報告する
+  - 既知の限界: ソースに制御文字（NUL等）を含むファイルは tree-sitter が構文エラーとして扱う（TypeScriptは受け付ける）。検証では警告として報告する
+
+### Fixed
+
+- **`src/relationship/examine.ts`**: 関係を一意化する `Map` のキーを `JSON.stringify([reference.id, define.id])` に変更（旧: ソースに生の NUL バイトを埋め込んだ区切り文字）
+  - 生の NUL は tree-sitter が構文エラーとして扱うため、Stage 1 以降このファイルの occurrences が抽出できなくなる
+  - grep / ripgrep もバイナリファイルと判定し、検索結果に本文が出なくなっていた
+  - シンボルIDにはパス（`fast-glob` がタブ等を含むファイル名も列挙する）と言語サーバ由来のシンボル名（C言語では `string_copy(char *, const char *)` のようにシグネチャ全体が入る）が含まれるため、区切り文字方式では衝突を排除できない。要素の区切りが曖昧にならない `JSON.stringify` に変更した
 
 ### Changed
 
