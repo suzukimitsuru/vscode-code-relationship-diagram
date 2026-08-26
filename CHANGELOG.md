@@ -32,6 +32,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - `scripts/ast-assets.mjs`: WASMとクエリを `dist/wasm` / `dist/queries` へ配置（`esbuild.js` と単体テストの両方から呼ぶ）
   - `src/extension.ts`: 起動時にパーササービスを生成（失敗しても既存機能に影響しないよう警告のみで続行）
   - `verification/ast-parser/`: 配布物と同じ配置でWASMがロードされパースできる事を確認する検証スクリプト（`yarn verify:ast`）
+  - `src/test/astParser.test.ts`: 拡張機能ホスト上で `context.extensionPath` から WASM がロードされる事を確認する統合テスト
   - 同梱WASMサイズ: 本体 197KB + TypeScript 1,381KB + TSX 1,412KB + JavaScript 402KB = 約3.3MB（言語ごと遅延ロードのためメモリ常駐はしない）
   - 既知の限界: ソースに制御文字（NUL等）を含むファイルは tree-sitter が構文エラーとして扱う（TypeScriptは受け付ける）。現状 `src/relationship/examine.ts` が該当し、検証では警告として報告する
 

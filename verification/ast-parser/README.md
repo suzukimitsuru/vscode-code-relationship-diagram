@@ -60,6 +60,12 @@ dist/queries/typescript.scm
 dist/queries/javascript.scm
 ```
 
+## 実機（拡張機能ホスト）での確認
+
+`src/test/astParser.test.ts`（`yarn test`）が、実際に起動した VSCode の拡張機能ホスト上で
+`context.extensionPath` から WASM をロードしてパースできる事を確認する。
+このスクリプトが確認するのは配布物の配置であり、統合テストが確認するのは実行環境である。
+
 ## 既知の限界
 
 - ソースに制御文字（NUL 等）を含むファイルは tree-sitter が `ERROR` ノードにする。
