@@ -37,6 +37,7 @@
 - **レイアウト計算**: BFS同心円配置（事前計算）+ カスタム力学シミュレーション（Barnes-Hut四分木）
 - **初期レイアウト補助**: 階層的レイアウト計算 (`hierarchicalLayout.ts`)
 - **コミュニティ検出**: Louvain アルゴリズム (graphology-communities-louvain)
+- **AST解析**: web-tree-sitter (WASM版tree-sitter。言語文法は`dist/wasm`から遅延ロード)
 
 ### ビルドツール
 
@@ -67,7 +68,11 @@ src/
 ├── extruct/
 │   ├── codeFiles.ts          # ファイル列挙、.gitignore統合
 │   ├── codeSymbols.ts        # シンボル抽出ロジック
-│   └── symbol.ts             # SymbolModelデータ型
+│   ├── symbol.ts             # SymbolModelデータ型
+│   └── ast/                  # AST解析 (tree-sitter)
+│       ├── parser.ts         # パーササービス（初期化・遅延ロード・クエリ実行）
+│       ├── resources.ts      # WASM/クエリの配置解決
+│       └── queries/*.scm     # 言語ごとのクエリ定義
 ├── relationship/
 │   ├── examine.ts            # 関係抽出メインロジック
 │   ├── codeRelationships.ts  # Relationshipモデル
@@ -85,8 +90,17 @@ templates/
 bindings/
 └── duckdb-*.node             # プラットフォーム別ネイティブバインディング
 
+dist/                         # ビルド成果物（.vsixに同梱されるのはここだけ）
+├── extension.js              # バンドル済み拡張機能
+├── wasm/                     # tree-sitter本体と言語文法のWASM
+└── queries/                  # 言語ごとのクエリ定義(.scm)
+
+scripts/
+└── ast-assets.mjs            # AST資産(WASM/クエリ)をdistへ配置
+
 docs/
 ├── diagram-specs.md          # 円形階層図 機能仕様・実装仕様
+├── ast-plan.md               # AST導入計画（段階計画とWBS）
 └── circle-diagram.md         # 円形階層図 設計仕様（初版）
 ```
 
@@ -212,6 +226,22 @@ docs/
 - macOSでは自動コード署名
 
 **実装**: `src/codeDb.ts:13-52`
+
+### 7. AST解析基盤（tree-sitter / v0.3.36～）
+
+**設計思想**: `docs/ast-plan.md` 参照。依存抽出をVSCode LSP主体からAST主体へ移行する計画の基盤
+
+**方式決定**:
+
+- **web-tree-sitter（WASM）を採用**: ネイティブbindingは「プラットフォーム × Node ABI」のビルドが必要で、`bindings/`と同じ負債を再生産するため不採用
+- 言語文法WASMは `@vscode/tree-sitter-wasm`（devDependency）から `dist/wasm/` へビルド時にコピー。バンドルはしない
+- クエリは `.scm` ファイルとして `dist/queries/` へコピーし、実行時に読んでコンパイルする
+
+**遅延ロード**: 本体WASMのみ拡張機能の起動時にロードし、言語文法は該当する language id が初めて出現した時にロードする（`.vsix`肥大とメモリ常駐を抑える）
+
+**キャプチャ名の規約**: `def.<種別>` / `imp.<種別>` / `ref.<kind>`。`ref.`のキャプチャ名がそのまま関係の種類になるため、言語追加は原則 `.scm` と `AST_LANGUAGES` の追加だけで済む
+
+**実装**: `src/extruct/ast/parser.ts` / `src/extruct/ast/resources.ts` / `scripts/ast-assets.mjs`
 
 ---
 
@@ -351,6 +381,7 @@ ls bindings/
 
 ## 参考ドキュメント
 
+- **AST導入計画**: `docs/ast-plan.md` - 依存抽出のAST移行（段階計画・データモデル・WBS）
 - **円形階層図 機能・実装仕様**: `docs/diagram-specs.md` - 現行ビューの機能仕様と実装値
 - **円形階層図 設計仕様（初版）**: `docs/circle-diagram.md` - 設計の背景と調査結果
 - **変更履歴**: `CHANGELOG.md` - バージョンごとの変更内容
@@ -416,8 +447,8 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 
 ## 最終更新
 
-- **日付**: 2026-07-31
-- **バージョン**: 0.3.35
+- **日付**: 2026-08-26
+- **バージョン**: 0.3.36
 - **作成者**: Claude Code
 
 このファイルはプロジェクトの進化に伴い定期的に更新してください。

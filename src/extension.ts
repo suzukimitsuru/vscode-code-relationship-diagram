@@ -7,6 +7,7 @@ import { Logs } from './logs';
 import * as codeDb from './codeDb';
 import * as codeFiles from './extruct/codeFiles';
 import * as Relationship from './relationship';
+import * as Ast from './extruct/ast';
 import ignore from 'ignore';
 
 let _logs: Logs | null = null;
@@ -84,6 +85,22 @@ export async function activate(context: vscode.ExtensionContext) {
 
 		// 進捗表示の起点時刻（キュー処理開始時に更新）
 		let progress_start = performance.now();
+
+		// AST パーサの生成（本体WASMのロードのみ。言語文法は初出時に遅延ロードする）
+		// 失敗しても既存のLSP経路には影響しないため、警告だけ出して続行する
+		try {
+			const ast_resources = Ast.resolveAstResources(context.extensionPath);
+			const ast_missing = Ast.missingAstResources(ast_resources);
+			if (ast_missing.length > 0) {
+				logs.debug(`AST assets not found: ${ast_missing.join(', ')}`);
+			} else {
+				const ast_parser = await Ast.AstParser.create(ast_resources);
+				context.subscriptions.push({ dispose: () => ast_parser.dispose() });
+				logs.log(`AST parser is ready. languages:${Ast.AST_LANGUAGES.map(language => language.languageId).join(',')}`);
+			}
+		} catch (error) {
+			logs.debug(`AST parser is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+		}
 
 		// データベースの事前生成とキュープロセッサの生成
 		let db: codeDb.Db | undefined;

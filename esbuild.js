@@ -24,6 +24,12 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
+	// AST 資産(web-tree-sitter 本体 / 言語文法 WASM / クエリ)を dist へ配置する
+	// バンドルせず実行時に遅延ロードするため、ここでは複製のみ行う
+	const { copyAstAssets } = await import('./scripts/ast-assets.mjs');
+	const assets = copyAstAssets();
+	console.log(`[ast-assets] ${assets.files} file(s) (${assets.copied} updated), total ${(assets.bytes / 1024 / 1024).toFixed(2)} MB -> dist/`);
+
 	// Build extension (Node.js)
 	const extensionCtx = await esbuild.context({
 		entryPoints: [

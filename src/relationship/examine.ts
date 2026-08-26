@@ -170,10 +170,11 @@ export class ExamineTask {
             (refPath) => this._symbols.get(refPath), 3, () => token.check());
         this._log(`Examined relationship: ${relative_path} ${reference_rels.length} references`);
 
-        // 関係を一意化する（reference.id + define.id）
+        // 関係を一意化する（reference.id と define.id の組をキーにする）
+        // JSON.stringify は要素の区切りが曖昧にならないため、id にどんな文字が含まれても衝突しない
         const relationships = new Map<string, codeRelationships.Relationship>();
         for (const rel of [...define_rels, ...reference_rels]) {
-            relationships.set(`${rel.reference.id} ${rel.define.id}`, rel);
+            relationships.set(JSON.stringify([rel.reference.id, rel.define.id]), rel);
         }
 
         // 変更・削除されたシンボルを参照していたファイルは、fan-out 再調査の対象にする
