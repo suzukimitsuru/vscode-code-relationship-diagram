@@ -585,8 +585,8 @@ a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); ou
    status: "done" 完了 / "active" 着手中 / "plan" 未着手
    =================================================================== */
 const PLAN_STATE = {
-  updated: "2026-08-25",
-  nextAction: "Stage 0: web-tree-sitter 導入とパーササービスの実装",
+  updated: "2026-08-26",
+  nextAction: "Stage 1: Phase A ローカル事実抽出（defs / imports / occurrences とスキーマ v2）",
   stages: [
     {
       id: "計画策定", version: "—", status: "done",
@@ -595,13 +595,13 @@ const PLAN_STATE = {
       criteria: ["PR #8 でレビュー中"]
     },
     {
-      id: "STAGE 0", version: "0.3.36", status: "plan",
+      id: "STAGE 0", version: "0.3.36", status: "done",
       title: "AST 基盤",
-      body: "web-tree-sitter 導入、パーササービス、TS/JS 文法、WASM 同梱と遅延ロード。",
+      body: "web-tree-sitter 導入、パーササービス、TS/JS 文法、WASM 同梱と遅延ロード。同梱サイズ 3.3MB（本体 197KB + TS 1,381KB + TSX 1,412KB + JS 402KB）。",
       criteria: [
-        "単体テストで任意の TS/JS をパースできる",
-        ".vsix を実機インストールして WASM がロードされる",
-        "既存機能に影響なし"
+        "単体テスト67件が通過。自リポジトリの TS 37件を全てパース（中央値 1.0ms/ファイル）",
+        "vsce ls で dist/wasm・dist/queries の同梱を確認。minify 有無の両方でロードとパースを検証",
+        "yarn run package 完走。パーサ生成が失敗しても警告のみで続行する"
       ]
     },
     {
@@ -670,7 +670,10 @@ const PLAN_STATE = {
   },
   log: [
     { date: "2026-08-25", text: "docs/ast-plan.md を作成し、計画1をAST主体方式へ改訂（PR #8）" },
-    { date: "2026-08-25", text: "本ロードマップページを追加" }
+    { date: "2026-08-25", text: "本ロードマップページを追加" },
+    { date: "2026-08-26", text: "Stage 0 完了（0.3.36）。パーササービス・TS/JS クエリ・WASM 同梱と遅延ロードを実装" },
+    { date: "2026-08-26", text: "verification/ast-parser/ を追加。配布物と同じ配置で WASM がロードされる事を minify 有無の両方で検証する" },
+    { date: "2026-08-26", text: "examine.ts の生 NUL バイトを解消（関係の一意化キーを JSON.stringify に変更）。tree-sitter が構文エラーにするため Stage 1 の障害になっていた" }
   ]
 };
 
