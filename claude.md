@@ -392,6 +392,7 @@ ls bindings/
 ## 参考ドキュメント
 
 - **AST導入計画**: `docs/ast-plan.md` - 依存抽出のAST移行（段階計画・データモデル・WBS）
+- **ASTロードマップ**: `docs/ast-plan.html` - 進捗の可視化。GitHubはHTMLをソース表示するため、開き方は`docs/ast-plan.md`冒頭の「ロードマップページ」を参照
 - **円形階層図 機能・実装仕様**: `docs/diagram-specs.md` - 現行ビューの機能仕様と実装値
 - **円形階層図 設計仕様（初版）**: `docs/circle-diagram.md` - 設計の背景と調査結果
 - **変更履歴**: `CHANGELOG.md` - バージョンごとの変更内容

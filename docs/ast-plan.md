@@ -6,6 +6,23 @@ CRD の依存抽出を **VSCode LSP 主体から AST（tree-sitter）主体へ�
 - 計画2（複雑性メトリクス）は本書の Stage 1 で構築する AST 基盤をそのまま利用する
 - 計画3（描画再設計）は本書が出力する `kind` / `strength` / `confidence` を入力とする
 
+## ロードマップページ
+
+進捗（現在位置・進捗メーター・更新履歴）は `docs/ast-plan.html` で見る。
+GitHub は HTML をソースのまま表示するため、以下のいずれかで開く。
+
+| 見方 | URL / 手順 |
+| ---- | ---------- |
+| ブラウザで表示（推奨） | [htmlpreview で開く](https://htmlpreview.github.io/?https://github.com/suzukimitsuru/vscode-code-relationship-diagram/blob/main/docs/ast-plan.html) |
+| 同上（別サービス） | <https://raw.githack.com/suzukimitsuru/vscode-code-relationship-diagram/main/docs/ast-plan.html> |
+| ローカル | `open docs/ast-plan.html`（Windows は `start`、Linux は `xdg-open`） |
+| ソース | [docs/ast-plan.html](./ast-plan.html) |
+
+> 上記2つは公開リポジトリを前提とした外部サービス経由の表示である。
+> GitHub Pages（設定 → Pages で `main` / `docs` を公開）を有効にすれば
+> `https://suzukimitsuru.github.io/vscode-code-relationship-diagram/ast-plan.html`
+> で直接開けるようになる。本リポジトリでは未設定。
+
 ---
 
 ## 0. 方式の改訂点（計画1 からの差分）
