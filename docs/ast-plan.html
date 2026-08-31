@@ -299,6 +299,7 @@ h2 span {
   border: 1px solid var(--line-strong);
   border-radius: 1px;
 }
+.card.is-done .criteria li::before { background: var(--done); border-color: var(--done); }
 .criteria-label {
   font-family: "M PLUS 1 Code", ui-monospace, monospace;
   font-size: 10px;
@@ -444,7 +445,7 @@ a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); ou
     <div class="meta">
       <span><b>計画書</b> docs/ast-plan.md</span>
       <span><b>関連</b> docs/analysis-plan.md 計画1</span>
-      <span><b>現行版</b> v0.3.35</span>
+      <span><b>現行版</b> <span id="version"></span></span>
       <span><b>最終更新</b> <span id="updated"></span></span>
     </div>
   </header>
@@ -585,22 +586,23 @@ a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); ou
    status: "done" 完了 / "active" 着手中 / "plan" 未着手
    =================================================================== */
 const PLAN_STATE = {
-  updated: "2026-08-25",
-  nextAction: "Stage 0: web-tree-sitter 導入とパーササービスの実装",
+  updated: "2026-08-31",
+  version: "0.3.36",
+  nextAction: "Stage 1: Phase A（defs / imports / occurrences の抽出と fqn 付与）",
   stages: [
     {
       id: "計画策定", version: "—", status: "done",
       title: "計画書の作成",
       body: "AST主体方式への改訂を docs/ast-plan.md にまとめ、docs/analysis-plan.md 計画1 から接続した。",
-      criteria: ["PR #8 でレビュー中"]
+      criteria: ["PR #8 マージ済み（2026-08-25）"]
     },
     {
-      id: "STAGE 0", version: "0.3.36", status: "plan",
+      id: "STAGE 0", version: "0.3.36", status: "done",
       title: "AST 基盤",
-      body: "web-tree-sitter 導入、パーササービス、TS/JS 文法、WASM 同梱と遅延ロード。",
+      body: "web-tree-sitter（WASM）を採用。本体は起動時に1回初期化し、言語文法は language id の初出時に遅延ロードする。.scm のキャプチャ名を def. / imp. / ref. に統一し、WASM とクエリを dist/ へ配置した。",
       criteria: [
         "単体テストで任意の TS/JS をパースできる",
-        ".vsix を実機インストールして WASM がロードされる",
+        "配布物と同じ配置で WASM がロードされる（verification/ast-parser、minify 有無の両方）",
         "既存機能に影響なし"
       ]
     },
@@ -670,7 +672,8 @@ const PLAN_STATE = {
   },
   log: [
     { date: "2026-08-25", text: "docs/ast-plan.md を作成し、計画1をAST主体方式へ改訂（PR #8）" },
-    { date: "2026-08-25", text: "本ロードマップページを追加" }
+    { date: "2026-08-25", text: "本ロードマップページを追加" },
+    { date: "2026-08-26", text: "Stage 0 完了 — AST基盤（web-tree-sitter）を導入。v0.3.36（PR #9）" }
   ]
 };
 
@@ -693,6 +696,7 @@ const doneCount = implStages.filter(s => s.status === "done").length;
 
 /* --- meta --- */
 document.getElementById("updated").textContent = PLAN_STATE.updated;
+document.getElementById("version").textContent = "v" + PLAN_STATE.version;
 
 /* --- status strip --- */
 const status = document.getElementById("status");
