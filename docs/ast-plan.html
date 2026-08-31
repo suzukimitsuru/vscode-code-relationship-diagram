@@ -421,6 +421,17 @@ td.mono { font-family: "M PLUS 1 Code", ui-monospace, monospace; color: var(--in
 }
 
 a { color: var(--accent); text-underline-offset: 3px; }
+
+/* ---------- back links ---------- */
+.backlinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin-top: 34px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
 a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 @media (max-width: 620px) {
@@ -440,7 +451,7 @@ a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); ou
     <h1>AST導入ロードマップ</h1>
     <p class="lede">
       依存抽出を VSCode LSP 主体から AST（tree-sitter）主体へ移行する計画の全体像と現在位置。
-      詳細な仕様は <code>docs/ast-plan.md</code> にある。
+      詳細な仕様は <a href="https://github.com/suzukimitsuru/vscode-code-relationship-diagram/blob/main/docs/ast-plan.md">docs/ast-plan.md</a> にある。
     </p>
     <div class="meta">
       <span><b>計画書</b> docs/ast-plan.md</span>
@@ -574,9 +585,18 @@ a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); ou
         ファイル末尾の <code>PLAN_STATE</code> だけを書き換える。ステージの <code>status</code> を
         <code>"done"</code> / <code>"active"</code> / <code>"plan"</code> のいずれかにし、<code>updated</code> と
         <code>log</code> に日付を追記すれば、現在位置・進捗メーター・ステータス表示はすべて自動で追従する。
+        版数は <code>currentVersion</code> で変える。
+        計画書側（<a href="https://github.com/suzukimitsuru/vscode-code-relationship-diagram/blob/main/docs/ast-plan.md">docs/ast-plan.md</a>）の
+        段階計画表・実装結果・WBS も同じコミットで更新する事。
       </span>
     </div>
   </section>
+
+  <footer class="backlinks">
+    <a href="https://github.com/suzukimitsuru/vscode-code-relationship-diagram/blob/main/docs/ast-plan.md">← 計画書 docs/ast-plan.md</a>
+    <a href="https://github.com/suzukimitsuru/vscode-code-relationship-diagram/blob/main/docs/analysis-plan.md">docs/analysis-plan.md</a>
+    <a href="https://github.com/suzukimitsuru/vscode-code-relationship-diagram">リポジトリ</a>
+  </footer>
 
 </div>
 

@@ -6,6 +6,23 @@ CRD の依存抽出を **VSCode LSP 主体から AST（tree-sitter）主体へ�
 - 計画2（複雑性メトリクス）は本書の Stage 1 で構築する AST 基盤をそのまま利用する
 - 計画3（描画再設計）は本書が出力する `kind` / `strength` / `confidence` を入力とする
 
+## ロードマップページ
+
+進捗（現在位置・進捗メーター・更新履歴）は `docs/ast-plan.html` で見る。
+GitHub は HTML をソースのまま表示するため、以下のいずれかで開く。
+
+| 見方 | URL / 手順 |
+| ---- | ---------- |
+| ブラウザで表示（推奨） | [htmlpreview で開く](https://htmlpreview.github.io/?https://github.com/suzukimitsuru/vscode-code-relationship-diagram/blob/main/docs/ast-plan.html) |
+| 同上（別サービス） | <https://raw.githack.com/suzukimitsuru/vscode-code-relationship-diagram/main/docs/ast-plan.html> |
+| ローカル | `open docs/ast-plan.html`（Windows は `start`、Linux は `xdg-open`） |
+| ソース | [docs/ast-plan.html](./ast-plan.html) |
+
+> 上記2つは公開リポジトリを前提とした外部サービス経由の表示である。
+> GitHub Pages（設定 → Pages で `main` / `docs` を公開）を有効にすれば
+> `https://suzukimitsuru.github.io/vscode-code-relationship-diagram/ast-plan.html`
+> で直接開けるようになる。本リポジトリでは未設定。
+
 ---
 
 ## 0. 方式の改訂点（計画1 からの差分）
@@ -199,37 +216,71 @@ GROUP BY reference_fqn, define_fqn, kind;
 
 ## 6. Phase A: ローカル事実抽出
 
-### 6.1 パーササービス
+### 6.1 パーササービス（Stage 0 で実装済み）
 
-`src/extruct/ast/parser.ts`（新規）
+`src/extruct/ast/parser.ts` / `src/extruct/ast/resources.ts`
 
-- `web-tree-sitter` の初期化は拡張の起動時に1回
-- 言語 WASM は **`language_id` が初めて出現したときに遅延ロード**し、`Map<languageId, Language>` にキャッシュ
-- `Tree` は保持せず、1ファイル1パースで事実を抽出したら破棄（メモリ削減）
+- `web-tree-sitter` の初期化は拡張の起動時に1回（`Parser.init()` の `locateFile` で `dist/wasm/web-tree-sitter.wasm` を指す）
+- 言語 WASM は **`language_id` が初めて出現したときに遅延ロード**し、**文法名**でキャッシュ（`typescript` と `typescriptreact` は文法が違うため language id ではなく文法名を鍵にした）
+- `Tree` は保持せず、`withTree()` のコールバックを抜けた時点で破棄（メモリ削減）
 - 未対応 `language_id` は `null` を返し、呼び出し側が LSP 経路へフォールバック
+
+| API | 用途 |
+| --- | ---- |
+| `AstParser.create(resources)` | 生成。本体 WASM の初期化を含む |
+| `withTree(languageId, source, body)` | 構文木を使う処理。戻り値を返した時点で木は破棄される |
+| `captures(languageId, source)` | クエリのキャプチャを素のデータ（名前・文字列・位置・マッチ番号）で返す。Stage 1 の入力になる |
+| `astLanguageOf(languageId)` / `AST_LANGUAGES` | 対応言語の定義。言語追加はここと `.scm` の追加で済む |
+| `resolveAstResources(extensionPath)` | `<拡張機能のルート>/dist` の `wasm/` と `queries/` を指す |
+
+**実装上の落とし穴**: web-tree-sitter は ESM 版と CJS 版の両方を公開している。ESM 版は
+`createRequire(import.meta.url)` で WASM を読むため、esbuild で CJS へバンドルすると
+`import.meta.url` が undefined になり `Parser.init()` が失敗する。
+`import treeSitter = require('web-tree-sitter')` で読み込むと esbuild が CJS 版を選ぶ。
+この前提が崩れていない事は `verification/ast-parser/` が見張る。
 
 ### 6.2 クエリ（宣言的な種類判定）
 
-`src/extruct/ast/queries/typescript.scm`（新規）
+`src/extruct/ast/queries/typescript.scm`（TS / TSX 共用）・`javascript.scm`（JS / JSX 共用）
+
+Stage 0 でキャプチャ名の規約を以下に確定した。言語間で統一する事。
+
+| 接頭辞 | 意味 |
+| ------ | ---- |
+| `def.<種別>` | 定義。`fqn` / `export_name` の元になる |
+| `imp.name` / `imp.alias` / `imp.default` / `imp.namespace` | import 束縛のローカル名 |
+| `imp.module` / `imp.module.bare` | モジュール指定子（`.bare` は束縛名の無い副作用 import） |
+| `ref.<kind>` | 参照出現。`<kind>` がそのまま `RelationshipKind` になる |
+| `ref.receiver` | メンバ参照のレシーバ（`a.b()` の `a`、および `this` / `super`） |
+
+型に関する kind（`type_reference` / `implementation`）は JavaScript の文法に存在しないため
+`javascript.scm` では定義しない。文法に無いノード型を書くとクエリのコンパイル自体が失敗する。
+
+以下は方針を示す抜粋（実物は上記2ファイル）。
 
 ```scheme
 ; 定義
-(class_declaration name: (type_identifier) @def.class) @def.node
-(function_declaration name: (identifier) @def.function) @def.node
-(method_definition name: (property_identifier) @def.method) @def.node
+(class_declaration name: (type_identifier) @def.class)
+(interface_declaration name: (type_identifier) @def.interface)
+(function_declaration name: (identifier) @def.function)
+(method_definition name: (property_identifier) @def.method)
 
 ; import 束縛
 (import_statement
   (import_clause (named_imports (import_specifier name: (identifier) @imp.name)))
   source: (string) @imp.module)
+(import_statement
+  (import_clause (namespace_import (identifier) @imp.namespace))
+  source: (string) @imp.module)
 
 ; 参照出現（キャプチャ名がそのまま kind になる）
+(extends_clause value: (identifier) @ref.inheritance)
+(implements_clause (type_identifier) @ref.implementation)
 (new_expression constructor: (identifier) @ref.instantiation)
 (call_expression function: (identifier) @ref.call)
 (call_expression function: (member_expression
-  object: (identifier) @ref.receiver property: (property_identifier) @ref.call.member))
-(class_heritage (extends_clause value: (identifier) @ref.inheritance))
-(implements_clause (type_identifier) @ref.implementation)
+  object: (identifier) @ref.receiver
+  property: (property_identifier) @ref.call))
 (type_annotation (type_identifier) @ref.type_reference)
 (assignment_expression left: (identifier) @ref.write)
 (decorator (identifier) @ref.decorator)
@@ -340,8 +391,9 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 | クエリ(`.scm`) | 同じく `dist/queries/` へコピーし、実行時に読んでコンパイルする |
 | 参照方法 | `path.join(__dirname, 'wasm', ...)` で実行時ロード（`bindings/` と同じ流儀） |
 | パッケージ | `.vscodeignore` で `dist/wasm/**` を含める。`vsce package` 後に同梱を確認 |
-| サイズ | TS/JS で概ね数MB。言語追加ごとに増えるため**遅延ロード必須**。総サイズを CHANGELOG に記録 |
-| 外部化 | `external: ['vscode', 'duckdb']` に倣い、web-tree-sitter は bundle 対象（JS 部分は小さい） |
+| サイズ | **実測 3.3MB**（本体 197KB + TypeScript 1,381KB + TSX 1,412KB + JavaScript 402KB）。言語追加ごとに増えるため**遅延ロード必須**。総サイズを CHANGELOG に記録 |
+| 外部化 | `external: ['vscode', 'duckdb']` に倣い、web-tree-sitter は bundle 対象（JS 部分は小さい）。ただし **CJS 版を選ばせる必要がある**（§6.1 の落とし穴） |
+| 除外 | `scripts/**` と `verification/**` はビルド時にしか使わないため `.vscodeignore` で除外する |
 
 ---
 
@@ -369,17 +421,33 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 
 各 Stage は独立してリリース可能で、途中段階でも既存機能（現行の描画・保守性スコア）は動作を維持する。
 
-| Stage | 内容 | 受け入れ基準（Done） | 目安 |
-| ----- | ---- | -------------------- | ---- |
-| **0** ✅ | AST 基盤: `web-tree-sitter` 導入、パーササービス、TS/JS 文法、WASM 同梱・遅延ロード | 単体テストで任意の TS/JS をパースできる / `.vsix` を実機インストールして WASM がロードされる / 既存機能に影響なし | 0.3.36 |
-| **1** | Phase A: defs / imports / occurrences 抽出、`fqn`・`export_name` 付与、スキーマ v2 とマイグレーション、DuckDB へ保存（**まだ関係抽出には使わない**） | 自リポジトリ全ファイルで occurrences が保存される / `fqn` がファイル内で一意 / パース時間 中央値 < 20ms/ファイル / v1 DB から無停止で移行できる | 0.3.37 |
-| **2** | Phase B 段1〜2（ローカル + import 解決）、`kind` 付与、`table_relationships_v2` への保存。表示は従来関係のまま | import 由来の関係の再現率 ≥ 95%（対 LSP、§11 のレポート） / 検証レポートが CI or スクリプトで再生成できる | 0.3.38 |
-| **3** | Phase B 段3〜4'（型推論・一意名・曖昧候補）、confidence、Phase C 集約 VIEW | 関係全体の再現率 ≥ 90%、適合率 ≥ 90%（閾値 0.7 時） / 段別内訳がレポートに出る | 0.3.39 |
-| **4** | **主経路の切替**: `examine()` を AST 主体へ。LSP は低 confidence 検証と未対応言語フォールバックに降格。設定 `crd.ast.enabled` で旧経路へ戻せる。旧 `table_relationships` を DROP | 自リポジトリの `examineRelationships` 実行時間が現行比 ≤ 50% / 言語サーバ未導入の状態でも TS/JS の関係が出る / 旧経路へのロールバックが動く | 0.4.0 |
-| **5** | 描画反映: kind の色分け・strength の線幅・kind トグル・strength 閾値スライダー・ファイル内依存トグル | グラフ上で継承と import が区別できる / 閾値スライダーで幹線のみ表示できる | 0.4.1 |
-| **6** | 言語追加（需要順: Python → Go → Java/C#）。`.scm` とモジュール解決の追加のみで完結 | 追加言語で §11 のレポートが所定値を満たす / WASM は当該言語のファイルが在るときだけロードされる | 0.4.x |
+| Stage | 状態 | 内容 | 受け入れ基準（Done） | 目安 |
+| ----- | ---- | ---- | -------------------- | ---- |
+| **0** | **完了** | AST 基盤: `web-tree-sitter` 導入、パーササービス、TS/JS 文法、WASM 同梱・遅延ロード | 単体テストで任意の TS/JS をパースできる / `.vsix` を実機インストールして WASM がロードされる / 既存機能に影響なし | 0.3.36 |
+| **1** | 未着手 | Phase A: defs / imports / occurrences 抽出、`fqn`・`export_name` 付与、スキーマ v2 とマイグレーション、DuckDB へ保存（**まだ関係抽出には使わない**） | 自リポジトリ全ファイルで occurrences が保存される / `fqn` がファイル内で一意 / パース時間 中央値 < 20ms/ファイル / v1 DB から無停止で移行できる | 0.3.37 |
+| **2** | 未着手 | Phase B 段1〜2（ローカル + import 解決）、`kind` 付与、`table_relationships_v2` への保存。表示は従来関係のまま | import 由来の関係の再現率 ≥ 95%（対 LSP、§11 のレポート） / 検証レポートが CI or スクリプトで再生成できる | 0.3.38 |
+| **3** | 未着手 | Phase B 段3〜4'（型推論・一意名・曖昧候補）、confidence、Phase C 集約 VIEW | 関係全体の再現率 ≥ 90%、適合率 ≥ 90%（閾値 0.7 時） / 段別内訳がレポートに出る | 0.3.39 |
+| **4** | 未着手 | **主経路の切替**: `examine()` を AST 主体へ。LSP は低 confidence 検証と未対応言語フォールバックに降格。設定 `crd.ast.enabled` で旧経路へ戻せる。旧 `table_relationships` を DROP | 自リポジトリの `examineRelationships` 実行時間が現行比 ≤ 50% / 言語サーバ未導入の状態でも TS/JS の関係が出る / 旧経路へのロールバックが動く | 0.4.0 |
+| **5** | 未着手 | 描画反映: kind の色分け・strength の線幅・kind トグル・strength 閾値スライダー・ファイル内依存トグル | グラフ上で継承と import が区別できる / 閾値スライダーで幹線のみ表示できる | 0.4.1 |
+| **6** | 未着手 | 言語追加（需要順: Python → Go → Java/C#）。`.scm` とモジュール解決の追加のみで完結 | 追加言語で §11 のレポートが所定値を満たす / WASM は当該言語のファイルが在るときだけロードされる | 0.4.x |
 
 **計画2（メトリクス）は Stage 1 完了後に着手可能**（同じ AST 走査に相乗りする）。計画3 前半（円パッキング + LOD）は本計画と並行して進められる。
+
+### Stage 0 の実装結果（0.3.36 / 2026-08-26）
+
+| 受け入れ基準 | 結果 |
+| ------------ | ---- |
+| 単体テストで任意の TS/JS をパースできる | **達成**。`src/extruct/ast/parser.unit.test.ts` 18件を含む67件が通過。加えて自リポジトリの `src/**/*.ts` 37件を全てパース（中央値 1.0ms/ファイル・最大 23.8ms） |
+| `.vsix` を実機インストールして WASM がロードされる | **同梱まで確認**。`vsce ls` で `dist/wasm/*.wasm`・`dist/queries/*.scm` の同梱を確認し、minify 有無の両方のバンドルで同じ配置からロードしてパースできる事を検証。実機起動の確認は `src/test/astParser.test.ts`（`yarn test`）で行う |
+| 既存機能に影響なし | **達成**。`yarn run package` 完走。起動時のパーサ生成は失敗しても警告のみで続行する |
+
+**Stage 1 への申し送り**
+
+- パース時間の中央値は 1.0ms/ファイルで、Stage 1 の基準（中央値 < 20ms/ファイル）に対して十分な余裕がある。ただしこれは**パースのみ**の値で、クエリ実行と事実抽出の時間は含まない
+- `captures()` が返す `matchIndex` で同一マッチのキャプチャを束ねられる。`ref.receiver` と `ref.call` の対応付けはこれで行う
+- tree-sitter は**ソースに制御文字（NUL 等）を含むファイルを構文エラーにする**。TypeScript は受け付けるため、混入すると該当ファイルの事実が丸ごと落ちる。`verification/ast-parser/` が WARN で検知する
+  - 0.3.36 で `src/relationship/examine.ts` の生 NUL を解消済み（関係の一意化キーを `JSON.stringify([a, b])` に変更）
+  - 区切り文字が要る箇所では、シンボルIDにパス（タブを含むファイル名も `fast-glob` は列挙する）と言語サーバ由来のシンボル名（C言語では `string_copy(char *, const char *)` のようにシグネチャ全体が入る）が含まれる事を踏まえ、区切りが曖昧にならない形を使う
 
 ### 設定項目（`package.json` の `contributes.configuration`）
 
@@ -395,22 +463,22 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 
 ## 13. 作業分解（WBS）
 
-| # | 作業 | 対象ファイル | Stage |
-| - | ---- | ------------ | ----- |
-| 1 | `web-tree-sitter` 依存追加・WASM コピー・`.vscodeignore` | `package.json`, `esbuild.js`, `.vscodeignore` | 0 |
-| 2 | パーササービス（初期化・遅延ロード・クエリ実行） | `src/extruct/ast/parser.ts`（新規） | 0 |
-| 3 | TS/JS クエリ定義 | `src/extruct/ast/queries/typescript.scm`（新規） | 0 |
-| 4 | ローカル事実抽出（defs / imports / occurrences を1走査） | `src/extruct/ast/localFacts.ts`（新規） | 1 |
-| 5 | モジュール解決（相対 / tsconfig paths / node_modules） | `src/extruct/ast/moduleResolver.ts`（新規） | 1 |
-| 6 | スキーマ v2・マイグレーション・保存API | `src/codeDb.ts` | 1 |
-| 7 | `fqn` / `export_name` の付与（AST defs と既存シンボルの照合） | `src/extruct/codeSymbols.ts` | 1 |
-| 8 | 解決オーケストレータ（段1〜5・confidence） | `src/relationship/resolve.ts`（新規） | 2-3 |
-| 9 | 解決 VIEW 群・集約 VIEW | `src/codeDb.ts` | 2-3 |
-| 10 | 精度検証ハーネスとレポート | `verification/ast-accuracy/`（新規） | 2 |
-| 11 | `computeUpsert()` を Phase A + B 呼び出しへ差し替え、LSP 降格 | `src/relationship/examine.ts`, `src/relationship/codeRelationships.ts` | 4 |
-| 12 | 設定項目の追加とロールバック経路 | `package.json`, `src/extension.ts` | 4 |
-| 13 | kind / strength / intra-file の描画 | `src/relationship/cosmosAdapter.ts`, `src/webview/graphView.ts` | 5 |
-| 14 | 言語追加 | `src/extruct/ast/queries/` | 6 |
+| # | 作業 | 対象ファイル | Stage | 状態 |
+| - | ---- | ------------ | ----- | ---- |
+| 1 | `web-tree-sitter` 依存追加・WASM コピー・`.vscodeignore` | `package.json`, `esbuild.js`, `scripts/ast-assets.mjs`, `.vscodeignore` | 0 | 完了 |
+| 2 | パーササービス（初期化・遅延ロード・クエリ実行） | `src/extruct/ast/parser.ts`, `resources.ts`, `index.ts` | 0 | 完了 |
+| 3 | TS/JS クエリ定義 | `src/extruct/ast/queries/typescript.scm`, `javascript.scm` | 0 | 完了 |
+| 4 | ローカル事実抽出（defs / imports / occurrences を1走査） | `src/extruct/ast/localFacts.ts`（新規） | 1 | 未着手 |
+| 5 | モジュール解決（相対 / tsconfig paths / node_modules） | `src/extruct/ast/moduleResolver.ts`（新規） | 1 | 未着手 |
+| 6 | スキーマ v2・マイグレーション・保存API | `src/codeDb.ts` | 1 | 未着手 |
+| 7 | `fqn` / `export_name` の付与（AST defs と既存シンボルの照合） | `src/extruct/codeSymbols.ts` | 1 | 未着手 |
+| 8 | 解決オーケストレータ（段1〜5・confidence） | `src/relationship/resolve.ts`（新規） | 2-3 | 未着手 |
+| 9 | 解決 VIEW 群・集約 VIEW | `src/codeDb.ts` | 2-3 | 未着手 |
+| 10 | 精度検証ハーネスとレポート | `verification/ast-accuracy/`（新規） | 2 | 未着手 |
+| 11 | `computeUpsert()` を Phase A + B 呼び出しへ差し替え、LSP 降格 | `src/relationship/examine.ts`, `src/relationship/codeRelationships.ts` | 4 | 未着手 |
+| 12 | 設定項目の追加とロールバック経路 | `package.json`, `src/extension.ts` | 4 | 未着手 |
+| 13 | kind / strength / intra-file の描画 | `src/relationship/cosmosAdapter.ts`, `src/webview/graphView.ts` | 5 | 未着手 |
+| 14 | 言語追加 | `src/extruct/ast/queries/` | 6 | 未着手 |
 
 ### テスト方針
 
@@ -459,8 +527,26 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 
 ---
 
+## 進捗の記録方法
+
+本書と `docs/ast-plan.html`（ロードマップ）は、Stage が進むたびに更新する。
+
+| 更新先 | 何を書くか |
+| ------ | ---------- |
+| 本書 §12 の段階計画表 | 当該 Stage の**状態**（未着手 / 着手中 / 完了） |
+| 本書 §12 の「Stage N の実装結果」 | 受け入れ基準ごとの**実測値と達否**、次 Stage への申し送り |
+| 本書 §13 の WBS | 作業ごとの状態と、実際に作った/変えたファイル |
+| 本書の該当節（§5〜§11） | 計画と実装が食い違った点、実装して分かった制約 |
+| `docs/ast-plan.html` の `PLAN_STATE` | `stages[].status` / `updated` / `nextAction` / `log`。他は自動で追従する |
+| `CHANGELOG.md` | 利用者から見た変更。同梱サイズなど数値も記録する |
+
+計画そのもの（Stage 1 以降の設計）は、実装で妥当性が崩れた時にだけ書き換える。
+崩れていない予定を実績のように書かない事。
+
+---
+
 ## 最終更新
 
-- **日付**: 2026-08-25
-- **バージョン**: 0.3.35 時点の計画
+- **日付**: 2026-08-26
+- **バージョン**: 0.3.36（Stage 0 完了時点）
 - **作成者**: Claude Code

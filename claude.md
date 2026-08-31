@@ -291,6 +291,16 @@ docs/
 4. **実装**: コア機能 → UI → テスト
 5. **ドキュメント更新**: `SPECIFICATIONS.md`と`CHANGELOG.md`を更新
 
+### 計画書の進捗更新（必須）
+
+計画書に沿った作業（`docs/ast-plan.md`のStageなど）を進めた場合は、**作業と同じコミットで計画書を更新する**。
+
+- `docs/ast-plan.md`: §12の段階計画表の状態、「Stage N の実装結果」（受け入れ基準ごとの実測値と達否・次Stageへの申し送り）、§13のWBSの状態
+- `docs/ast-plan.html`: 末尾の`PLAN_STATE`のみ（`stages[].status` / `updated` / `nextAction` / `log`）。現在位置・進捗メーターは自動で追従する
+- 計画と実装が食い違った点・実装して分かった制約は、該当節に書き足す
+
+詳細は`docs/ast-plan.md`の「進捗の記録方法」を参照。**崩れていない予定を実績のように書かない事。**
+
 ### デバッグ手順
 
 1. **拡張機能ログ**: VSCode開発者ツール → Console
@@ -382,6 +392,7 @@ ls bindings/
 ## 参考ドキュメント
 
 - **AST導入計画**: `docs/ast-plan.md` - 依存抽出のAST移行（段階計画・データモデル・WBS）
+- **ASTロードマップ**: `docs/ast-plan.html` - 進捗の可視化。GitHubはHTMLをソース表示するため、開き方は`docs/ast-plan.md`冒頭の「ロードマップページ」を参照
 - **円形階層図 機能・実装仕様**: `docs/diagram-specs.md` - 現行ビューの機能仕様と実装値
 - **円形階層図 設計仕様（初版）**: `docs/circle-diagram.md` - 設計の背景と調査結果
 - **変更履歴**: `CHANGELOG.md` - バージョンごとの変更内容
