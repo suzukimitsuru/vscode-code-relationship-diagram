@@ -454,8 +454,8 @@ a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); ou
       詳細な仕様は <a href="https://github.com/suzukimitsuru/vscode-code-relationship-diagram/blob/main/docs/ast-plan.md">docs/ast-plan.md</a> にある。
     </p>
     <div class="meta">
-      <span><b>計画書</b> docs/ast-plan.md</span>
-      <span><b>関連</b> docs/analysis-plan.md 計画1</span>
+      <span><b>計画書</b> <a href="https://github.com/suzukimitsuru/vscode-code-relationship-diagram/blob/main/docs/ast-plan.md">docs/ast-plan.md</a></span>
+      <span><b>関連</b> <a href="https://github.com/suzukimitsuru/vscode-code-relationship-diagram/blob/main/docs/analysis-plan.md">docs/analysis-plan.md</a> 計画1</span>
       <span><b>現行版</b> <span id="version"></span></span>
       <span><b>最終更新</b> <span id="updated"></span></span>
     </div>
@@ -585,7 +585,7 @@ a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); ou
         ファイル末尾の <code>PLAN_STATE</code> だけを書き換える。ステージの <code>status</code> を
         <code>"done"</code> / <code>"active"</code> / <code>"plan"</code> のいずれかにし、<code>updated</code> と
         <code>log</code> に日付を追記すれば、現在位置・進捗メーター・ステータス表示はすべて自動で追従する。
-        版数は <code>currentVersion</code> で変える。
+        版数は <code>version</code> で変える。
         計画書側（<a href="https://github.com/suzukimitsuru/vscode-code-relationship-diagram/blob/main/docs/ast-plan.md">docs/ast-plan.md</a>）の
         段階計画表・実装結果・WBS も同じコミットで更新する事。
       </span>
@@ -606,7 +606,7 @@ a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); ou
    status: "done" 完了 / "active" 着手中 / "plan" 未着手
    =================================================================== */
 const PLAN_STATE = {
-  updated: "2026-08-31",
+  updated: "2026-09-01",
   version: "0.3.36",
   nextAction: "Stage 1: Phase A（defs / imports / occurrences の抽出と fqn 付与）",
   stages: [
@@ -619,11 +619,11 @@ const PLAN_STATE = {
     {
       id: "STAGE 0", version: "0.3.36", status: "done",
       title: "AST 基盤",
-      body: "web-tree-sitter（WASM）を採用。本体は起動時に1回初期化し、言語文法は language id の初出時に遅延ロードする。.scm のキャプチャ名を def. / imp. / ref. に統一し、WASM とクエリを dist/ へ配置した。",
+      body: "web-tree-sitter（WASM）を採用。本体は起動時に1回初期化し、言語文法は language id の初出時に遅延ロードする。.scm のキャプチャ名を def. / imp. / ref. に統一し、WASM とクエリを dist/ へ配置した。同梱サイズ 3.3MB（本体 197KB + TS 1,381KB + TSX 1,412KB + JS 402KB）。",
       criteria: [
-        "単体テストで任意の TS/JS をパースできる",
-        "配布物と同じ配置で WASM がロードされる（verification/ast-parser、minify 有無の両方）",
-        "既存機能に影響なし"
+        "達成 — 単体テスト67件が通過（parser.unit.test.ts 18件を含む）。自リポジトリの TS 37件を全てパース（中央値 1.0ms/ファイル・最大 23.8ms）",
+        "同梱まで確認 — vsce ls で dist/wasm・dist/queries の同梱を確認し、minify 有無の両方でロードとパースを検証。実機起動の確認は yarn test で行う",
+        "達成 — yarn run package 完走。起動時のパーサ生成は失敗しても警告のみで続行する"
       ]
     },
     {
@@ -693,7 +693,10 @@ const PLAN_STATE = {
   log: [
     { date: "2026-08-25", text: "docs/ast-plan.md を作成し、計画1をAST主体方式へ改訂（PR #8）" },
     { date: "2026-08-25", text: "本ロードマップページを追加" },
-    { date: "2026-08-26", text: "Stage 0 完了 — AST基盤（web-tree-sitter）を導入。v0.3.36（PR #9）" }
+    { date: "2026-08-26", text: "Stage 0 完了 — パーササービス・TS/JS クエリ・WASM 同梱と遅延ロードを実装。v0.3.36（PR #9）" },
+    { date: "2026-08-26", text: "verification/ast-parser/ を追加。配布物と同じ配置で WASM がロードされる事を minify 有無の両方で検証する" },
+    { date: "2026-08-26", text: "examine.ts の生 NUL バイトを解消（関係の一意化キーを JSON.stringify に変更）。tree-sitter が構文エラーにするため Stage 1 の障害になっていた" },
+    { date: "2026-09-01", text: "マージで欠けた Stage 0 の実測値・更新履歴と、計画書へのリンクを復元。更新手順のキー名を実装に合わせた" }
   ]
 };
 
