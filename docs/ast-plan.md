@@ -537,7 +537,7 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 | 本書 §12 の「Stage N の実装結果」 | 受け入れ基準ごとの**実測値と達否**、次 Stage への申し送り |
 | 本書 §13 の WBS | 作業ごとの状態と、実際に作った/変えたファイル |
 | 本書の該当節（§5〜§11） | 計画と実装が食い違った点、実装して分かった制約 |
-| `docs/ast-plan.html` の `PLAN_STATE` | `stages[].status` / `updated` / `nextAction` / `log`。他は自動で追従する |
+| `docs/ast-plan.html` の `PLAN_STATE` | `stages[].status` / `updated` / `nextAction` / `version` / `log`。現在位置・進捗メーター・版数表示は自動で追従する |
 | `CHANGELOG.md` | 利用者から見た変更。同梱サイズなど数値も記録する |
 
 計画そのもの（Stage 1 以降の設計）は、実装で妥当性が崩れた時にだけ書き換える。
