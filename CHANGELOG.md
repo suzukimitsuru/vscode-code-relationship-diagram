@@ -13,6 +13,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Fixed
+
+- **`yarn test` が macOS で最新の VS Code を起動できない問題を修正**
+  - VS Code 1.110 以降の macOS 版はアプリ本体の実行ファイル名が `Contents/MacOS/Electron` から `Contents/MacOS/Code` に変わり（microsoft/vscode#291948）、互換用のシンボリックリンクも 2026-07 に削除された（microsoft/vscode#326502）。旧 `@vscode/test-electron` は `Electron` を決め打ちで起動するため `spawn ... ENOENT` で失敗していた
+  - **`package.json`**: `@vscode/test-electron` を `^2.4.1` → `^3.1.0`、`@vscode/test-cli` を `^0.0.11` → `^0.0.15` に更新。3.1.0 は `Info.plist` の `CFBundleExecutable` から実行ファイルを解決する（microsoft/vscode-test#350）
+  - 両パッケージとも Node.js 22 以上が必要になった（3.0.0 の破壊的変更はこの engines 要件のみ）
+  - VS Code 1.141.0（最新安定版）で `src/test/*.test.ts` の全6件が通る事を確認
+
 ## [0.3.36] - 2026-08-26
 
 ### Added
