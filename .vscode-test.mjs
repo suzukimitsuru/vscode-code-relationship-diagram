@@ -11,7 +11,18 @@ const userDataDir = path.join(os.tmpdir(), 'crd-vscode-test');
 // 前回の実行で残った設定や状態を持ち越さないよう、テストの前に消す
 fs.rmSync(userDataDir, { recursive: true, force: true });
 
-export default defineConfig({
-	files: 'out/test/**/*.test.js',
-	launchArgs: [`--user-data-dir=${userDataDir}`],
-});
+export default defineConfig([
+	{
+		// 統合テスト (yarn test)
+		label: 'integration',
+		files: 'out/test/**/*.test.js',
+		launchArgs: [`--user-data-dir=${userDataDir}`],
+	},
+	{
+		// 名前解決の精度検証 (yarn verify:accuracy)。自リポジトリ全体を LSP と AST の両方で調査するため時間が掛かる
+		label: 'accuracy',
+		files: 'out/test/**/*.verify.js',
+		launchArgs: [`--user-data-dir=${userDataDir}`],
+		mocha: { timeout: 60 * 60 * 1000 },
+	},
+]);

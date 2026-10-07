@@ -3,7 +3,7 @@
   "displayName": "CRD: Code Relationship Diagram",
   "shortName": "CRD",
   "description": "コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています",
-  "version": "0.3.37",
+  "version": "0.3.38",
   "preview": true,
   "publisher": "suzukimitsuru",
   "keywords": [
@@ -80,10 +80,11 @@
     "pretest": "yarn run compile-tests && yarn run compile && yarn run lint --fix",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vscode-test",
+    "test": "vscode-test --label integration",
     "test:unit": "vitest run",
     "verify:ast": "node esbuild.js && node verification/ast-parser/verify.cjs",
-    "verify:facts": "node verification/ast-facts/verify.cjs"
+    "verify:facts": "node verification/ast-facts/verify.cjs",
+    "verify:accuracy": "yarn run compile-tests && node esbuild.js && vscode-test --label accuracy"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

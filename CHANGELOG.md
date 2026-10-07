@@ -13,8 +13,36 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.3.38] - 2026-10-08
+
+### Added
+
+- **名前解決（Phase B）**（`docs/ast-plan.md` Stage 2）: AST の事実から、参照出現を定義へ解決した関係を `table_relationships_v2` に保存する。**まだ表示には使わない**（グラフは従来の LSP 由来の関係のまま）
+  - `src/relationship/resolve.ts`: 段1（根の名前を束縛しているファイル内の定義）と段2（import 束縛 → import 先の export。`export * from` / `export { a as b } from` / `export * as ns from` を3段まで辿る）
+    - メンバの連鎖は、名前空間なら export、定義なら入れ子の定義として1段ずつ引く（`Relationship.FileDifference.QueueProcessor` のような連鎖も解決する）。途中で通過した定義（`Cls.create()` の `Cls`）にも読み取りの関係を出す
+    - import 文そのものを「ファイル → 取り込んだ定義・モジュール」の `import` 関係にする
+    - 確信度: 段1 = 1.0、段2 = 0.95、export 名の定義が見つからずモジュール単位で解決したもの = 0.5。重みは関係の種類ごと（§5.3）
+    - 自分自身・自分の内側の定義への参照、引数などの定義でないローカル束縛は関係にしない。`this` / `super` とファイル内に束縛の無い名前は Stage 3 で扱う
+  - **差分キューへの組み込み**: キューが空になった時点で、名前解決が必要なファイル（事実が最新で `resolved_version` が古いもの）を50ファイルずつ、コミットと同じ直列区間で解決する。事実が変わったファイルと、それを import しているファイルは未解決に戻る。どのファイルが未解決かは DB に持つため、途中で VS Code を閉じても次の全走査で続きから解決する
+  - **スキーマ v3**: AST の定義を保存する `table_definitions`、参照出現の `binding_fqn`、関係の両端のファイル（`reference_path` / `define_path`）、`table_files.resolved_version` を追加。起動時に v1 / v2 の DB を自動で移行する
+  - **名前解決の精度検証**（`yarn verify:accuracy`）: 自リポジトリを拡張機能と同じ差分キューで調べ、LSP 由来の関係を正解として AST 由来の関係を突き合わせ、`verification/ast-accuracy/report.md` を書き出す。**import 由来の関係の再現率 100%（459 / 459）**
+- **Phase A の事実を拡張**（抽出規則の版数 `FACTS_VERSION` を 2 に上げた。既存の DB は次の全走査で事実だけを抽出し直す）
+  - 参照出現の根の名前を束縛しているファイル内の定義（`binding_fqn`）。同じスコープで import と定義が同じ名前を束縛する場合（`const fs = require('fs')`）は import を優先する
+  - メンバ参照の連鎖（`A.B.c()`）を根 `A` と経路 `B.c` にまとめる
+  - 値として現れる素の識別子（`e instanceof Cancelled`、三項演算の分岐など）を読み取りとして捉える
+  - コンストラクタ引数のプロパティ（`constructor(public readonly file: File)`）をクラスのメンバとして定義する
+  - 既に別の名前で export している定義の別名 export（`export default localeMap`）と、import した名前の export を再エクスポートとして記録する
+
+### Changed
+
+- **`yarn test`**: `vscode-test --label integration` を実行する。時間の掛かる精度検証は `accuracy` ラベルに分けた（`.vscode-test.mjs`）
+- **`table_relationships_v2`**: `weight` / `confidence` を `REAL`（32ビット）から `DOUBLE` にした。`REAL` では 0.95 が 0.9499999881 になり、strength の和に誤差が乗っていた（v2 ではこの表に書き込む処理が無かったため、作り直しても失う行は無い）
+
 ### Fixed
 
+- **シンボル ID の衝突で、ファイルの保存が丸ごと失敗していた**（`src/extruct/codeSymbols.ts`）
+  - シンボル ID は `<親ID>/<種類>.<名前>@<本文のハッシュ>` のため、同じ親の下に種類・名前・本文が全て同じ兄弟（同じ関数で2回書いた `for (const x of …)` の `x`、同じ書き方のコールバック等）があると衝突し、`table_symbols` の主キー違反でそのファイルのシンボル・関係が保存されず、全走査のたびに失敗を繰り返していた。自リポジトリでは 64 ファイル中 27 ファイルが該当した
+  - 2つ目以降に文書順の番号 `~2`, `~3` … を付ける。1つ目の ID は変えないため、既存の DB の行はそのまま使える
 - **`yarn test` が macOS で最新の VS Code を起動できない問題を修正**
   - VS Code 1.110 以降の macOS 版はアプリ本体の実行ファイル名が `Contents/MacOS/Electron` から `Contents/MacOS/Code` に変わり（microsoft/vscode#291948）、互換用のシンボリックリンクも 2026-07 に削除された（microsoft/vscode#326502）。旧 `@vscode/test-electron` は `Electron` を決め打ちで起動するため `spawn ... ENOENT` で失敗していた
   - **`package.json`**: `@vscode/test-electron` を `^2.4.1` → `^3.1.0`、`@vscode/test-cli` を `^0.0.11` → `^0.0.15` に更新。3.1.0 は `Info.plist` の `CFBundleExecutable` から実行ファイルを解決する（microsoft/vscode-test#350）

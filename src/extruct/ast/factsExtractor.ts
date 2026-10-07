@@ -1,6 +1,6 @@
 /** @file Phase A: 1ファイルの事実抽出 (ローカル事実 + import の解決) */
 import { AstParser } from './parser';
-import { AstDefinition, AstImport, AstOccurrence, collectLocalFacts } from './localFacts';
+import { AstDefinition, AstImport, AstOccurrence, SELF_MODULE_SPEC, collectLocalFacts } from './localFacts';
 import { ModuleResolution, ModuleResolver } from './moduleResolver';
 
 /** 解決済みの import 束縛 */
@@ -56,7 +56,9 @@ export class FactsExtractor {
         if (!local) {
             return null;
         }
-        const imports = local.imports.map(entry => ({ ...entry, ...this._resolver.resolve(relativePath, entry.moduleSpec) }));
+        const imports = local.imports.map(entry => ({ ...entry, ...(entry.moduleSpec === SELF_MODULE_SPEC
+            ? { resolvedPath: relativePath, isExternal: false }
+            : this._resolver.resolve(relativePath, entry.moduleSpec)) }));
         return {
             relativePath: relativePath,
             definitions: local.definitions,

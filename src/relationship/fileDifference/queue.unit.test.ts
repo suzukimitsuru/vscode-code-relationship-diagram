@@ -8,6 +8,7 @@ import * as codeDb from '../../codeDb';
 import * as SYMBOL from '../../extruct/symbol';
 import { AstParser, FACTS_VERSION, FactsExtractor, ModuleResolver, RelationshipKind, resolveAstResources } from '../../extruct/ast';
 import { scanDifference } from '../examine';
+import { CONFIDENCE, RESOLVE_VERSION } from '../resolve';
 import { Completed, QueueProcessor } from './queue';
 
 const ASSOCIATIONS = { '**/*.ts': 'typescript', '**/*.c': 'c' };
@@ -100,6 +101,31 @@ describe('QueueProcessor (facts 項目)', () => {
         await run();
         const again = await scanDifference(workspace, ASSOCIATIONS, db, () => {}, () => {});
         expect(again.factsStale).toEqual([]);
+    });
+
+    it('キューが空になったら名前解決を行い、関係 (v2) を保存する', async () => {
+        await registerAsV1();
+        await run();
+        const a = path.join('src', 'a.ts');
+        const b = path.join('src', 'b.ts');
+        expect((await db.relationships_v2_query(a)).map(entry => [RelationshipKind[entry.kind], entry.referenceFqn, entry.defineFqn, entry.confidence])).toEqual([
+            ['import', `${a}#`, `${b}#B`, CONFIDENCE.import],
+            ['inheritance', `${a}#A`, `${b}#B`, CONFIDENCE.import],
+        ]);
+        // 解決済みの版数が記録され、次の機会には解決し直さない
+        expect(await db.resolution_pendingFiles(FACTS_VERSION, RESOLVE_VERSION)).toEqual([]);
+    });
+
+    it('前回の名前解決が途中で終わっていれば、変更が無くても次の全走査で続きを行う', async () => {
+        await registerAsV1();
+        await run();
+        await processor!.dispose();
+        // 名前解決の途中で終了した状態を作る
+        await db.executeQuery('UPDATE table_files SET resolved_version = NULL');
+        await db.executeQuery('DELETE FROM table_relationships_v2');
+        const completed = await run();
+        expect(completed.processed).toBe(0);
+        expect(await db.relationships_v2_query(path.join('src', 'a.ts'))).toHaveLength(2);
     });
 
     it('事実抽出器が無ければ facts 項目を処理しない (パーサが使えない環境)', async () => {

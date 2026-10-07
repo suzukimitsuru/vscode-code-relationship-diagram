@@ -79,6 +79,8 @@ src/
 │       └── queries/*.scm     # 言語ごとのクエリ定義
 ├── relationship/
 │   ├── examine.ts            # 関係抽出メインロジック
+│   ├── resolve.ts            # Phase B: 名前解決（AST の事実 → table_relationships_v2）
+│   ├── accuracy.ts           # 名前解決の精度検証（LSP と AST の関係の突き合わせ）
 │   ├── codeRelationships.ts  # Relationshipモデル
 │   ├── cosmosAdapter.ts      # Cosmos.gl形式変換・保守性スコア計算
 │   ├── hierarchicalLayout.ts # 初期階層レイアウト計算
@@ -255,6 +257,14 @@ docs/
 - **FACTS_VERSION**（`localFacts.ts`）: クエリや抽出規則を変えたら上げる。`table_files.facts_version` が異なるファイルは、内容が同じでも次の全走査で LSP を使わずに事実だけを抽出し直す（キュー項目 `facts`）
 - **ソースに生の制御文字・BOM・ゼロ幅文字を書かない事**: tree-sitter は構文エラーにし、自リポジトリの事実が落ちる。必要なら `\uFEFF` のようなエスケープで書く
 
+**名前解決（Stage 2 / v0.3.38～）**: キューが空になった時点で、事実から `table_relationships_v2` を作る（`src/relationship/resolve.ts`。まだ表示には使わない）
+
+- **段1**: `binding_fqn`（根の名前を束縛しているファイル内の定義）から引く。**段2**: import 束縛から import 先の export を引く（再エクスポートは3段まで）
+- 結合先は AST の定義（`table_definitions`）。言語サーバのシンボルには依存しない
+- **RESOLVE_VERSION**（`resolve.ts`）: 解決規則を変えたら上げる。`table_files.resolved_version` が異なるファイルを解決し直す。事実が変わると、そのファイルと import しているファイルが未解決に戻る
+- 解決は SQL ではなく TypeScript で行う（モジュールと定義の解決が交互に現れる連鎖を SQL で表しにくいため。`docs/ast-plan.md` §7.3）
+- 精度検証: `yarn verify:accuracy`（LSP 由来の関係を正解とし、`verification/ast-accuracy/report.md` を書き出す）
+
 ---
 
 ## 開発ガイドライン
@@ -342,6 +352,18 @@ npm run compile
 # 拡張機能デバッグ
 # F5キーを押すか、VSCodeのデバッグビューから"Extension"を実行
 ```
+
+### テストと検証
+
+| コマンド | 内容 | 所要時間 |
+| -------- | ---- | -------- |
+| `yarn test:unit` | 単体テスト（vitest、`src/**/*.unit.test.ts`）。DB のテストは実 DuckDB（`bindings/`）を使う | 数秒 |
+| `yarn test` | 統合テスト（VS Code の拡張機能ホスト、`src/test/*.test.ts`。`.vscode-test.mjs` の `integration` ラベル） | 1分弱 |
+| `yarn verify:ast` | AST 資産が配布物と同じ配置からロードされパースできるか（`verification/ast-parser/`） | 数秒 |
+| `yarn verify:facts` | 事実抽出の受け入れ基準（全ファイルの保存・fqn の一意性・処理時間・v1 DB の移行。`verification/ast-facts/`） | 数秒 |
+| `yarn verify:accuracy` | 名前解決の精度（LSP と AST の関係の突き合わせ。`accuracy` ラベル）。`verification/ast-accuracy/report.md` を書き出し、調査に使った DB を `out/verify-accuracy/` に残す | 約5分 |
+
+単体テストのファイルを `src/test/` に置かない事（`out/test/**/*.test.js` は統合テストとして VS Code 上で実行される）。
 
 ### パッケージング
 
@@ -470,8 +492,8 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 
 ## 最終更新
 
-- **日付**: 2026-09-26
-- **バージョン**: 0.3.37
+- **日付**: 2026-10-08
+- **バージョン**: 0.3.38
 - **作成者**: Claude Code
 
 このファイルはプロジェクトの進化に伴い定期的に更新してください。

@@ -606,9 +606,9 @@ a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); ou
    status: "done" 完了 / "active" 着手中 / "plan" 未着手
    =================================================================== */
 const PLAN_STATE = {
-  updated: "2026-09-26",
-  version: "0.3.37",
-  nextAction: "Stage 2: 名前解決 段1〜2（ローカル束縛と import 解決）と精度検証ハーネス",
+  updated: "2026-10-08",
+  version: "0.3.38",
+  nextAction: "Stage 3: レシーバ型の推論・一意名・曖昧候補と confidence（シンボル単位の再現率 31% を上げる）",
   stages: [
     {
       id: "計画策定", version: "—", status: "done",
@@ -638,12 +638,12 @@ const PLAN_STATE = {
       ]
     },
     {
-      id: "STAGE 2", version: "0.3.38", status: "plan",
+      id: "STAGE 2", version: "0.3.38", status: "done",
       title: "名前解決 段1〜2",
-      body: "ローカル束縛と import 解決、kind 付与、table_relationships_v2 への保存。表示は従来の関係のまま。",
+      body: "ファイル内の定義（段1）と import 先の export（段2、再エクスポートを3段まで）へ参照出現を解決し、種類・重み・確信度付きで table_relationships_v2 に保存する。キューが空になった時点で未解決のファイルだけを解決する。解決は SQL ではなく TypeScript で行う。表示は従来の関係のまま。",
       criteria: [
-        "import 由来の関係の再現率 ≥ 95%（対 LSP）",
-        "検証レポートをスクリプトで再生成できる"
+        "達成 — import 由来の関係の再現率 100.0%（465 / 465）。ファイル単位の再現率 96.5%",
+        "達成 — yarn verify:accuracy が verification/ast-accuracy/report.md を再生成し、基準を下回ると失敗する"
       ]
     },
     {
@@ -698,7 +698,9 @@ const PLAN_STATE = {
     { date: "2026-08-26", text: "examine.ts の生 NUL バイトを解消（関係の一意化キーを JSON.stringify に変更）。tree-sitter が構文エラーにするため Stage 1 の障害になっていた" },
     { date: "2026-09-01", text: "マージで欠けた Stage 0 の実測値・更新履歴と、計画書へのリンクを復元。更新手順のキー名を実装に合わせた" },
     { date: "2026-09-26", text: "Stage 1 完了 — 定義・import・参照出現の抽出、fqn / export_name の付与、スキーマ v2 と埋め戻し。v0.3.37" },
-    { date: "2026-09-26", text: "Stage 0 の残件だった実機起動の確認を、拡張機能ホスト上の統合テストで実施（VS Code 1.105.0）" }
+    { date: "2026-09-26", text: "Stage 0 の残件だった実機起動の確認を、拡張機能ホスト上の統合テストで実施（VS Code 1.105.0）" },
+    { date: "2026-10-08", text: "Stage 2 完了 — 名前解決 段1〜2 と精度検証ハーネス（yarn verify:accuracy）。v0.3.38" },
+    { date: "2026-10-08", text: "シンボル ID の衝突で 64 ファイル中 27 ファイルの保存が失敗していた既存の不具合を修正" }
   ]
 };
 

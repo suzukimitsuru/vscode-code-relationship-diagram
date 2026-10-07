@@ -108,48 +108,37 @@
 ; kind = instantiation
 (new_expression constructor: (identifier) @ref.instantiation)
 (new_expression constructor: (member_expression
-  object: (identifier) @ref.receiver
+  object: [(identifier) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.instantiation))
 
 ; kind = call
 (call_expression function: (identifier) @ref.call)
 (call_expression function: (member_expression
-  object: (identifier) @ref.receiver
-  property: (property_identifier) @ref.call))
-; this / super をレシーバとする呼び出し (@ref.receiver の文字列が 'this' / 'super' になる)
-(call_expression function: (member_expression
-  object: [(this) (super)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.call))
 
 ; kind = write
 (assignment_expression left: (identifier) @ref.write)
 (assignment_expression left: (member_expression
-  object: (identifier) @ref.receiver
-  property: (property_identifier) @ref.write))
-(assignment_expression left: (member_expression
-  object: [(this) (super)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.write))
 (augmented_assignment_expression left: (identifier) @ref.write)
 (augmented_assignment_expression left: (member_expression
-  object: [(identifier) (this) (super)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.write))
 
 ; kind = decorator
 (decorator (identifier) @ref.decorator)
 (decorator (call_expression function: (identifier) @ref.decorator))
 (decorator (call_expression function: (member_expression
-  object: (identifier) @ref.receiver
+  object: [(identifier) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.decorator)))
 
-; kind = read (メンバの読み取りと、値として渡される識別子)
+; kind = read (メンバの読み取りと、値として現れる識別子は全て)
+; 素の識別子は包括的に捉える。定義名・束縛・import 名は除外され、呼び出し等のより具体的な種類が優先される。
+; メンバ参照の連鎖 (A.B.c) の内側の識別子は、連鎖全体の参照出現に含まれるため除かれる
 (member_expression
-  object: [(identifier) (this) (super)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.read)
-(arguments (identifier) @ref.read)
-(variable_declarator value: (identifier) @ref.read)
-(return_statement (identifier) @ref.read)
-(pair value: (identifier) @ref.read)
+(identifier) @ref.read
 (shorthand_property_identifier) @ref.read
-(array (identifier) @ref.read)
-(spread_element (identifier) @ref.read)
-(assignment_expression right: (identifier) @ref.read)
