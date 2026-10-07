@@ -7,6 +7,7 @@ import * as codeRelationships from '../codeRelationships';
 import { Item, Difference } from './item';
 import { SymbolCache } from './symbolCache';
 import { ExamineTask, CancelToken, Cancelled } from '../examine';
+import { FactsExtractor } from '../../extruct/ast';
 
 /** @description 進捗通知イベント */
 export interface Progress {
@@ -29,6 +30,8 @@ export interface QueueProcessorOptions {
     db: codeDb.Db;
     /** タスク同時実行数の上限（既定: 4） */
     concurrency?: number;
+    /** AST の事実抽出器（パーサが使えない環境では null。LSP の経路だけで動く） */
+    facts?: FactsExtractor | null;
     log: (message: string, ...args: any[]) => void;
     error: (message: string, error: unknown) => void;
     progress: (processed: number, total: number, message?: string) => void;
@@ -58,6 +61,7 @@ export class QueueProcessor {
     private _total = 0;
     private _line_count = 0;
     private _relationship_count = 0;
+    private _facts_count = 0;
 
     private readonly _onProgress = new vscode.EventEmitter<Progress>();
     private readonly _onCompleted = new vscode.EventEmitter<Completed>();
@@ -76,7 +80,7 @@ export class QueueProcessor {
             (relativePath) => this._queue.has(relativePath) || this._running.has(relativePath),
         );
         this._task = new ExamineTask(options.workspaceFolder, options.db, this._symbols,
-            (message) => this._options.log(message));
+            (message) => this._options.log(message), options.facts ?? null);
     }
 
     /**
@@ -98,11 +102,29 @@ export class QueueProcessor {
         this._registerItem(item);
     }
 
-    /** @description 全走査の分配結果をキューに追加する（不変ファイルは含めない） */
+    /**
+     * @description 全走査の分配結果をキューに追加する
+     * 不変ファイルは含めないが、AST の事実が未抽出・古い版数のものは facts 項目として追加する
+     */
     public enqueueDifference(difference: Difference): void {
         for (const item of difference.toItems()) {
             this.enqueue(item);
         }
+        if (this._task.hasFacts) {
+            for (const item of difference.factItems()) {
+                this._enqueueFacts(item);
+            }
+        }
+    }
+
+    /**
+     * @description facts 項目を登録する
+     * 通常の enqueue より弱い合流規則（キュー登録済み・実行中なら破棄し、実行中タスクは中断しない）
+     * upsert は事実も抽出し、delete は事実も消すため、どちらかが控えていれば facts は不要になる
+     */
+    private _enqueueFacts(item: Item): void {
+        if (this._disposed || this._queue.has(item.relative_path) || this._running.has(item.relative_path)) { return; }
+        this._registerItem(item);
     }
 
     public get isProcessing(): boolean {
@@ -134,6 +156,7 @@ export class QueueProcessor {
             this._total = 0;
             this._line_count = 0;
             this._relationship_count = 0;
+            this._facts_count = 0;
         }
         if (!this._queue.has(item.relative_path)) {
             this._total++;
@@ -152,8 +175,9 @@ export class QueueProcessor {
         if (this._disposed) { return; }
 
         // キューに登録済みなら、upsert は再調査フラグを立てるだけ、delete は破棄する
+        // （facts は関係を調査しないため、下で upsert に置き換える）
         const existing = this._queue.get(relativePath);
-        if (existing) {
+        if (existing && existing.op !== 'facts') {
             if (existing.op === 'upsert') { existing.reexamine = true; }
             return;
         }
@@ -198,12 +222,22 @@ export class QueueProcessor {
     /** @description 1件のキュー項目を処理する（計算フェーズ → 直列コミット → fan-out） */
     private async _runTask(item: Item, token: CancelToken): Promise<void> {
         try {
-            // インデックス作成待ち（アイドル→稼働の遷移ごとに1回）
-            await this._indexingReady();
+            // インデックス作成待ち（アイドル→稼働の遷移ごとに1回。LSP を使わない facts は待たない）
+            if (item.op !== 'facts') {
+                await this._indexingReady();
+            }
             token.check();
 
             if (item.op === 'delete') {
                 await this._commit(() => this._task.commitDelete(item.relative_path));
+            } else if (item.op === 'facts') {
+                // 計算フェーズ（並列・中断可能）→ コミットフェーズ（直列・中断不可）
+                const plan = await this._task.computeFacts(item.file!, token);
+                token.check();
+                if (plan) {
+                    await this._commit(() => this._task.commitFacts(plan));
+                    this._facts_count++;
+                }
             } else {
                 // 計算フェーズ（並列・中断可能）
                 const plan = await this._task.computeUpsert(item.file!, item.reexamine, token);
@@ -268,7 +302,8 @@ export class QueueProcessor {
         this._options.log(`${this._secondsToTime(elapsed)} ` +
             `processed ${this._processed.toLocaleString()}/${this._total.toLocaleString()} files, ` +
             `${this._line_count.toLocaleString()} lines, ` +
-            `${this._relationship_count.toLocaleString()} relationships`);
+            `${this._relationship_count.toLocaleString()} relationships, ` +
+            `${this._facts_count.toLocaleString()} facts-only files`);
         this._onCompleted.fire({
             processed: this._processed,
             elapsedMs: elapsed,

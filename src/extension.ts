@@ -88,6 +88,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 		// AST パーサの生成（本体WASMのロードのみ。言語文法は初出時に遅延ロードする）
 		// 失敗しても既存のLSP経路には影響しないため、警告だけ出して続行する
+		let facts_extractor: Ast.FactsExtractor | null = null;
 		try {
 			const ast_resources = Ast.resolveAstResources(context.extensionPath);
 			const ast_missing = Ast.missingAstResources(ast_resources);
@@ -96,6 +97,9 @@ export async function activate(context: vscode.ExtensionContext) {
 			} else {
 				const ast_parser = await Ast.AstParser.create(ast_resources);
 				context.subscriptions.push({ dispose: () => ast_parser.dispose() });
+				if (workspace_folder) {
+					facts_extractor = new Ast.FactsExtractor(ast_parser, new Ast.ModuleResolver(workspace_folder));
+				}
 				logs.log(`AST parser is ready. languages:${Ast.AST_LANGUAGES.map(language => language.languageId).join(',')}`);
 			}
 		} catch (error) {
@@ -115,6 +119,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			queueProcessor = new Relationship.FileDifference.QueueProcessor({
 				workspaceFolder: workspace_folder,
 				db,
+				facts: facts_extractor,
 				log: (message) => logs.log(message),
 				error: (message, error) => logs.error(message, error),
 				progress: (processed, total, message) => updateProgress(status_bar, progress_start, processed, total, message),

@@ -74,6 +74,28 @@ export class Disposable {
     }
 }
 
+/** 本家 vscode.EventEmitter と同じ使い方ができる最小実装 */
+export class EventEmitter<T> {
+    private _listeners: ((data: T) => unknown)[] = [];
+
+    public readonly event = (listener: (data: T) => unknown): Disposable => {
+        this._listeners.push(listener);
+        return new Disposable(() => {
+            this._listeners = this._listeners.filter(registered => registered !== listener);
+        });
+    };
+
+    fire(data: T): void {
+        for (const listener of [...this._listeners]) {
+            listener(data);
+        }
+    }
+
+    dispose(): void {
+        this._listeners = [];
+    }
+}
+
 export const commands = {
     executeCommand: async () => undefined,
 };

@@ -1,7 +1,7 @@
 ; JavaScript / JSX の AST クエリ
 ;
 ; キャプチャ名の規約は typescript.scm と共通。型に関する kind (type_reference /
-; implementation) は JavaScript の文法に存在しないため定義しない。
+; implementation) と型引数の束縛は JavaScript の文法に存在しないため定義しない。
 ;
 ; ------------------------------------------------------------------
 ; 定義
@@ -14,34 +14,86 @@
 (variable_declarator name: (identifier) @def.variable)
 
 ; ------------------------------------------------------------------
-; import 束縛
+; import 束縛 (1マッチ = 1束縛)
 ; ------------------------------------------------------------------
 (import_statement
-  (import_clause (named_imports (import_specifier name: (identifier) @imp.name)))
+  (import_clause (named_imports (import_specifier name: (identifier) @imp.imported @imp.local !alias)))
   source: (string) @imp.module)
 (import_statement
-  (import_clause (named_imports (import_specifier alias: (identifier) @imp.alias)))
+  (import_clause (named_imports (import_specifier name: (identifier) @imp.imported alias: (identifier) @imp.local)))
   source: (string) @imp.module)
 (import_statement
-  (import_clause (identifier) @imp.default)
+  (import_clause (identifier) @imp.local @imp.default)
   source: (string) @imp.module)
 (import_statement
-  (import_clause (namespace_import (identifier) @imp.namespace))
+  (import_clause (namespace_import (identifier) @imp.local @imp.namespace))
   source: (string) @imp.module)
-; 副作用のみの import (束縛名なし)。束縛付き import では @imp.module と重複するため名前で区別する
+(variable_declarator
+  name: (identifier) @imp.local @imp.namespace
+  value: (call_expression function: (identifier) @imp.require arguments: (arguments (string) @imp.module))
+  (#eq? @imp.require "require"))
+(variable_declarator
+  name: (object_pattern (shorthand_property_identifier_pattern) @imp.imported @imp.local)
+  value: (call_expression function: (identifier) @imp.require arguments: (arguments (string) @imp.module))
+  (#eq? @imp.require "require"))
+(variable_declarator
+  name: (object_pattern (pair_pattern key: (property_identifier) @imp.imported value: (identifier) @imp.local))
+  value: (call_expression function: (identifier) @imp.require arguments: (arguments (string) @imp.module))
+  (#eq? @imp.require "require"))
+
+; 束縛の無い import / require
 (import_statement source: (string) @imp.module.bare)
 (call_expression
-  function: (identifier) @imp.require.function
-  arguments: (arguments (string) @imp.module)
-  (#eq? @imp.require.function "require"))
+  function: (identifier) @imp.require
+  arguments: (arguments (string) @imp.module.bare)
+  (#eq? @imp.require "require"))
+
+; 再エクスポート (export ... from '...')
+(export_statement
+  (export_clause (export_specifier name: (identifier) @imp.imported @imp.export !alias))
+  source: (string) @imp.module)
+(export_statement
+  (export_clause (export_specifier name: (identifier) @imp.imported alias: (identifier) @imp.export))
+  source: (string) @imp.module)
+(export_statement (namespace_export (identifier) @imp.export) source: (string) @imp.module)
+(export_statement "*" source: (string) @imp.module) @imp.reexport
 
 ; ------------------------------------------------------------------
-; 再エクスポート (export ... from '...') / エクスポート名
+; export
 ; ------------------------------------------------------------------
-(export_statement
-  (export_clause (export_specifier name: (identifier) @def.export))
-  source: (string) @imp.module)
-(export_statement (export_clause (export_specifier name: (identifier) @def.export)))
+(export_statement) @export.statement
+(export_statement "default") @export.default
+(export_statement (export_clause (export_specifier name: (identifier) @export.local @export.name !alias)) !source)
+(export_statement (export_clause (export_specifier name: (identifier) @export.local alias: (identifier) @export.name)) !source)
+(export_statement "default" value: (identifier) @export.default.local)
+
+; ------------------------------------------------------------------
+; スコープと束縛 (scope_id の算出に使う)
+; ------------------------------------------------------------------
+[
+  (statement_block)
+  (function_declaration)
+  (generator_function_declaration)
+  (function_expression)
+  (generator_function)
+  (arrow_function)
+  (method_definition)
+  (class_declaration)
+  (class)
+  (for_statement)
+  (for_in_statement)
+  (catch_clause)
+] @scope
+
+(formal_parameters (identifier) @bind.parameter)
+(arrow_function parameter: (identifier) @bind.parameter)
+(catch_clause parameter: (identifier) @bind.parameter)
+(for_in_statement kind: _ left: (identifier) @bind.variable)
+(shorthand_property_identifier_pattern) @bind.pattern
+(pair_pattern value: (identifier) @bind.pattern)
+(array_pattern (identifier) @bind.pattern)
+(rest_pattern (identifier) @bind.pattern)
+(assignment_pattern left: (identifier) @bind.pattern)
 
 ; ------------------------------------------------------------------
 ; 参照出現 (キャプチャ名がそのまま kind)
@@ -78,13 +130,26 @@
   object: [(this) (super)] @ref.receiver
   property: (property_identifier) @ref.write))
 (augmented_assignment_expression left: (identifier) @ref.write)
+(augmented_assignment_expression left: (member_expression
+  object: [(identifier) (this) (super)] @ref.receiver
+  property: (property_identifier) @ref.write))
 
 ; kind = decorator
 (decorator (identifier) @ref.decorator)
 (decorator (call_expression function: (identifier) @ref.decorator))
+(decorator (call_expression function: (member_expression
+  object: (identifier) @ref.receiver
+  property: (property_identifier) @ref.decorator)))
 
-; kind = read (上位のパターンに一致しなかった識別子)
-(member_expression object: (identifier) @ref.read)
+; kind = read (メンバの読み取りと、値として渡される識別子)
 (member_expression
-  object: [(this) (super)] @ref.receiver
-  property: (property_identifier) @ref.read.member)
+  object: [(identifier) (this) (super)] @ref.receiver
+  property: (property_identifier) @ref.read)
+(arguments (identifier) @ref.read)
+(variable_declarator value: (identifier) @ref.read)
+(return_statement (identifier) @ref.read)
+(pair value: (identifier) @ref.read)
+(shorthand_property_identifier) @ref.read
+(array (identifier) @ref.read)
+(spread_element (identifier) @ref.read)
+(assignment_expression right: (identifier) @ref.read)
