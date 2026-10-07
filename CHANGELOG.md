@@ -21,6 +21,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - 両パッケージとも Node.js 22 以上が必要になった（3.0.0 の破壊的変更はこの engines 要件のみ）
   - VS Code 1.141.0（最新安定版）で `src/test/*.test.ts` の全8件が通る事を確認
 - **`src/test/codeFiles.test.ts`**: `list test` がフィクスチャの更新日時を固定値（2025-08-04）と比べていたため、新しく clone / checkout した環境では必ず失敗していた。git は更新日時を保存せず、checkout した時刻になるため。固定値ではなく `fs.statSync()` で得たファイルの実際の mtime と比べるようにした
+- **`yarn test` が macOS でソケットのパスの長さが原因で起動できない問題を修正**
+  - VS Code はユーザーデータのフォルダに IPC ソケットを作る。既定の `.vscode-test/user-data` ではリポジトリの置き場所によってパスが macOS の上限（103文字）を超える。本体リポジトリでも110文字あった。VS Code 1.105 は警告だけで動いていたが、1.141 は `listen EINVAL` で起動できない
+  - **`.vscode-test.mjs`**: `launchArgs` の `--user-data-dir` で一時フォルダ（`os.tmpdir()`）の下の `crd-vscode-test` を指定した。macOS ではソケットのパスが79文字になり、リポジトリの置き場所に左右されない。前回の実行で残った設定や状態は、設定ファイルを読み込んだ時に削除する
+  - **`package.json`**: `test` スクリプトの `rm -rf .vscode-test/user-data` を削除した（削除は `.vscode-test.mjs` で行う）
 
 ## [0.3.37] - 2026-09-26
 
