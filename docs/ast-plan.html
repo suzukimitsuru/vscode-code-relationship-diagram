@@ -606,9 +606,9 @@ a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); ou
    status: "done" 完了 / "active" 着手中 / "plan" 未着手
    =================================================================== */
 const PLAN_STATE = {
-  updated: "2026-09-01",
-  version: "0.3.36",
-  nextAction: "Stage 1: Phase A（defs / imports / occurrences の抽出と fqn 付与）",
+  updated: "2026-09-26",
+  version: "0.3.37",
+  nextAction: "Stage 2: 名前解決 段1〜2（ローカル束縛と import 解決）と精度検証ハーネス",
   stages: [
     {
       id: "計画策定", version: "—", status: "done",
@@ -627,14 +627,14 @@ const PLAN_STATE = {
       ]
     },
     {
-      id: "STAGE 1", version: "0.3.37", status: "plan",
+      id: "STAGE 1", version: "0.3.37", status: "done",
       title: "Phase A ローカル事実抽出",
-      body: "defs / imports / occurrences 抽出、fqn・export_name 付与、スキーマ v2 と移行。まだ関係抽出には使わない。",
+      body: "1ファイル1パースで定義・import 束縛・参照出現を抽出し、定義に fqn・export_name を付けて言語サーバのシンボルと突き合わせる。scope_id は根の名前を束縛しているスコープとして Phase A で確定。スキーマ v2 へ1トランザクションで移行し、未抽出のファイルは LSP を使わずに埋め戻す。まだ関係抽出には使わない。",
       criteria: [
-        "自リポジトリ全ファイルで occurrences が保存される",
-        "fqn がファイル内で一意",
-        "パース時間 中央値 < 20ms/ファイル",
-        "v1 DB から無停止で移行できる"
+        "達成 — 自リポジトリの TS/JS 59 ファイルを全て保存し、読み戻した件数（参照出現 8,641・import 305）が一致",
+        "達成 — 定義 2,146 で fqn の重複 0。export された定義は言語サーバのシンボルへ 113/113 付与",
+        "達成 — 中央値 1.3ms/ファイル・p95 5.9ms・最大 15.9ms（パース + 抽出 + import 解決）",
+        "達成 — 実際の v1 DB を 5ms で移行し行数を保持。未抽出のファイルは facts 項目で埋め戻す"
       ]
     },
     {
@@ -696,7 +696,9 @@ const PLAN_STATE = {
     { date: "2026-08-26", text: "Stage 0 完了 — パーササービス・TS/JS クエリ・WASM 同梱と遅延ロードを実装。v0.3.36（PR #9）" },
     { date: "2026-08-26", text: "verification/ast-parser/ を追加。配布物と同じ配置で WASM がロードされる事を minify 有無の両方で検証する" },
     { date: "2026-08-26", text: "examine.ts の生 NUL バイトを解消（関係の一意化キーを JSON.stringify に変更）。tree-sitter が構文エラーにするため Stage 1 の障害になっていた" },
-    { date: "2026-09-01", text: "マージで欠けた Stage 0 の実測値・更新履歴と、計画書へのリンクを復元。更新手順のキー名を実装に合わせた" }
+    { date: "2026-09-01", text: "マージで欠けた Stage 0 の実測値・更新履歴と、計画書へのリンクを復元。更新手順のキー名を実装に合わせた" },
+    { date: "2026-09-26", text: "Stage 1 完了 — 定義・import・参照出現の抽出、fqn / export_name の付与、スキーマ v2 と埋め戻し。v0.3.37" },
+    { date: "2026-09-26", text: "Stage 0 の残件だった実機起動の確認を、拡張機能ホスト上の統合テストで実施（VS Code 1.105.0）" }
   ]
 };
 
