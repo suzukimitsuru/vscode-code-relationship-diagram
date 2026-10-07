@@ -15,6 +15,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Fixed
 
+- **`yarn test` が macOS で最新の VS Code を起動できない問題を修正**
+  - VS Code 1.110 以降の macOS 版はアプリ本体の実行ファイル名が `Contents/MacOS/Electron` から `Contents/MacOS/Code` に変わり（microsoft/vscode#291948）、互換用のシンボリックリンクも 2026-07 に削除された（microsoft/vscode#326502）。旧 `@vscode/test-electron` は `Electron` を決め打ちで起動するため `spawn ... ENOENT` で失敗していた
+  - **`package.json`**: `@vscode/test-electron` を `^2.4.1` → `^3.1.0`、`@vscode/test-cli` を `^0.0.11` → `^0.0.15` に更新。3.1.0 は `Info.plist` の `CFBundleExecutable` から実行ファイルを解決する（microsoft/vscode-test#350）
+  - 両パッケージとも Node.js 22 以上が必要になった（3.0.0 の破壊的変更はこの engines 要件のみ）
+  - VS Code 1.141.0（最新安定版）で `src/test/*.test.ts` の全8件が通る事を確認
 - **`src/test/codeFiles.test.ts`**: `list test` がフィクスチャの更新日時を固定値（2025-08-04）と比べていたため、新しく clone / checkout した環境では必ず失敗していた。git は更新日時を保存せず、checkout した時刻になるため。固定値ではなく `fs.statSync()` で得たファイルの実際の mtime と比べるようにした
 
 ## [0.3.37] - 2026-09-26
@@ -52,6 +57,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 ### Fixed
 
 - **`src/codeDb.ts`**: `table_create()` が SQL の失敗後も処理を続けて成功扱いにしていた。最初の失敗で止まるようにした
+
+## [0.3.36] - 2026-08-26
 
 ### Added
 
