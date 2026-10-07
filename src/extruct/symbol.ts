@@ -14,6 +14,13 @@ export class SymbolModel {
     public readonly lineCount: number;
     public readonly hash: Buffer;
     public children: SymbolModel[] = [];
+
+    /** 完全修飾名 (AST の定義と突き合わせて付ける解決キー。付かなければ null) */
+    public fqn: string | null = null;
+
+    /** export 名 (トップレベルで export されていなければ null) */
+    public exportName: string | null = null;
+
     public constructor(
         id: string,
         name: string,
@@ -52,5 +59,16 @@ export class SymbolModel {
                this.start.character !== other.start.character ||
                this.end.line !== other.end.line ||
                this.end.character !== other.end.character;
+    }
+
+    /**
+     * 解決キー (完全修飾名・export 名) が変更されたかを判断
+     * @param other 比較対象のシンボル
+     * @returns 解決キーが変更されている場合true
+     * @description 本文が同じ (ID が同じ) でも、兄弟の追加で `~N` がずれたり
+     *              `export { A }` の追加で export 名が変わったりする
+     */
+    public isKeyChanged(other: SymbolModel): boolean {
+        return this.fqn !== other.fqn || this.exportName !== other.exportName;
     }
 }

@@ -188,6 +188,15 @@ FROM table_relationships_v2
 GROUP BY reference_fqn, define_fqn, kind;
 ```
 
+**Stage 1 での実装差分**（実物は `src/codeDb.ts` の `MIGRATION_V2`）
+
+| 対象 | 計画からの変更 | 理由 |
+| ---- | -------------- | ---- |
+| `table_imports` | `export_name`・`line`・`character` 列を追加。再エクスポート（`export { a as b } from`、`export * from`）と副作用 import も1行として保存する（`local_name` は NULL） | Stage 2 の「`export * from` の re-export は2段まで追跡」に必要な情報を Phase A で残すため |
+| `table_files` | `facts_version` 列を追加（NULL = 未抽出） | 移行直後の埋め戻しと、抽出規則を変えた時の再抽出に使う（§5.4） |
+| `table_relationships_v2` | `reference_fqn` / `define_fqn` の索引を追加 | Stage 2 以降の JOIN と差分更新のため |
+| `is_external` | 相対指定で見つからない import は `is_external = FALSE, resolved_path = NULL` | 生成物や削除済みファイルへの import はプロジェクト内の未解決であり、外部ライブラリの集約ノードへ寄せるべきではないため（§7.2） |
+
 ### 5.3 関係の種類と基本重み
 
 計画1 の taxonomy を踏襲する。
@@ -208,9 +217,17 @@ GROUP BY reference_fqn, define_fqn, kind;
 ### 5.4 マイグレーション
 
 1. 起動時に `table_schema_version` を確認（無ければ v1 とみなす）
-2. v1 → v2: `ALTER TABLE ... ADD COLUMN` と新規テーブル作成のみ（既存行は保持）
+2. v1 → v2: `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` と新規テーブル作成のみ（既存行は保持）。**1トランザクション**で行う（DuckDB 1.3.1 はインデックス付きテーブルへの `ADD COLUMN` も DDL のロールバックもできる事を実測で確認した）
 3. 旧 `table_relationships`（id ペア）は**読み取り専用で残す**。`fqn` が未付与のシンボルは旧テーブルの関係を表示に使い、再調査で順次 v2 側へ移る
 4. 全ファイル再調査が完了したら旧テーブルを DROP（Stage 4 の完了条件）
+
+**埋め戻し（Stage 1 で追加）**: 移行直後は全シンボルの `fqn` と全ファイルの事実が空になる。
+内容の変わっていないファイルは再調査されないため、放置すると永久に埋まらない。
+そこで全走査の時に、`facts_version` が `FACTS_VERSION`（`src/extruct/ast/localFacts.ts`）と異なる
+AST 対応ファイルを **facts 項目**としてキューに登録し、LSP を使わずに事実だけを抽出する
+（シンボルは DB から読んで解決キーを付け直す）。facts 項目は実行中のタスクを中断せず、
+同じファイルの upsert / delete が控えていれば破棄される。
+抽出規則（`.scm` や `localFacts.ts`）を変えた時は `FACTS_VERSION` を上げれば、同じ仕組みで全ファイルを抽出し直せる。
 
 ---
 
@@ -243,15 +260,42 @@ GROUP BY reference_fqn, define_fqn, kind;
 
 `src/extruct/ast/queries/typescript.scm`（TS / TSX 共用）・`javascript.scm`（JS / JSX 共用）
 
-Stage 0 でキャプチャ名の規約を以下に確定した。言語間で統一する事。
+Stage 0 でキャプチャ名の規約を確定し、Stage 1 で事実の抽出に必要な分を足した。言語間で統一する事。
+規約の一覧は `typescript.scm` の先頭にもある。
 
-| 接頭辞 | 意味 |
-| ------ | ---- |
+| キャプチャ名 | 意味 |
+| ------------ | ---- |
 | `def.<種別>` | 定義。`fqn` / `export_name` の元になる |
-| `imp.name` / `imp.alias` / `imp.default` / `imp.namespace` | import 束縛のローカル名 |
-| `imp.module` / `imp.module.bare` | モジュール指定子（`.bare` は束縛名の無い副作用 import） |
+| `def.<種別>.signature` | 本体の無い宣言（オーバーロード・宣言ファイル）。同じ親・同じ名前の定義と1つにまとめる |
+| `def.node` | 定義ノードを明示する（省略時は名前ノードの親が定義ノード。列挙子のように名前ノード自身が定義の場合に使う） |
+| `imp.local` / `imp.imported` | import 束縛のファイル内での名前 / 取り込む名前。**1マッチ = 1束縛**（`import { a as b }` なら1マッチに `b` と `a`） |
+| `imp.default` / `imp.namespace` | default import / namespace import（`imp.local` と同じノードに付ける） |
+| `imp.export` / `imp.reexport` | 再エクスポートの公開名 / `export * from` の文全体 |
+| `imp.module` / `imp.module.bare` | モジュール指定子（`.bare` は束縛の無い import / require。他のマッチが同じ指定子を使っていなければ副作用 import） |
+| `imp.require` | `require` の関数名（参照出現から除外するため） |
+| `export.statement` / `export.default` | export 文 / export default 文（直下の宣言が export される） |
+| `export.local` / `export.name` / `export.default.local` | `export { local as name }`（from 無し）/ `export default <識別子>` |
+| `scope` | レキシカルスコープを作るノード（`scope_id` の算出に使う） |
+| `bind.<種別>` | 定義以外の束縛（引数・型引数・分割代入・catch・for-of の変数） |
 | `ref.<kind>` | 参照出現。`<kind>` がそのまま `RelationshipKind` になる |
 | `ref.receiver` | メンバ参照のレシーバ（`a.b()` の `a`、および `this` / `super`） |
+
+`def` / `bind` / `imp` にキャプチャされたノードは参照出現にならない。
+tree-sitter のクエリはパターン間に優先順位が無く、同じ識別子を複数のパターンが捉える
+（`this.m()` の `m` は呼び出しとメンバ読み取りの両方に一致する）。この場合は
+`relationshipKind.ts` の優先順位（inheritance > implementation > decorator > instantiation > call > write > type_reference > read）で1つに絞る。
+
+**Stage 1 で変えた点**
+
+| 変更 | 理由 |
+| ---- | ---- |
+| `imp.name` / `imp.alias` を `imp.local` / `imp.imported` に置き換え | 旧規約では `import { a as b }` の `a` と `b` が別々のマッチになり、束縛の組を作れなかった。否定フィールド（`!alias`）と1ノードへの二重キャプチャで1マッチ = 1束縛にした |
+| `def.export` を `export.*` に置き換え | export は定義ではないため |
+| 型名は `(type_identifier) @ref.type_reference` で包括的に捉える | 旧規約は型注釈の直下だけで、`vscode.Position` のような修飾型名（`nested_type_identifier`）・共用体型・配列型・型エイリアスの右辺を取りこぼしていた |
+| `ref.read` はメンバ側（`a.b` の `b`）を捉え、オブジェクト側はレシーバにする。値として渡される識別子（引数・戻り値・初期化子・代入の右辺・配列要素・オブジェクトの値）も読み取りにする | メンバの読み取りを `root_name` + `member_path` で表すため。DI の登録やコールバック渡しのような依存を拾うため |
+| 型のメンバ（`property_signature` / `method_signature`）はインターフェースと型エイリアスの本体に限る | 戻り値の型 `Promise<{ doc: …, symbols: … }>` のような型リテラルのメンバを定義にすると、同名のローカル変数の `fqn` が `~2` にずれた（自リポジトリの `examine.ts` で発見） |
+| `namespace N {}` を定義に追加（`internal_module`） | Stage 0 の `(module …)` は `module Foo {}` / `declare module` 用で、`namespace` を捉えていなかった |
+| 列挙子・関数のオーバーロード宣言・抽象メソッドを定義に追加 | 言語サーバのシンボルと対応させるため |
 
 型に関する kind（`type_reference` / `implementation`）は JavaScript の文法に存在しないため
 `javascript.scm` では定義しない。文法に無いノード型を書くとクエリのコンパイル自体が失敗する。
@@ -265,12 +309,12 @@ Stage 0 でキャプチャ名の規約を以下に確定した。言語間で統
 (function_declaration name: (identifier) @def.function)
 (method_definition name: (property_identifier) @def.method)
 
-; import 束縛
+; import 束縛 (1マッチ = 1束縛)
 (import_statement
-  (import_clause (named_imports (import_specifier name: (identifier) @imp.name)))
+  (import_clause (named_imports (import_specifier name: (identifier) @imp.imported @imp.local !alias)))
   source: (string) @imp.module)
 (import_statement
-  (import_clause (namespace_import (identifier) @imp.namespace))
+  (import_clause (namespace_import (identifier) @imp.local @imp.namespace))
   source: (string) @imp.module)
 
 ; 参照出現（キャプチャ名がそのまま kind になる）
@@ -281,30 +325,52 @@ Stage 0 でキャプチャ名の規約を以下に確定した。言語間で統
 (call_expression function: (member_expression
   object: (identifier) @ref.receiver
   property: (property_identifier) @ref.call))
-(type_annotation (type_identifier) @ref.type_reference)
+(type_identifier) @ref.type_reference
+(nested_type_identifier module: (identifier) @ref.receiver name: (type_identifier) @ref.type_reference)
 (assignment_expression left: (identifier) @ref.write)
 (decorator (identifier) @ref.decorator)
 ```
 
 言語追加は原則 `.scm` の追加だけで済む構成にする（キャプチャ名の規約を言語間で統一）。
 
-### 6.3 抽出する事実
+### 6.3 抽出する事実（Stage 1 で実装済み）
 
-`src/extruct/ast/localFacts.ts`（新規）
+`src/extruct/ast/localFacts.ts`（抽出）・`factsExtractor.ts`（抽出 + import 解決 + 計時）・`relationshipKind.ts`（種類と優先順位）
 
 ```ts
-interface Occurrence {
-  path: string;
-  line: number; character: number;
-  rootName: string;          // a.b.c() の 'a'（単純識別子ならそれ自体）
-  memberPath: string | null; // 'b.c'
-  kind: RelationshipKind;    // クエリのキャプチャ名から確定
-  enclosingFqn: string;      // AST の親を辿って厳密に求める（findSymbol の線形探索を置換）
-  scopeId: number;
+interface AstOccurrence {
+  line: number; character: number;  // 0起点。桁は UTF-16（VSCode の Position と同じ単位）
+  rootName: string;                 // a.b() の 'a'。this / super をレシーバとする場合は 'this' / 'super'
+  memberPath: string | null;        // a.b() の 'b'（単純な識別子なら null）
+  kind: RelationshipKind;           // クエリのキャプチャ名から確定
+  enclosingFqn: string;             // 出現を囲む最内の定義（どの定義にも囲まれていなければ `<path>#`）
+  scopeId: number | null;           // 根の名前を束縛しているスコープ（下記）
 }
 ```
 
-`enclosingFqn` を AST の親走査で求める事により、§2 の限界2（参照元シンボルの取り違え）が解消する。
+| 事実 | 規則 |
+| ---- | ---- |
+| `fqn` | `<path>#<入れ子の名前を . で連結>`（例 `src/relationship/examine.ts#ExamineTask.computeUpsert`）。名前に `#` と `.` は現れないため、最後の `#` より前がパス。同じ親・同じ名前の2つ目以降は `~2`, `~3` …（getter / setter、宣言のマージ）。オーバーロード宣言は本体を持つ定義へまとめ、本体が無ければ最初の宣言を残す |
+| ファイルの `fqn` | `<path>#`。ファイルのルートシンボルに付け、モジュールスコープの参照出現の `enclosing_fqn` にもなる |
+| `export_name` | トップレベルの定義だけに付ける。定義ノードの親か祖父が export 文なら定義名（`export default` なら `'default'`）、`export { a as b }` なら `b`、`export default a` なら `'default'` |
+| `enclosing_fqn` | 出現を囲む最内の定義。無名コールバックの中の出現は、その外側の名前付き定義（メソッド等）に集約される |
+| `scope_id` | **根の名前を束縛しているスコープ**。`0` = モジュールスコープ（import かトップレベルの定義）、`1` 以上 = ファイル内のローカルスコープ（文書順の番号）、`NULL` = ファイル内に束縛が無い（グローバル・組込み）か根が `this` / `super`。引数が同名の import を隠す場合も正しく区別できる |
+
+`scope_id` は計画時点では「ローカル束縛判定用」とだけ決めていた。スコープの解析には構文木が要り、
+Phase B（SQL）では計算できないため、Phase A で「根の名前をどこが束縛しているか」まで確定させた。
+Stage 2 の SQL は `scope_id = 0` の出現だけを import 表と結合すればよい。
+
+**包含判定の実装**: 1出現ごとに構文木の親を辿ると WASM 境界を何万回も越える。定義とスコープを
+区間（開始・終了インデックス）の入れ子構造として持ち、開始位置の二分探索と親への遡りで最内の区間を引く
+（構文木のノード範囲は必ず入れ子か素であるため成り立つ）。
+
+**シンボルへの解決キーの付与**（`src/extruct/codeSymbols.ts` の `attachAstKeys()`）: LSP の
+`selectionRange.start` と AST の名前ノードの開始位置が一致する定義を付ける（どちらも UTF-16 の桁で数える事を実測で確認）。
+一致しなければ、シンボルの範囲内にある同名の定義を付ける。ID と内容ハッシュには影響しない。
+本文が同じでも `~N` のずれや export 句の追加で解決キーが変わるため、`computeUpsert()` は位置に加えて解決キーの変化でも
+`table_symbols` を更新する。
+
+`enclosingFqn` を構文木の包含関係で求める事により、§2 の限界2（参照元シンボルの取り違え）が解消する。
 
 ---
 
@@ -327,12 +393,13 @@ interface Occurrence {
 
 ### 7.2 モジュール解決
 
-`src/extruct/ast/moduleResolver.ts`（新規）。言語ごとに差し替え可能なインターフェースとする。
+`src/extruct/ast/moduleResolver.ts`（Stage 1 で実装済み）。ファイルシステムへの問い合わせは差し替え可能（単体テストはメモリ上で行う）。
 
-1. 相対指定 → `path.resolve` + 拡張子候補（`.ts / .tsx / .d.ts / .js / index.*`）
-2. `tsconfig.json` の `paths` / `baseUrl` エイリアス
-3. `node_modules` にヒット → `is_external = true`
-4. 未解決 → `is_external = true, resolved_path = NULL`
+1. 相対指定 → `path.resolve` + 拡張子候補（`.ts / .tsx / .d.ts / .mts / .cts / .js / .jsx / .mjs / .cjs`）+ `index.*`。ESM 形式の TS が書く `./a.js` は `./a.ts` として探す
+2. 非相対指定 → 最寄りの `tsconfig.json` / `jsconfig.json`（ワークスペースのルートまで遡る）の `paths` / `baseUrl` でワークスペース内へ写せればプロジェクト内。設定ファイルは JSONC（コメント・末尾カンマ）として読み、相対パスの `extends` を辿る
+3. 写せない非相対指定・`node:` → `is_external = true`。**`node_modules` は探索しない**（プロジェクト外である事さえ分かればよいため）
+4. 相対指定で見つからない → `is_external = false, resolved_path = NULL`（計画では `is_external = true`。§5.2 の実装差分を参照）
+5. 解決先がワークスペースの外 → `is_external = true, resolved_path = NULL`
 
 ### 7.3 SQL による解決
 
@@ -424,7 +491,7 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 | Stage | 状態 | 内容 | 受け入れ基準（Done） | 目安 |
 | ----- | ---- | ---- | -------------------- | ---- |
 | **0** | **完了** | AST 基盤: `web-tree-sitter` 導入、パーササービス、TS/JS 文法、WASM 同梱・遅延ロード | 単体テストで任意の TS/JS をパースできる / `.vsix` を実機インストールして WASM がロードされる / 既存機能に影響なし | 0.3.36 |
-| **1** | 未着手 | Phase A: defs / imports / occurrences 抽出、`fqn`・`export_name` 付与、スキーマ v2 とマイグレーション、DuckDB へ保存（**まだ関係抽出には使わない**） | 自リポジトリ全ファイルで occurrences が保存される / `fqn` がファイル内で一意 / パース時間 中央値 < 20ms/ファイル / v1 DB から無停止で移行できる | 0.3.37 |
+| **1** | **完了** | Phase A: defs / imports / occurrences 抽出、`fqn`・`export_name` 付与、スキーマ v2 とマイグレーション、DuckDB へ保存（**まだ関係抽出には使わない**） | 自リポジトリ全ファイルで occurrences が保存される / `fqn` がファイル内で一意 / パース時間 中央値 < 20ms/ファイル / v1 DB から無停止で移行できる | 0.3.37 |
 | **2** | 未着手 | Phase B 段1〜2（ローカル + import 解決）、`kind` 付与、`table_relationships_v2` への保存。表示は従来関係のまま | import 由来の関係の再現率 ≥ 95%（対 LSP、§11 のレポート） / 検証レポートが CI or スクリプトで再生成できる | 0.3.38 |
 | **3** | 未着手 | Phase B 段3〜4'（型推論・一意名・曖昧候補）、confidence、Phase C 集約 VIEW | 関係全体の再現率 ≥ 90%、適合率 ≥ 90%（閾値 0.7 時） / 段別内訳がレポートに出る | 0.3.39 |
 | **4** | 未着手 | **主経路の切替**: `examine()` を AST 主体へ。LSP は低 confidence 検証と未対応言語フォールバックに降格。設定 `crd.ast.enabled` で旧経路へ戻せる。旧 `table_relationships` を DROP | 自リポジトリの `examineRelationships` 実行時間が現行比 ≤ 50% / 言語サーバ未導入の状態でも TS/JS の関係が出る / 旧経路へのロールバックが動く | 0.4.0 |
@@ -449,6 +516,45 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
   - 0.3.36 で `src/relationship/examine.ts` の生 NUL を解消済み（関係の一意化キーを `JSON.stringify([a, b])` に変更）
   - 区切り文字が要る箇所では、シンボルIDにパス（タブを含むファイル名も `fast-glob` は列挙する）と言語サーバ由来のシンボル名（C言語では `string_copy(char *, const char *)` のようにシグネチャ全体が入る）が含まれる事を踏まえ、区切りが曖昧にならない形を使う
 
+### Stage 1 の実装結果（0.3.37 / 2026-09-26）
+
+自リポジトリの TS/JS 59 ファイル（拡張機能と同じ `files.associations` 相当 + `.gitignore` で列挙）で実測した。
+測定は `verification/ast-facts/`（`yarn verify:facts`）と統合テスト `src/test/astFacts.test.ts`（VS Code 1.105.0 の拡張機能ホスト）による。
+
+| 受け入れ基準 | 結果 |
+| ------------ | ---- |
+| 自リポジトリ全ファイルで occurrences が保存される | **達成**。59/59 ファイルを DuckDB へ保存し、読み戻した件数（参照出現 8,641・import 305）が抽出結果と一致。全ファイルに `facts_version = 1` が記録された。本番の経路（`computeUpsert` → `commitUpsert`、tsserver のシンボル抽出込み）でも事実と解決キーが保存される事を統合テストで確認 |
+| `fqn` がファイル内で一意 | **達成**。定義 2,146（うち export 126）で重複 0 |
+| パース時間 中央値 < 20ms/ファイル | **達成**。**中央値 1.3ms**・p95 5.9ms・最大 15.9ms（パース + 抽出 + import 解決。最大は 2,475 行の `graphView.ts`）。文法ごとの最初の1ファイルは WASM の遅延ロードとクエリのコンパイルを含み TS 68.5ms / JS 36.3ms（拡張機能の起動中に1回だけ。実行ごとに数十ms 揺れる） |
+| v1 DB から無停止で移行できる | **達成**。拡張機能が作った実際の v1 DB（`exsample-workspace/.vscode/crd.duckdb` の複製）を 5ms で v2 へ移行し、ファイル・シンボル・関係の行数を保った。移行後の未抽出ファイルは facts 項目で LSP を使わずに埋め戻される事を、実ファイル・実 DuckDB・実パーサの結合テストで確認 |
+
+**内訳**（`yarn verify:facts`）
+
+| 項目 | 値 |
+| ---- | -- |
+| import 束縛 | 305（プロジェクト内へ解決 169・外部 136・相対指定の未解決 0） |
+| 参照出現の種類 | read 4,295・call 2,892・type_reference 726・write 373・instantiation 351・inheritance 4 |
+| 根の名前の束縛（`scope_id`） | モジュール 2,051・ローカル 4,804・ファイル内に無し 830・this / super 956 |
+| 言語サーバのシンボルへの解決キーの付与 | **export された定義 113/113（100%）**。シンボル全体では 1,977/3,764（52.5%） |
+
+シンボル全体の付与率が約半分なのは、tsserver がシンボルとして返すが AST では定義にしていないものが多いためで、
+取りこぼしではない事を全件の内訳で確認した: 無名コールバック（`map() callback` 等）535・オブジェクトリテラルの
+キー 985（関数値なら Method として 25）・`catch (e)` / `for (const x of …)` / 配列の分割代入の変数 242。
+これらの内側の参照出現は、外側の名前付き定義へ集約される。
+
+**Stage 0 の残件**: 「`.vsix` を実機インストールして WASM がロードされる」の実機起動の確認は、今回はじめて
+`src/test/astParser.test.ts` を拡張機能ホスト上で実行して確かめた（合格）。
+
+**Stage 2 への申し送り**
+
+- 名前解決は `scope_id` で分岐できる: `0` なら import 表 → トップレベルの定義（`<path>#<root>`）の順、`1` 以上ならローカル束縛なので `enclosing_fqn` から親へ遡って `<fqn>.<root>` を探し、定義で無ければ（引数・分割代入の変数など）関係にしない、`NULL` なら段4/5
+- `const fs = require('fs')` は import 束縛であると同時に変数の定義にもなる。`scope_id = 0` の出現は **import 表を先に引く**事
+- 再エクスポートは `table_imports` に `local_name = NULL` で入っている（`export_name` = 公開名、`imported_name = '*'` かつ `export_name = '*'` なら `export * from`）
+- 捉えていない参照: JSX のコンポーネント（`typescript.scm` は TS 文法と共用のため JSX のノードを書けない。TSX 用のクエリを分けて足す）、式中の素の識別子の読み取り（二項演算・条件など）、`module.exports` / `export =` による export、名前空間の内側の export（`export_name` はトップレベルだけ）
+- 1つの定義を複数の名前で export した場合（`export { a, a as b }`）は最初の名前だけが `export_name` に入る
+- facts 項目（埋め戻し）はファイルを UTF-8 として読む。upsert の経路は VSCode の TextDocument（エンコーディング設定に従う）を使う。UTF-8 以外の TS/JS では埋め戻しの位置がずれうる（次の upsert で直る）
+- `yarn test` は `@vscode/test-electron` 2.5.2 が VS Code 1.131 以降の実行ファイル名（`Electron` → `Code`）に対応していないため起動できない。今回は `./node_modules/.bin/vscode-test --code-version 1.105.0` で実行した（別タスクで対応）
+
 ### 設定項目（`package.json` の `contributes.configuration`）
 
 | 設定 | 既定 | 用途 |
@@ -468,10 +574,10 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 | 1 | `web-tree-sitter` 依存追加・WASM コピー・`.vscodeignore` | `package.json`, `esbuild.js`, `scripts/ast-assets.mjs`, `.vscodeignore` | 0 | 完了 |
 | 2 | パーササービス（初期化・遅延ロード・クエリ実行） | `src/extruct/ast/parser.ts`, `resources.ts`, `index.ts` | 0 | 完了 |
 | 3 | TS/JS クエリ定義 | `src/extruct/ast/queries/typescript.scm`, `javascript.scm` | 0 | 完了 |
-| 4 | ローカル事実抽出（defs / imports / occurrences を1走査） | `src/extruct/ast/localFacts.ts`（新規） | 1 | 未着手 |
-| 5 | モジュール解決（相対 / tsconfig paths / node_modules） | `src/extruct/ast/moduleResolver.ts`（新規） | 1 | 未着手 |
-| 6 | スキーマ v2・マイグレーション・保存API | `src/codeDb.ts` | 1 | 未着手 |
-| 7 | `fqn` / `export_name` の付与（AST defs と既存シンボルの照合） | `src/extruct/codeSymbols.ts` | 1 | 未着手 |
+| 4 | ローカル事実抽出（defs / imports / occurrences を1走査） | `src/extruct/ast/localFacts.ts`, `factsExtractor.ts`, `relationshipKind.ts`, `queries/*.scm`, `parser.ts`（`withMatches()`） | 1 | 完了 |
+| 5 | モジュール解決（相対 / tsconfig paths / node_modules） | `src/extruct/ast/moduleResolver.ts` | 1 | 完了 |
+| 6 | スキーマ v2・マイグレーション・保存API | `src/codeDb.ts`、埋め戻し: `src/relationship/examine.ts`, `fileDifference/queue.ts`, `fileDifference/item.ts` | 1 | 完了 |
+| 7 | `fqn` / `export_name` の付与（AST defs と既存シンボルの照合） | `src/extruct/codeSymbols.ts`（`attachAstKeys()`）, `src/extruct/symbol.ts` | 1 | 完了 |
 | 8 | 解決オーケストレータ（段1〜5・confidence） | `src/relationship/resolve.ts`（新規） | 2-3 | 未着手 |
 | 9 | 解決 VIEW 群・集約 VIEW | `src/codeDb.ts` | 2-3 | 未着手 |
 | 10 | 精度検証ハーネスとレポート | `verification/ast-accuracy/`（新規） | 2 | 未着手 |
@@ -486,6 +592,8 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 - 統合テスト（`@vscode/test-electron`）: 差分更新でのファイル置換・再解決・マイグレーション
 - 回帰: §11 の検証レポートを Stage ごとに更新して比較
 - 同梱検証: `verification/ast-parser/`（`yarn verify:ast`）で、配布物と同じ配置（`dist/wasm` / `dist/queries`）から WASM がロードされパースできる事を確認する
+- 事実抽出の検証: `verification/ast-facts/`（`yarn verify:facts`）で、Stage 1 の受け入れ基準（全ファイルの保存・`fqn` の一意性・処理時間・実際の v1 DB の移行）を自リポジトリで実測する
+- DB の単体テストは実 DuckDB（`bindings/`）を vitest から直接使う。拡張機能が作った実際の v1 DB は**複製してから**移行する（元の DB は git 管理下のため書き込まない）
 
 ---
 
@@ -547,6 +655,6 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 
 ## 最終更新
 
-- **日付**: 2026-08-26
-- **バージョン**: 0.3.36（Stage 0 完了時点）
+- **日付**: 2026-09-26
+- **バージョン**: 0.3.37（Stage 1 完了時点）
 - **作成者**: Claude Code

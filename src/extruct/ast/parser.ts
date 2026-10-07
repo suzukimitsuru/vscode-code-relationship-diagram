@@ -14,6 +14,12 @@ type Query = treeSitter.Query;
 type QueryMatch = treeSitter.QueryMatch;
 type Tree = treeSitter.Tree;
 
+/** 構文木のノード (構文木と同じ寿命。withTree / withMatches の外へ持ち出さない事) */
+export type AstNode = Node;
+
+/** クエリのマッチ (構文木と同じ寿命。withMatches の外へ持ち出さない事) */
+export type AstQueryMatch = QueryMatch;
+
 /** 対応言語の定義 */
 export interface AstLanguageSpec {
 
@@ -216,18 +222,29 @@ export class AstParser {
     }
 
     /**
+     * 1ファイルをパースしてクエリを実行し、マッチを使う処理を実行する
+     * @param languageId VSCode の language id
+     * @param source ソースコード
+     * @param body マッチを使う処理 (戻り値を返した時点で構文木は破棄される)
+     * @returns 処理の戻り値。未対応の language id なら null
+     * @description マッチ内のノードは構文木と同じ寿命なので、body の外へ持ち出さない事
+     */
+    public async withMatches<T>(languageId: string, source: string, body: (root: Node, matches: QueryMatch[]) => T): Promise<T | null> {
+        const spec = astLanguageOf(languageId);
+        if (!spec) {
+            return null;
+        }
+        return this.withTree(languageId, source, (root, language) => body(root, this.query(spec, language).matches(root)));
+    }
+
+    /**
      * 1ファイルをパースしてクエリのキャプチャを取り出す
      * @param languageId VSCode の language id
      * @param source ソースコード
      * @returns キャプチャの一覧。未対応の language id なら null
      */
     public async captures(languageId: string, source: string): Promise<AstCapture[] | null> {
-        const spec = astLanguageOf(languageId);
-        if (!spec) {
-            return null;
-        }
-        return this.withTree(languageId, source, (root, language) => {
-            const matches: QueryMatch[] = this.query(spec, language).matches(root);
+        return this.withMatches(languageId, source, (_root, matches) => {
             const captures: AstCapture[] = [];
             matches.forEach((match, matchIndex) => {
                 for (const capture of match.captures) {

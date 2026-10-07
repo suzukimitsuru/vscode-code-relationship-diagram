@@ -21,6 +21,42 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - 両パッケージとも Node.js 22 以上が必要になった（3.0.0 の破壊的変更はこの engines 要件のみ）
   - VS Code 1.141.0（最新安定版）で `src/test/*.test.ts` の全6件が通る事を確認
 
+## [0.3.37] - 2026-09-26
+
+### Added
+
+- **AST のローカル事実の抽出**（`docs/ast-plan.md` Stage 1 / Phase A）
+  - 1ファイル1パースで、定義・import 束縛・参照出現を抽出して DuckDB へ保存する。**まだ関係抽出と表示には使わない**（従来の LSP 経路はそのまま）
+  - `src/extruct/ast/localFacts.ts`: 抽出の本体
+    - 定義に完全修飾名 `fqn`（`<path>#<入れ子の名前>`。同名の兄弟は `~2`…）と `export_name` を付ける。関数のオーバーロード宣言は本体を持つ定義へまとめる
+    - 参照出現に種類（inheritance / implementation / instantiation / call / type_reference / read / write / decorator）、囲む定義の `fqn`、根の名前を束縛しているスコープ `scope_id` を付ける（引数が同名の import を隠す場合も区別できる）
+    - 定義とスコープの包含判定は、構文木の親を辿らずに区間の入れ子構造で引く（WASM 境界を越える回数を抑える）
+  - `src/extruct/ast/moduleResolver.ts`: import の指定子をワークスペース内のファイルへ解決する（相対指定の拡張子・`index.*` 補完、ESM 形式の `./a.js` → `./a.ts`、`tsconfig.json` / `jsconfig.json` の `paths` / `baseUrl` と相対パスの `extends`）
+  - `src/extruct/ast/factsExtractor.ts`: 抽出と import 解決をまとめ、処理時間を計る
+  - `src/extruct/codeSymbols.ts` の `attachAstKeys()`: AST の定義を言語サーバのシンボルへ名前の位置で突き合わせ、解決キー（`fqn` / `export_name`）を付ける
+  - **スキーマ v2**（`src/codeDb.ts`）: `table_schema_version`・`table_imports`・`table_occurrences`・`table_relationships_v2`・`view_relationship_strength` を追加し、`table_symbols` に `fqn` / `export_name`、`table_files` に `facts_version` を追加
+  - **既存 DB の自動移行**: 起動時に v1 の DB を行を保持したまま1トランザクションで v2 へ移行する（再構築は不要）
+  - **事実の埋め戻し**: 内容の変わっていないファイルで事実が未抽出（移行直後）か抽出規則の版数が古いものは、全走査の時に LSP を使わず事実だけを抽出する（キュー項目 `facts`）
+  - `verification/ast-facts/`: Stage 1 の受け入れ基準を自リポジトリで実測する検証スクリプト（`yarn verify:facts`）
+  - `src/test/astFacts.test.ts`: 拡張機能ホスト上で、AST の定義が tsserver のシンボルへ付く事と、upsert で事実が保存される事を確かめる統合テスト
+  - 実測（自リポジトリ TS/JS 59 ファイル）: 処理時間 中央値 1.3ms/ファイル・最大 15.9ms、`fqn` の重複 0、export された定義の 100% が言語サーバのシンボルへ付与
+
+### Changed
+
+- **AST クエリ**（`src/extruct/ast/queries/*.scm`）: 事実の抽出に合わせてキャプチャ名の規約を拡張した（詳細は `docs/ast-plan.md` §6.2）
+  - import 束縛を1マッチ = 1束縛にした（`imp.name` / `imp.alias` → `imp.local` / `imp.imported`）。再エクスポート・`require` の分割代入・`import x = require()` を追加
+  - 型名を包括的に捉える（`vscode.Position` のような修飾型名・共用体型・配列型を取りこぼしていた）
+  - メンバの読み取りはメンバ側を捉えてオブジェクト側をレシーバにし、引数・戻り値などで値として渡される識別子も読み取りにした
+  - 型注釈に書いた型リテラルのメンバは定義にしない（同名のローカル変数の `fqn` がずれていた）
+  - `namespace`・列挙子・オーバーロード宣言・抽象メソッドを定義に、スコープと束縛（`scope` / `bind.*`）を追加
+- **`src/extruct/ast/parser.ts`**: 構文木が生きている間にクエリのマッチを扱う `withMatches()` を追加
+- **`src/relationship/examine.ts`**: 内容が同じシンボルも、位置に加えて解決キーが変わったら `table_symbols` を更新する
+- **`src/extension.ts`**: 起動時に生成した AST パーサを差分キューへ渡す（パーサが使えない環境では従来の LSP 経路だけで動く）
+
+### Fixed
+
+- **`src/codeDb.ts`**: `table_create()` が SQL の失敗後も処理を続けて成功扱いにしていた。最初の失敗で止まるようにした
+
 ## [0.3.36] - 2026-08-26
 
 ### Added

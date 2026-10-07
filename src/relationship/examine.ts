@@ -1,10 +1,12 @@
 /** @file 関係調査タスク: 1ファイル単位の計算フェーズ（並列・中断可能）とコミットフェーズ（直列）を提供する */
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as codeDb from '../codeDb';
 import * as codeFiles from '../extruct/codeFiles';
 import * as SYMBOL from '../extruct/symbol';
 import * as codeSymbols from '../extruct/codeSymbols';
+import { FACTS_VERSION, FactsExtractor, FileFacts, astLanguageOf } from '../extruct/ast';
 import * as codeRelationships from './codeRelationships';
 import { Difference } from './fileDifference/item';
 import { SymbolCache } from './fileDifference/symbolCache';
@@ -39,8 +41,8 @@ export class UpsertPlan {
         public readonly file: codeFiles.File,
         /** DBへ挿入するシンボル（追加＋変更） */
         public readonly symbol_inserts: SYMBOL.SymbolModel[],
-        /** 位置のみ変わったシンボル（table_symbols のみ更新） */
-        public readonly symbol_position_updates: SYMBOL.SymbolModel[],
+        /** 内容は同じで、位置か解決キー（fqn / export 名）が変わったシンボル（table_symbols のみ更新） */
+        public readonly symbol_in_place_updates: SYMBOL.SymbolModel[],
         /** DBから削除するシンボルID */
         public readonly symbol_removes: string[],
         /** 挿入する関係（既存の定義側関係＋調査結果） */
@@ -49,6 +51,19 @@ export class UpsertPlan {
         public readonly fanout_paths: string[],
         /** 行数（統計用） */
         public readonly lineCount: number,
+        /** AST の事実（未対応言語・抽出失敗なら null。null でも古い事実は削除する） */
+        public readonly facts: FileFacts | null = null,
+    ) {}
+}
+
+/** @description facts 計算フェーズの結果（コミットフェーズへの入力） */
+export class FactsPlan {
+    public constructor(
+        public readonly file: codeFiles.File,
+        /** 解決キー（fqn / export 名）が変わったシンボル */
+        public readonly symbol_key_updates: SYMBOL.SymbolModel[],
+        /** AST の事実 */
+        public readonly facts: FileFacts,
     ) {}
 }
 
@@ -85,7 +100,12 @@ export async function scanDifference(wsFolder: string, associations: object, db:
         (oldItem, newItem) => newItem.relative_path === oldItem.relative_path,
         (oldItem, newItem) => newItem.updated.getTime() !== oldItem.updated.getTime()
     );
-    return new Difference(lists, additions, updates, notchanges, removes);
+
+    // 内容は変わっていないが、AST の事実が未抽出（スキーマ移行直後）か古い版数のファイル
+    const facts_versions = await db.codeFile_queryFactsVersions();
+    const facts_stale = notchanges.filter(file =>
+        (astLanguageOf(file.language_id) !== null) && (facts_versions.get(file.relative_path) !== FACTS_VERSION));
+    return new Difference(lists, additions, updates, notchanges, removes, facts_stale);
 }
 
 /** @description 1ファイルの関係調査タスク */
@@ -94,12 +114,46 @@ export class ExamineTask {
     private readonly _db: codeDb.Db;
     private readonly _symbols: SymbolCache;
     private readonly _log: (message: string) => void;
+    private readonly _facts: FactsExtractor | null;
 
-    public constructor(wsFolder: string, db: codeDb.Db, symbols: SymbolCache, log: (message: string) => void) {
+    public constructor(wsFolder: string, db: codeDb.Db, symbols: SymbolCache, log: (message: string) => void,
+        facts: FactsExtractor | null = null) {
         this._ws_folder = wsFolder;
         this._db = db;
         this._symbols = symbols;
         this._log = log;
+        this._facts = facts;
+    }
+
+    /** @description AST の事実を抽出できるか（パーサが使えない環境では LSP の経路だけで動く） */
+    public get hasFacts(): boolean {
+        return this._facts !== null;
+    }
+
+    /**
+     * @description AST の事実を抽出し、シンボルへ解決キーを付ける
+     * 失敗しても LSP の経路は続行できるよう、例外は投げずに null を返す
+     * @param file      対象ファイル
+     * @param source    ソースコード（シンボル抽出と同じ内容）
+     * @param symbols   解決キーを付けるシンボル
+     * @returns 事実。未対応言語・抽出失敗なら null（シンボルの解決キーは null になる）
+     */
+    private async _extractFacts(file: codeFiles.File, source: string, symbols: SYMBOL.SymbolModel[]): Promise<FileFacts | null> {
+        let facts: FileFacts | null = null;
+        if (this._facts && this._facts.isSupported(file.language_id)) {
+            try {
+                facts = await this._facts.extract(file.relative_path, file.language_id, source);
+            } catch (error) {
+                this._log(`Failed to extract facts: ${file.relative_path} ${error instanceof Error ? error.message : String(error)}`);
+            }
+        }
+        const attached = codeSymbols.attachAstKeys(file.relative_path, symbols, facts?.definitions ?? []);
+        if (facts) {
+            this._log(`Extracted facts: ${file.relative_path} ${facts.elapsedMs.toFixed(1)}ms ` +
+                `(definitions ${facts.definitions.length}, attached ${attached}/${Math.max(symbols.length - 1, 0)} symbols, ` +
+                `imports ${facts.imports.length}, occurrences ${facts.occurrences.length}${facts.hasError ? ', has syntax error' : ''})`);
+        }
+        return facts;
     }
 
     /**
@@ -133,7 +187,11 @@ export class ExamineTask {
         token.check();
         const olds = await this._db.symbol_query(relative_path).catch(() => [] as SYMBOL.SymbolModel[]);
         token.check();
-        const { symbols: news } = await this.extructSymbols(relative_path);
+        const { doc, symbols: news } = await this.extructSymbols(relative_path);
+        token.check();
+
+        // AST の事実を抽出し、シンボルへ解決キー（fqn / export 名）を付ける（ID・ハッシュは変わらない）
+        const facts = await this._extractFacts(file, doc.getText(), news);
         token.check();
 
         // 自ファイルの新鮮なシンボル表を他タスクへ共有する
@@ -148,10 +206,11 @@ export class ExamineTask {
             (oldItem, newItem) => !newItem.hash.equals(oldItem.hash)
         );
 
-        // 変更のないシンボルは、位置が変わっている場合のみ table_symbols を更新する
-        const position_updates = symbol_notchanges.filter(newSymbol => {
+        // 変更のないシンボルは、位置か解決キーが変わっている場合のみ table_symbols を更新する
+        // （兄弟の追加で ~N がずれる、export 句の追加で export 名が変わる等は本文を変えない）
+        const in_place_updates = symbol_notchanges.filter(newSymbol => {
             const oldSymbol = olds.find(old => old.id === newSymbol.id);
-            return oldSymbol !== undefined && newSymbol.isPositionChanged(oldSymbol);
+            return oldSymbol !== undefined && (newSymbol.isPositionChanged(oldSymbol) || newSymbol.isKeyChanged(oldSymbol));
         });
 
         // 関係を調査する定義側シンボル（fan-out 再調査なら全シンボル）
@@ -199,10 +258,10 @@ export class ExamineTask {
         const line_count = file_line > 0 ? file_line : sum_line;
 
         this._log(`symbols ${relative_path}: (added ${symbol_additions.length}, updated ${symbol_updates.length}, ` +
-            `no changed ${symbol_notchanges.length}, removed ${symbol_removes.length}, position changed ${position_updates.length})`);
+            `no changed ${symbol_notchanges.length}, removed ${symbol_removes.length}, updated in place ${in_place_updates.length})`);
 
-        return new UpsertPlan(file, [...symbol_additions, ...symbol_updates], position_updates, symbol_removes,
-            [...relationships.values()], fanout_paths, line_count);
+        return new UpsertPlan(file, [...symbol_additions, ...symbol_updates], in_place_updates, symbol_removes,
+            [...relationships.values()], fanout_paths, line_count, facts);
     }
 
     /**
@@ -218,8 +277,8 @@ export class ExamineTask {
             await this._db.relationship_deleteSymbols(plan.symbol_removes);
         }
 
-        // 位置のみ変わったシンボルを更新する
-        for (const symbol of plan.symbol_position_updates) {
+        // 位置か解決キーだけが変わったシンボルを更新する
+        for (const symbol of plan.symbol_in_place_updates) {
             await this._db.symbol_update(symbol);
         }
 
@@ -235,17 +294,58 @@ export class ExamineTask {
         }
         this._log(`Saved symbol: ${relative_path}`);
 
+        // AST の事実を置き換える（抽出できなかった場合も、内容が変わったので古い事実は消す）
+        await this._db.facts_replace(relative_path, plan.facts);
+
         // ファイルを更新または挿入する（タスク完全成功の印として最後に書く）
-        await this._db.codeFile_upsert(plan.file);
+        await this._db.codeFile_upsert(plan.file, plan.facts ? FACTS_VERSION : null);
         this._log(`Upserted file: ${relative_path}`);
     }
 
     /**
+     * @description facts の計算フェーズ（並列実行・中断可能、DBへは書き込まない）
+     * 内容の変わっていないファイルの AST の事実だけを抽出し直す。LSP は使わず、シンボルはDBから読む
+     * @param file      対象ファイル
+     * @param token     中断トークン
+     * @returns コミットフェーズへの入力。抽出できなければ null（版数が更新されないため次の全走査で再試行される）
+     */
+    public async computeFacts(file: codeFiles.File, token: CancelToken): Promise<FactsPlan | null> {
+        token.check();
+        const symbols = await this._db.symbol_query(file.relative_path).catch(() => [] as SYMBOL.SymbolModel[]);
+        const previous = symbols.map(symbol => JSON.stringify([symbol.fqn, symbol.exportName]));
+        token.check();
+
+        // VSCode の TextDocument と同じく BOM は内容に含めない（1行目の桁がずれるため）
+        const source = (await fs.promises.readFile(path.join(this._ws_folder, file.relative_path), 'utf8')).replace(/^\uFEFF/, '');
+        token.check();
+        const facts = await this._extractFacts(file, source, symbols);
+        token.check();
+        if (!facts) {
+            return null;
+        }
+        const key_updates = symbols.filter((symbol, index) => JSON.stringify([symbol.fqn, symbol.exportName]) !== previous[index]);
+        return new FactsPlan(file, key_updates, facts);
+    }
+
+    /**
+     * @description facts のコミットフェーズ（直列実行・中断不可・短時間）
+     * 解決キー → 事実と版数 の順に書き込む（版数が最後＝完了の印）
+     */
+    public async commitFacts(plan: FactsPlan): Promise<void> {
+        for (const symbol of plan.symbol_key_updates) {
+            await this._db.symbol_update(symbol);
+        }
+        await this._db.facts_replace(plan.file.relative_path, plan.facts, FACTS_VERSION);
+        this._log(`Saved facts: ${plan.file.relative_path}`);
+    }
+
+    /**
      * @description delete のコミットフェーズ（直列実行）
-     * 関係 → シンボル → codeFile の順に削除する（関係の削除がシンボル表を参照するため）
+     * 関係 → 事実 → シンボル → codeFile の順に削除する（関係の削除がシンボル表を参照するため）
      */
     public async commitDelete(relativePath: string): Promise<void> {
         await this._db.relationship_deleteFile(relativePath);
+        await this._db.facts_deleteFile(relativePath);
         await this._db.symbol_deleteFile(relativePath);
         await this._db.codeFile_delete(relativePath);
         this._symbols.invalidate(relativePath);

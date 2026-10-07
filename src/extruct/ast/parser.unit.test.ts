@@ -112,7 +112,8 @@ describe('AstParser', () => {
         });
 
         it('import 束縛を取り出せる', async () => {
-            expect(await capturesOf('imp.name')).toContain('Base');
+            expect(await capturesOf('imp.imported')).toContain('Base');
+            expect(await capturesOf('imp.local')).toContain('Base');
             expect(await capturesOf('imp.default')).toContain('Default');
             expect(await capturesOf('imp.namespace')).toContain('helpers');
             expect(await capturesOf('imp.module.bare')).toContain('"./side-effect"');
@@ -125,7 +126,9 @@ describe('AstParser', () => {
             expect(await capturesOf('ref.call')).toContain('execute');
             expect(await capturesOf('ref.type_reference')).toContain('Target');
             expect(await capturesOf('ref.write')).toContain('count');
-            expect(await capturesOf('ref.read')).toContain('created');
+            // メンバの読み取りはメンバ側を捉え、オブジェクト側はレシーバになる
+            expect(await capturesOf('ref.read')).toContain('execute');
+            expect(await capturesOf('ref.receiver')).toContain('created');
         });
 
         it('this をレシーバとする書き込みを取り出せる', async () => {

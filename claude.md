@@ -72,6 +72,10 @@ src/
 │   └── ast/                  # AST解析 (tree-sitter)
 │       ├── parser.ts         # パーササービス（初期化・遅延ロード・クエリ実行）
 │       ├── resources.ts      # WASM/クエリの配置解決
+│       ├── localFacts.ts     # Phase A: 定義・import・参照出現の抽出（fqn / scope_id）
+│       ├── moduleResolver.ts # import 指定子の解決（相対 / tsconfig paths / baseUrl）
+│       ├── factsExtractor.ts # 抽出 + import 解決 + 計時
+│       ├── relationshipKind.ts # 関係の種類と優先順位
 │       └── queries/*.scm     # 言語ごとのクエリ定義
 ├── relationship/
 │   ├── examine.ts            # 関係抽出メインロジック
@@ -239,9 +243,17 @@ docs/
 
 **遅延ロード**: 本体WASMのみ拡張機能の起動時にロードし、言語文法は該当する language id が初めて出現した時にロードする（`.vsix`肥大とメモリ常駐を抑える）
 
-**キャプチャ名の規約**: `def.<種別>` / `imp.<種別>` / `ref.<kind>`。`ref.`のキャプチャ名がそのまま関係の種類になるため、言語追加は原則 `.scm` と `AST_LANGUAGES` の追加だけで済む
+**キャプチャ名の規約**: `def.<種別>` / `imp.<種別>` / `export.*` / `scope` / `bind.<種別>` / `ref.<kind>`。`ref.`のキャプチャ名がそのまま関係の種類になるため、言語追加は原則 `.scm` と `AST_LANGUAGES` の追加だけで済む（一覧は `typescript.scm` の先頭と `docs/ast-plan.md` §6.2）
 
 **実装**: `src/extruct/ast/parser.ts` / `src/extruct/ast/resources.ts` / `scripts/ast-assets.mjs`
+
+**ローカル事実の抽出（Stage 1 / v0.3.37～）**: 1ファイル1パースで定義・import 束縛・参照出現を抽出し、`table_imports` / `table_occurrences` へ保存する（まだ関係抽出・表示には使わない）
+
+- **fqn**: `<path>#<入れ子の名前を . で連結>`。関係を内容ハッシュ入りのシンボルIDではなく fqn で持つための解決キー。LSP のシンボルへは名前の開始位置（どちらも UTF-16 の桁）で突き合わせて付ける（`attachAstKeys()`）
+- **scope_id**: 参照出現の根の名前を束縛しているスコープ（0 = モジュール、1以上 = ローカル、NULL = ファイル内に無い）。構文木が要るため Phase A で確定させる
+- **スキーマ v2**: 起動時に v1 の DB を1トランザクションで移行する（`codeDb.ts` の `MIGRATION_V2`）
+- **FACTS_VERSION**（`localFacts.ts`）: クエリや抽出規則を変えたら上げる。`table_files.facts_version` が異なるファイルは、内容が同じでも次の全走査で LSP を使わずに事実だけを抽出し直す（キュー項目 `facts`）
+- **ソースに生の制御文字・BOM・ゼロ幅文字を書かない事**: tree-sitter は構文エラーにし、自リポジトリの事実が落ちる。必要なら `\uFEFF` のようなエスケープで書く
 
 ---
 
@@ -458,8 +470,8 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 
 ## 最終更新
 
-- **日付**: 2026-08-26
-- **バージョン**: 0.3.36
+- **日付**: 2026-09-26
+- **バージョン**: 0.3.37
 - **作成者**: Claude Code
 
 このファイルはプロジェクトの進化に伴い定期的に更新してください。
