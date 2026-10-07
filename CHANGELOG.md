@@ -13,6 +13,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Fixed
+
+- **`src/test/codeFiles.test.ts`**: `list test` がフィクスチャの更新日時を固定値（2025-08-04）と比べていたため、新しく clone / checkout した環境では必ず失敗していた。git は更新日時を保存せず、checkout した時刻になるため。固定値ではなく `fs.statSync()` で得たファイルの実際の mtime と比べるようにした
+
 ## [0.3.37] - 2026-09-26
 
 ### Added
