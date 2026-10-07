@@ -80,7 +80,7 @@
     "pretest": "yarn run compile-tests && yarn run compile && yarn run lint --fix",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "rm -rf .vscode-test/user-data && vscode-test",
+    "test": "vscode-test",
     "test:unit": "vitest run",
     "verify:ast": "node esbuild.js && node verification/ast-parser/verify.cjs",
     "verify:facts": "node verification/ast-facts/verify.cjs"
