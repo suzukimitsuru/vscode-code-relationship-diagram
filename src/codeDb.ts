@@ -9,7 +9,8 @@ import type { RelationshipV2 } from './relationship/resolve';
 
 /**
  * スキーマの版数
- * @description 1 = 初版 (files / symbols / relationships)、2 = AST の事実 (docs/ast-plan.md §5.2)、
+ * @description 1 = 初版 (files / symbols / relationships)、
+ *              2 = AST の事実 (docs/ast-plan.md §5.2)、
  *              3 = 定義表と名前解決 (Stage 2)
  */
 export const SCHEMA_VERSION = 3;
