@@ -73,6 +73,14 @@ describe('attachAstKeys', () => {
         expect([symbol.fqn, symbol.exportName]).toEqual([null, null]);
     });
 
+    it('引数の定義は付けない (同じ位置から始まるコールバックのシンボルと取り違えない)', async () => {
+        const callbackFacts = await collectLocalFacts(parser, 'typescript', FILE, 'const files = rows.map(row => row);') as LocalFacts;
+        // map() callback のシンボルは引数 row と同じ位置から始まる
+        const symbols = [symbolOf('files', [0, 6], [0, 6, 0, 34]), symbolOf('map() callback', [0, 22], [0, 22, 0, 32], 'files')];
+        expect(attachAstKeys(FILE, symbols, callbackFacts.definitions)).toBe(1);
+        expect(symbols.map(symbol => symbol.fqn)).toEqual([`${FILE}#files`, null]);
+    });
+
     it('1つの定義は1つのシンボルにしか付けない', () => {
         const symbols = [symbolOf('run', [1, 4], [1, 4, 1, 18]), symbolOf('run', [1, 4], [1, 4, 1, 18])];
         expect(attachAstKeys(FILE, symbols, facts.definitions)).toBe(1);

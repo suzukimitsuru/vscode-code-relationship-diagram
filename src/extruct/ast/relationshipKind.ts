@@ -15,6 +15,12 @@ export enum RelationshipKind {
     read = 7,
     write = 8,
     decorator = 9,
+    /**
+     * オブジェクトリテラルのキー (`{ definitions: … }` / `push({ id })`)
+     * @description 文脈の型 (代入先・引数・戻り値の型) のプロパティへの参照。名前では解決できないため関係にはせず、
+     *              精度検証で「構造的な参照」を見分けるために記録する (docs/ast-plan.md §11)
+     */
+    object_key = 10,
 }
 
 /**
@@ -32,6 +38,7 @@ export const RELATIONSHIP_WEIGHTS: Readonly<Record<RelationshipKind, number>> = 
     [RelationshipKind.read]: 1,
     [RelationshipKind.write]: 4,
     [RelationshipKind.decorator]: 5,
+    [RelationshipKind.object_key]: 1,
 };
 
 /**
@@ -49,6 +56,7 @@ const PRIORITY: readonly RelationshipKind[] = [
     RelationshipKind.type_reference,
     RelationshipKind.read,
     RelationshipKind.import,
+    RelationshipKind.object_key,
     RelationshipKind.unknown,
 ];
 
