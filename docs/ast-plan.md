@@ -206,6 +206,14 @@ GROUP BY reference_fqn, define_fqn, kind;
 | `table_relationships_v2` | 作り直して `reference_path` / `define_path` 列を追加し、`weight` / `confidence` を `REAL` から `DOUBLE` にした | 参照元ファイル単位で置き換えるため。DuckDB の `REAL` は 32 ビットで、0.95 が 0.9499999881 になり strength の和に誤差が乗った。v2 ではこの表に書き込む処理が無いため、作り直しても失う行は無い |
 | `table_files.resolved_version` | 名前解決の版数を追加（NULL = 未解決） | どのファイルが未解決かを DB に持ち、途中で終わっても次の機会に続きから解決するため（§9） |
 
+**Stage 3 での実装差分（スキーマ v4）**（実物は `src/codeDb.ts` の `MIGRATION_V4`）
+
+| 対象 | 計画からの変更 | 理由 |
+| ---- | -------------- | ---- |
+| `table_definitions.type_*` | 定義の値の型の手掛かり（`type_mode`・`type_root`・`type_member`・`type_scope_id`・`type_binding_fqn`・`type_array`）を追加。NULL = 手掛かり無し | 段3 の型推論を TypeScript で行うため（§7.3）。型名・式を参照出現と同じ形（根の名前・メンバの経路・束縛）で持ち、他ファイルの型も同じ解決の仕組みで引く（§6.3） |
+| `idx_definitions_name` | `table_definitions(name)` の索引を追加 | 段4 / 4' で同名の定義をプロジェクト全体から引くため |
+| `table_occurrences.kind = 10` | オブジェクトリテラルのキー（`object_key`）を記録する | 関係にはしないが、精度検証で文脈による参照を見分けるため（§5.3・§11） |
+
 ### 5.3 関係の種類と基本重み
 
 計画1 の taxonomy を踏襲する。
@@ -221,6 +229,7 @@ GROUP BY reference_fqn, define_fqn, kind;
 | 7 | `read` | 識別子の読み取り | 1 |
 | 8 | `write` | `assignment_expression` の左辺 | 4 |
 | 9 | `decorator` | `decorator` | 5 |
+| 10 | `object_key` | オブジェクトリテラルのキー（Stage 3 で追加。参照出現として記録するだけで関係にはしない） | 1 |
 | 0 | `unknown` | 判定不能・LSP フォールバック由来 | 1 |
 
 ### 5.4 マイグレーション
@@ -276,6 +285,7 @@ Stage 0 でキャプチャ名の規約を確定し、Stage 1 で事実の抽出�
 | ------------ | ---- |
 | `def.<種別>` | 定義。`fqn` / `export_name` の元になる |
 | `def.<種別>.signature` | 本体の無い宣言（オーバーロード・宣言ファイル）。同じ親・同じ名前の定義と1つにまとめる |
+| `def.<種別>.parameter` | コンストラクタ引数のプロパティ（`constructor(public readonly x)`）。親をコンストラクタの1つ外側（クラス）にする（Stage 2） |
 | `def.node` | 定義ノードを明示する（省略時は名前ノードの親が定義ノード。列挙子のように名前ノード自身が定義の場合に使う） |
 | `imp.local` / `imp.imported` | import 束縛のファイル内での名前 / 取り込む名前。**1マッチ = 1束縛**（`import { a as b }` なら1マッチに `b` と `a`） |
 | `imp.default` / `imp.namespace` | default import / namespace import（`imp.local` と同じノードに付ける） |
@@ -287,7 +297,8 @@ Stage 0 でキャプチャ名の規約を確定し、Stage 1 で事実の抽出�
 | `scope` | レキシカルスコープを作るノード（`scope_id` の算出に使う） |
 | `bind.<種別>` | 定義以外の束縛（引数・型引数・分割代入・catch・for-of の変数） |
 | `ref.<kind>` | 参照出現。`<kind>` がそのまま `RelationshipKind` になる |
-| `ref.receiver` | メンバ参照のレシーバ（`a.b()` の `a`、および `this` / `super`） |
+| `ref.receiver` | メンバ参照のレシーバ（`a.b()` の `a`、`this` / `super`、`A.B.c()` の `A.B`、`xs[i].c()` の `xs[i]`） |
+| `key.object` | オブジェクトリテラルのキー（`{ a: 1 }` / `{ a }` / `{ a() {} }` の `a`）。種類 `object_key` の参照出現として記録する（Stage 3） |
 
 `def` / `bind` / `imp` にキャプチャされたノードは参照出現にならない。
 tree-sitter のクエリはパターン間に優先順位が無く、同じ識別子を複数のパターンが捉える
@@ -305,6 +316,15 @@ tree-sitter のクエリはパターン間に優先順位が無く、同じ識�
 | 型のメンバ（`property_signature` / `method_signature`）はインターフェースと型エイリアスの本体に限る | 戻り値の型 `Promise<{ doc: …, symbols: … }>` のような型リテラルのメンバを定義にすると、同名のローカル変数の `fqn` が `~2` にずれた（自リポジトリの `examine.ts` で発見） |
 | `namespace N {}` を定義に追加（`internal_module`） | Stage 0 の `(module …)` は `module Foo {}` / `declare module` 用で、`namespace` を捉えていなかった |
 | 列挙子・関数のオーバーロード宣言・抽象メソッドを定義に追加 | 言語サーバのシンボルと対応させるため |
+
+**Stage 3 で変えた点**
+
+| 変更 | 理由 |
+| ---- | ---- |
+| 引数（`def.parameter`）・for-of / for-in の変数・分割代入で取り出した変数と引数（`const { a, b: c = 1 } = x`）を定義にする | 型注釈・初期化子・反復対象・取り出し元から値の型を引くため（段3）。引数は言語サーバのシンボルに無いため解決キーを付けない（`attachAstKeys()` が除く。コールバックのシンボルは引数と同じ位置から始まり、位置で取り違える）。`const { a } = require('x')` の `a` は import 束縛のままにし、定義にしない |
+| 引数・変数の型注釈に書いた型リテラルのメンバ（`input: { report: Report }` の `report`）を定義にする | `input.report` の型を引くため。引数・変数の定義の内側に入れ子になる（`f.input.report`）ため、Stage 1 で問題になった「同名のローカル変数の `fqn` が `~2` にずれる」は起きない（戻り値の型リテラルは引き続き定義にしない） |
+| レシーバに添字（`subscript_expression`）を許す | `nodes[i].x` / `data.links[0].color` のような要素のメンバ参照を、根 `nodes`・経路 `[].x` として名前解決へ渡すため（§6.3） |
+| オブジェクトリテラルのキーを `key.object` で捉える | 文脈による型付けの参照を精度検証で見分けるため（§11） |
 
 型に関する kind（`type_reference` / `implementation`）は JavaScript の文法に存在しないため
 `javascript.scm` では定義しない。文法に無いノード型を書くとクエリのコンパイル自体が失敗する。
@@ -342,7 +362,7 @@ tree-sitter のクエリはパターン間に優先順位が無く、同じ識�
 
 言語追加は原則 `.scm` の追加だけで済む構成にする（キャプチャ名の規約を言語間で統一）。
 
-### 6.3 抽出する事実（Stage 1 で実装済み・Stage 2 で拡張）
+### 6.3 抽出する事実（Stage 1 で実装済み・Stage 2〜3 で拡張）
 
 `src/extruct/ast/localFacts.ts`（抽出）・`factsExtractor.ts`（抽出 + import 解決 + 計時）・`relationshipKind.ts`（種類と優先順位）
 
@@ -350,7 +370,7 @@ tree-sitter のクエリはパターン間に優先順位が無く、同じ識�
 interface AstOccurrence {
   line: number; character: number;  // 0起点。桁は UTF-16（VSCode の Position と同じ単位）
   rootName: string;                 // a.b() の 'a'。this / super をレシーバとする場合は 'this' / 'super'
-  memberPath: string | null;        // a.b() の 'b'（単純な識別子なら null）
+  memberPath: string | null;        // a.b() の 'b'（単純な識別子なら null。添字の要素は '[]'）
   kind: RelationshipKind;           // クエリのキャプチャ名から確定
   enclosingFqn: string;             // 出現を囲む最内の定義（どの定義にも囲まれていなければ `<path>#`）
   scopeId: number | null;           // 根の名前を束縛しているスコープ（下記）
@@ -365,7 +385,21 @@ interface AstOccurrence {
 | `export_name` | トップレベルの定義だけに付ける。定義ノードの親か祖父が export 文なら定義名（`export default` なら `'default'`）、`export { a as b }` なら `b`、`export default a` なら `'default'` |
 | `enclosing_fqn` | 出現を囲む最内の定義。無名コールバックの中の出現は、その外側の名前付き定義（メソッド等）に集約される |
 | `binding_fqn`（Stage 2） | 根の名前を束縛しているファイル内の**定義**の `fqn`。import・定義でない束縛（引数・分割代入の変数など）・ファイル内に束縛の無い名前は NULL。同じスコープで import と定義が同じ名前を束縛する場合（`const fs = require('fs')`）は import を優先して NULL |
-| `member_path`（Stage 2） | メンバ参照の連鎖（`A.B.c()`）は根 `A` と経路 `B.c` にまとめる。途中に呼び出しや添字を含む連鎖（`a().b`）は根が定まらないため参照出現にしない |
+| `member_path`（Stage 2） | メンバ参照の連鎖（`A.B.c()`）は根 `A` と経路 `B.c` にまとめる。途中に呼び出しを含む連鎖（`a().b`）は根が定まらないため参照出現にしない。添字は Stage 3 から、文字列なら同名のメンバ（`a['b']` → `b`）、それ以外は要素 `[]`（`xs[i].c` → 経路 `[].c`）として経路に含める |
+| 型の手掛かり（Stage 3） | 定義ごとに値の型の手掛かり（`AstDefinition.type`）を1つ持つ。型名・式を参照出現と同じ形（根の名前・メンバの経路・`scope_id`・`binding_fqn`）で持ち、名前解決の段3 で型を引く（§7.1）。種類は下表 |
+| 分割代入のキー（Stage 3） | `const { b } = a` の `b` は、取り出し元のメンバ `a.b` の読み取りの参照出現にもする（言語サーバも、キーを取り出し元の型のプロパティへの参照として返す） |
+| オブジェクトリテラルのキー（Stage 3） | 種類 `object_key`・`scope_id` / `binding_fqn` は NULL で記録する。名前解決では関係にしない |
+
+| 型の手掛かりの種類（`type_mode`） | 取り出し元 | 型 |
+| --------------------------------- | ---------- | -- |
+| `annotation` | 型注釈・戻り値の型・`as` / `satisfies`・アロー関数の戻り値の型 | 型名。`Promise<T>` は `T`、`T \| null` は `T`、`T[]` / `Array<T>` / `Set<T>` / `Iterable<T>` は要素 `T`（`type_array`）、`Map<K, V>` は値 `V` の配列 |
+| `new` | `new X()` | `X` |
+| `call` | `f()` / `await a.f()` | `f` の戻り値の型 |
+| `value` | `a` / `a.b` / `xs[i]`、`xs.filter(…)`（要素の型を変えない配列のメソッド）、分割代入の取り出し元 `a.b` | その値の型 |
+| `element` | `for (const x of xs)`、`xs.map(x => …)` などコールバックの引数、`xs.find(…)` / `m.get(k)` | `xs` の要素の型 |
+
+`a ?? b` / `a || b` は左辺、`a = b` は右辺、括弧・`await`・`!` は外して読む。`sort((a, b) => …)` は両方の引数、
+`reduce((acc, x) => …)` は2つ目、`then(v => …)` は値（`Promise<T>` の `T`）を手掛かりにする。
 | `scope_id` | **根の名前を束縛しているスコープ**。`0` = モジュールスコープ（import かトップレベルの定義）、`1` 以上 = ファイル内のローカルスコープ（文書順の番号）、`NULL` = ファイル内に束縛が無い（グローバル・組込み）か根が `this` / `super`。引数が同名の import を隠す場合も正しく区別できる |
 
 `scope_id` は計画時点では「ローカル束縛判定用」とだけ決めていた。スコープの解析には構文木が要り、
@@ -390,7 +424,7 @@ Stage 2 の SQL は `scope_id = 0` の出現だけを import 表と結合すれ�
 
 ### 7.1 多段解決（上位段で当たったら打ち切り）
 
-`src/relationship/resolve.ts`（Stage 2 で段1・段2 を実装済み）
+`src/relationship/resolve.ts`（Stage 2 で段1・段2、Stage 3 で段3〜4' を実装済み。段5 は理由ごとに数えるだけ）
 
 | 段 | 解決方法 | confidence | 備考 |
 | -- | -------- | ---------- | ---- |
@@ -413,6 +447,19 @@ Stage 2 の SQL は `scope_id = 0` の出現だけを import 表と結合すれ�
 | モジュール単位 | import 先のファイルは分かるが export 名の定義が見つからない（`export default` の無名関数など）場合は、ファイル（`<path>#`）への関係にして confidence を 0.5 に下げる |
 | import 文 | 1つの import 束縛・再エクスポート・副作用 import ごとに、ファイル（`<path>#`）から取り込んだ定義・モジュールへの `import` 関係を出す |
 | 関係にしないもの | 自分自身・自分の内側の定義への参照（再帰・自分のローカル変数）、定義でないローカル束縛、`this` / `super`（Stage 3）、ファイル内に束縛の無い名前（Stage 3 の段4/5）、プロジェクト外・解決できない import。件数は理由ごとに数え、ログと精度検証のレポートに出す |
+
+**Stage 3 の実装**（段3〜4'）
+
+| 規則 | 内容 |
+| ---- | ---- |
+| 段3 の型 | 定義の型の手掛かり（§6.3）を、参照出現と同じ `walk()` で辿って型の定義（クラス・インターフェース・型エイリアス・列挙・名前空間）へ解決する。`call` / `value` は辿り着いた定義の型を再帰的に引き、`element` は配列の型の要素を取る。定義ごとに覚えておき、深さは 8 段まで |
+| 段3 のメンバ | 値（定義）のメンバは、入れ子の定義（名前空間・静的メンバ・列挙子）を先に引き、無ければ値の型のメンバを引く。型のメンバは継承元（`extends` / `implements` の参照出現を解決したもの）まで辿る。添字の要素 `[]` は配列の型の要素のインスタンスへ進む。型を推論してメンバを引いた関係は confidence 0.8 |
+| `this` / `super` | 囲むクラス（`super` はその最初の継承元）のインスタンスから引く。confidence 0.8 |
+| `new X()` | `X` に加えて `X.constructor`（定義があれば）も参照する（言語サーバも両方を返す） |
+| 段4 | 型の分からない値のメンバ（型の手掛かりが無い・型にメンバが無い）は、そのメンバ名の**メンバの定義**（メソッド・プロパティ・列挙子）をプロジェクト全体から引く。ファイル内に束縛の無い名前は、**スクリプト（import / export の無いファイル）と宣言ファイルのトップレベルの定義**だけを候補にする（モジュールのトップレベルはグローバルにならないため）。候補が1つなら confidence 0.6 |
+| 段4' | 候補が 2〜4 個なら各候補へ confidence 0.5/N、5 個以上は破棄して数える |
+| 組込みの名前 | `console` / `Promise` / `JSON` などのグローバルと、`map` / `push` / `length` / `get` など組込みの型によくあるメンバ名は段4 の候補にしない（`BUILTIN_GLOBALS` / `BUILTIN_MEMBERS`） |
+| 段5 | プロジェクト外・解決できない import・組込みは関係にせず、理由ごとに数える（`is_external` の集約ノードは Stage 5 の描画で扱う） |
 
 ### 7.2 モジュール解決
 
@@ -485,6 +532,12 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 - 解決規則を変えた時は `RESOLVE_VERSION`（`src/relationship/resolve.ts`）を上げれば、全ファイルを解決し直す
 - **既知の限界**: X より前に抽出したファイルが X を相対 import していて、その時点で X が無かった（`resolved_path = NULL`）場合、X が作られても import 側は再解決されない（import 側の事実を抽出し直すまで）
 
+**Stage 3 の状態**: 4（段4 に依存した解決の再解決）は**未実装**。段3・段4 は再解決の範囲を「X と X を import しているファイル」から次のように広げるが、
+Stage 3 では差分更新の範囲を変えていない。全走査（`RESOLVE_VERSION` を上げた時・初回）では正しく解決される。Stage 4 で表示に使う前に対応する。
+
+- 段3: A が B を import し、B の関数の戻り値の型が C の型である時、A のメンバの解決は C に依存する（import の推移閉包）。C が変わっても A は再解決されない
+- 段4: 同名の定義が増減したファイルは、その名前を段4 で引いた全ファイルに影響する。`table_occurrences` の名前（`root_name` / `member_path` の末尾）で影響するファイルを引く必要がある
+
 ---
 
 ## 10. ビルドと配布（WASM）
@@ -514,7 +567,13 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 - LSP の関係のうち**定義側が名前付きの宣言でないもの**（オブジェクトリテラルのメンバ・無名コールバック）は比較から除く。
   TypeScript の構造的な型付けにより、インターフェースのプロパティへの参照が、それを満たすオブジェクトリテラルのメンバへの
   参照として記録される（本番コード → テストのオブジェクトリテラル のような、依存ではない関係）。自リポジトリでは LSP の関係の 7 割強がこれだった
-- `exsample-workspace/` は C のみで AST 未対応のため対象外。confidence 閾値ごとの集計は段3以降（confidence が 1.0 / 0.95 / 0.5 以外の値を取るようになってから）に足す
+- **オブジェクトリテラルのキーによる関係（文脈による参照）も比較から除く（Stage 3 で決定）**。`const f: FileFacts = { definitions: … }` や
+  `push({ id })` のキーを、言語サーバは代入先・引数・戻り値の型（文脈の型）のプロパティへの参照として返す。名前で解決するには
+  式の文脈の型の推論（期待される型の伝播）が要り、AST の軽量推論の範囲を超える。構造的な参照と同様に件数をレポートに出して除く。
+  判定は「参照元にその名前がキーとしてだけ現れる」もの。根の名前（変数・import の束縛）はメンバの定義を指さないため、
+  メンバの定義に対しては、省略記法 `{ db }` のように変数の参照を兼ねるキーも文脈による参照として数える
+- confidence の閾値ごと（0 / 0.5 / 0.7 / 0.9）の再現率・適合率と、段ごと（関係の組の最大の確信度で分類）の適合率を出す（Stage 3）
+- `exsample-workspace/` は C のみで AST 未対応のため対象外
 - 置き場所: `verification/ast-accuracy/`（既存の `verification/lsp-parallel/` に倣う）
 - 対象: 本リポジトリ自身 + `exsample-workspace/`
 - 出力レポート:
@@ -529,6 +588,11 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 
 このレポートで **confidence 閾値と段4' の候補数閾値を実測で決める**。
 
+**Stage 3 の基準の測り方**: 「関係全体の再現率 ≥ 90%、適合率 ≥ 90%（閾値 0.7 時）」は、シンボル単位（言語サーバのシンボルに付いた
+`fqn` の組）のファイル間の関係で測る。分母は LSP の関係から構造的な参照と文脈による参照を除いたもの。再現率は
+そのうち AST が confidence ≥ 0.7 で見つけた割合、適合率は AST の confidence ≥ 0.7 の関係の組のうち LSP にもある割合。
+ファイル内の関係は LSP の経路が記録しないため比べない（§12「Stage 2 の実装結果」）。
+
 ---
 
 ## 12. 段階計画
@@ -540,7 +604,7 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 | **0** | **完了** | AST 基盤: `web-tree-sitter` 導入、パーササービス、TS/JS 文法、WASM 同梱・遅延ロード | 単体テストで任意の TS/JS をパースできる / `.vsix` を実機インストールして WASM がロードされる / 既存機能に影響なし | 0.3.36 |
 | **1** | **完了** | Phase A: defs / imports / occurrences 抽出、`fqn`・`export_name` 付与、スキーマ v2 とマイグレーション、DuckDB へ保存（**まだ関係抽出には使わない**） | 自リポジトリ全ファイルで occurrences が保存される / `fqn` がファイル内で一意 / パース時間 中央値 < 20ms/ファイル / v1 DB から無停止で移行できる | 0.3.37 |
 | **2** | **完了** | Phase B 段1〜2（ローカル + import 解決）、`kind` 付与、`table_relationships_v2` への保存。表示は従来関係のまま | import 由来の関係の再現率 ≥ 95%（対 LSP、§11 のレポート） / 検証レポートが CI or スクリプトで再生成できる | 0.3.38 |
-| **3** | 未着手 | Phase B 段3〜4'（型推論・一意名・曖昧候補）、confidence、Phase C 集約 VIEW | 関係全体の再現率 ≥ 90%、適合率 ≥ 90%（閾値 0.7 時） / 段別内訳がレポートに出る | 0.3.39 |
+| **3** | **完了** | Phase B 段3〜4'（型推論・一意名・曖昧候補）、confidence、Phase C 集約 VIEW | 関係全体の再現率 ≥ 90%、適合率 ≥ 90%（閾値 0.7 時。測り方は §11） / 段別内訳がレポートに出る | 0.3.39 |
 | **4** | 未着手 | **主経路の切替**: `examine()` を AST 主体へ。LSP は低 confidence 検証と未対応言語フォールバックに降格。設定 `crd.ast.enabled` で旧経路へ戻せる。旧 `table_relationships` を DROP | 自リポジトリの `examineRelationships` 実行時間が現行比 ≤ 50% / 言語サーバ未導入の状態でも TS/JS の関係が出る / 旧経路へのロールバックが動く | 0.4.0 |
 | **5** | 未着手 | 描画反映: kind の色分け・strength の線幅・kind トグル・strength 閾値スライダー・ファイル内依存トグル | グラフ上で継承と import が区別できる / 閾値スライダーで幹線のみ表示できる | 0.4.1 |
 | **6** | 未着手 | 言語追加（需要順: Python → Go → Java/C#）。`.scm` とモジュール解決の追加のみで完結 | 追加言語で §11 のレポートが所定値を満たす / WASM は当該言語のファイルが在るときだけロードされる | 0.4.x |
@@ -659,6 +723,76 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 - 名前解決はキューが空になった時点でしか走らないため、`showDiagram` を全走査の途中で開くと v2 の関係が古い。Stage 4 で表示に使う時に
   考慮する
 
+### Stage 3 の実装結果（0.3.39 / 2026-10-08）
+
+Stage 2 と同じく、自リポジトリの TS/JS 64 ファイルを拡張機能と同じ差分キューで調べて実測した
+（`yarn verify:accuracy`、VS Code 1.141.0、299 秒）。生成されたレポートは `verification/ast-accuracy/report.md`。
+
+| 受け入れ基準 | 結果 |
+| ------------ | ---- |
+| 関係全体の再現率 ≥ 90%（閾値 0.7） | **達成。92.3%（1,433 / 1,552）**。分母は LSP の関係 8,239 件から構造的な参照 5,930 件と文脈による参照 439 件を除いたファイル間の関係（§11） |
+| 適合率 ≥ 90%（閾値 0.7） | **達成。98.8%（1,433 / 1,451）** |
+| 段別内訳がレポートに出る | **達成**。段ごとの適合率（関係の組の最大の確信度で分類）と、参照出現の解決の内訳（段1〜4'・関係にしなかった理由ごと）を出す。`yarn verify:accuracy` は閾値 0.7 の再現率・適合率が 90% を下回ると失敗する |
+
+**確信度の閾値ごと・段ごと**
+
+| 確信度 | 再現率 | 適合率 |
+| ------ | ------ | ------ |
+| ≥ 0 | 94.2%（1,462 / 1,552） | 87.4%（1,462 / 1,673） |
+| ≥ 0.5 | 93.8%（1,455 / 1,552） | 95.8%（1,455 / 1,518） |
+| **≥ 0.7** | **92.3%（1,433 / 1,552）** | **98.8%（1,433 / 1,451）** |
+| ≥ 0.9 | 41.7%（647 / 1,552） | 97.3%（647 / 665） |
+
+| 段 | 適合率 | 参照出現の解決件数 |
+| -- | ------ | ------------------ |
+| 段1 ファイル内の定義（1.0） | －（ファイル内の関係のみ） | 3,264 |
+| 段2 import（0.95） | 97.3%（647 / 665） | 688 |
+| 段3 型推論（0.8） | **100.0%（786 / 786）** | 2,709 |
+| 段4 一意名（0.6） | 34.4%（22 / 64） | 135 |
+| 段4' 曖昧候補（0.5/N）・モジュール単位（0.5） | 4.4%（7 / 158） | 128（破棄 65） |
+
+段4 / 4' の適合率は低いが、閾値 0.7 の既定の表示から外れるため基準に影響しない。§7.4 の LSP による確定の対象になる。
+
+**その他の指標**
+
+| 指標 | 値 | 読み方 |
+| ---- | -- | ---- |
+| import 由来の関係の再現率（Stage 2 の基準） | 99.6%（513 / 515） | 取りこぼした 2 件は、言語サーバがスクリプト（`src/test/astFacts.test.ts`）のトップレベルの変数 `doc` を別ファイルの同名のローカル変数と結び付けたもの。どの組が出るかは実行ごとに変わる（前回は `verification/lsp-parallel/` の `assert` で 8 件） |
+| ファイル単位の再現率 | 97.3%（142 / 146） | |
+| ファイル単位の適合率 | 60.4%（142 / 235）、**閾値 0.7 では 85.0%（142 / 167）** | 全ての確信度で数えると、段4 / 4' の弱い関係が AST のみの組を 68 増やす。閾値 0.7 では Stage 2（83.7%）と同程度 |
+| 段3 の内訳 | 2,709 件 | `this` / `super` のメンバ（Stage 2 で 1,010 件が未解決だった）、引数・変数の型注釈、`new`・戻り値・要素・添字・分割代入の取り出し元 |
+
+**再現率の推移**（閾値 0.7）
+
+| 時点 | 再現率 | 適合率 | 変えた事 |
+| ---- | ------ | ------ | -------- |
+| Stage 2 | 31.0%（全確信度） | 96.1% | 段1・段2 のみ |
+| 段3 の最初の実装 | 70.3% | 98.6% | `this`・型注釈・`new`・戻り値・for-of・コールバックの引数 |
+| 文脈による参照を除く | 87.6% | 99.6% | §11 の判断（ユーザーと決定）。`then` / `sort` / `reduce` のコールバック・連鎖した代入・`Map` の値 |
+| 完了時 | **92.3%** | **98.8%** | 添字の要素（`nodes[i].x`）・分割代入（`const { nodes } = data`）・引数の型リテラルのメンバ・省略記法のキーの扱い |
+
+**計測で分かった事**
+
+1. **引数を定義にすると、言語サーバのシンボルへの解決キーを取り違えた**。コールバックのシンボル（`map() callback`）は引数と同じ位置から始まり、
+   オブジェクトリテラルのメソッドは名前の照合で引数に一致した。import 由来の再現率が一時 93.3% に下がった。引数には解決キーを付けない（§6.2）
+2. **計測中にソースを編集すると、計測が壊れる**。差分キューが走査の途中で変わったファイルを再調査し、LSP の関係 669 件が解決キーに辿り着けなくなった。
+   `yarn verify:accuracy` の実行中はリポジトリを編集しない事
+3. 分割代入の変数を定義にすると、言語サーバが分割代入の変数への参照として返す関係（`drawingData.nodes` → 別ファイルの
+   `const { nodes } = data` の `nodes`）が比較に入る。関数内のローカル変数は別ファイルから参照できないため、これは言語サーバの記録の癖である。
+   今回は分母に残した（除くと再現率は上がる）
+
+**Stage 4 への申し送り**
+
+- **差分更新の再解決の範囲が足りない**（§9）。段3 は import の推移閉包、段4 は同名の定義に依存するが、再解決するのは「変わったファイルと
+  それを import しているファイル」だけ。Stage 4 で表示に使う前に対応する
+- 残りの取りこぼし（閾値 0.7 で 119 件）の主な内訳:
+  - キーの名前がメンバ参照としても現れる文脈による参照（`{ fqn: row.fqn }` の `fqn`、`{ log: … }` と `logs.log()`）。比較の方法の限界で、名前解決では引けない
+  - 型を引けない形: 交差型（`(AstImport & ModuleResolution)[]`）の要素、`new Map<K, V>()` の型引数、戻り値の型リテラルのメンバ（`{ path, definition }[]`）、
+    分割代入したコールバックの引数（`.map(({ a }) => …)`）、型注釈の無い引数
+  - 上記 3 の言語サーバの記録の癖
+- 段4 / 4' は適合率が低い（34.4% / 4.4%）。§7.4 の LSP による確定（confidence < 0.7 の出現だけ定義を問い合わせる）で置き換えるか、表示しない
+- LSP の参照検索は実行ごとに結果が揺れる（スクリプトのトップレベルの変数の扱いなど）。基準の近くで判定する時は複数回測る
+
 ### 設定項目（`package.json` の `contributes.configuration`）
 
 | 設定 | 既定 | 用途 |
@@ -682,9 +816,9 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 | 5 | モジュール解決（相対 / tsconfig paths / node_modules） | `src/extruct/ast/moduleResolver.ts` | 1 | 完了 |
 | 6 | スキーマ v2・マイグレーション・保存API | `src/codeDb.ts`、埋め戻し: `src/relationship/examine.ts`, `fileDifference/queue.ts`, `fileDifference/item.ts` | 1 | 完了 |
 | 7 | `fqn` / `export_name` の付与（AST defs と既存シンボルの照合） | `src/extruct/codeSymbols.ts`（`attachAstKeys()`）, `src/extruct/symbol.ts` | 1 | 完了 |
-| 8 | 解決オーケストレータ（段1〜5・confidence） | `src/relationship/resolve.ts`、差分キューへの組み込み: `src/relationship/fileDifference/queue.ts` | 2-3 | 段1〜2 完了（段3〜5 は Stage 3） |
-| 9 | 解決 VIEW 群・集約 VIEW | `src/codeDb.ts`（スキーマ v3・`view_relationship_strength`） | 2-3 | 集約 VIEW は完了。解決 VIEW は採用せず TypeScript で解決（§7.3） |
-| 10 | 精度検証ハーネスとレポート | `src/test/astAccuracy.verify.ts`, `src/relationship/accuracy.ts`, `verification/ast-accuracy/`, `.vscode-test.mjs`（`accuracy` ラベル） | 2 | 完了 |
+| 8 | 解決オーケストレータ（段1〜5・confidence） | `src/relationship/resolve.ts`、差分キューへの組み込み: `src/relationship/fileDifference/queue.ts`、型の手掛かり: `src/extruct/ast/localFacts.ts`, `queries/*.scm` | 2-3 | 完了（段1〜4'。段5 は理由ごとに数えるだけ。差分更新の再解決の範囲は Stage 4 で広げる。§9） |
+| 9 | 解決 VIEW 群・集約 VIEW | `src/codeDb.ts`（スキーマ v3・v4・`view_relationship_strength`） | 2-3 | 完了。集約 VIEW は confidence で重み付けする。解決 VIEW は採用せず TypeScript で解決（§7.3） |
+| 10 | 精度検証ハーネスとレポート | `src/test/astAccuracy.verify.ts`, `src/relationship/accuracy.ts`, `verification/ast-accuracy/`, `.vscode-test.mjs`（`accuracy` ラベル） | 2-3 | 完了（Stage 3 で閾値ごと・段ごとの集計と文脈による参照の除外を追加） |
 | 11 | `computeUpsert()` を Phase A + B 呼び出しへ差し替え、LSP 降格 | `src/relationship/examine.ts`, `src/relationship/codeRelationships.ts` | 4 | 未着手 |
 | 12 | 設定項目の追加とロールバック経路 | `package.json`, `src/extension.ts` | 4 | 未着手 |
 | 13 | kind / strength / intra-file の描画 | `src/relationship/cosmosAdapter.ts`, `src/webview/graphView.ts` | 5 | 未着手 |
@@ -760,5 +894,5 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 ## 最終更新
 
 - **日付**: 2026-10-08
-- **バージョン**: 0.3.38（Stage 2 完了時点）
+- **バージョン**: 0.3.39（Stage 3 完了時点）
 - **作成者**: Claude Code

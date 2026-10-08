@@ -257,13 +257,17 @@ docs/
 - **FACTS_VERSION**（`localFacts.ts`）: クエリや抽出規則を変えたら上げる。`table_files.facts_version` が異なるファイルは、内容が同じでも次の全走査で LSP を使わずに事実だけを抽出し直す（キュー項目 `facts`）
 - **ソースに生の制御文字・BOM・ゼロ幅文字を書かない事**: tree-sitter は構文エラーにし、自リポジトリの事実が落ちる。必要なら `\uFEFF` のようなエスケープで書く
 
-**名前解決（Stage 2 / v0.3.38～）**: キューが空になった時点で、事実から `table_relationships_v2` を作る（`src/relationship/resolve.ts`。まだ表示には使わない）
+**名前解決（Stage 2〜3 / v0.3.38～）**: キューが空になった時点で、事実から `table_relationships_v2` を作る（`src/relationship/resolve.ts`。まだ表示には使わない）
 
-- **段1**: `binding_fqn`（根の名前を束縛しているファイル内の定義）から引く。**段2**: import 束縛から import 先の export を引く（再エクスポートは3段まで）
+- **段1**: `binding_fqn`（根の名前を束縛しているファイル内の定義）から引く（確信度 1.0）。**段2**: import 束縛から import 先の export を引く（再エクスポートは3段まで。0.95）
+- **段3**（v0.3.39～。0.8）: 値の型を推論して型のメンバを継承元まで引く。型の手掛かり（`AstDefinition.type`・スキーマ v4 の `type_*` 列）は、定義ごとに型名・式を参照出現と同じ形（根の名前・メンバの経路・束縛）で Phase A に持ち、段3 で同じ `walk()` で辿る。添字の要素はメンバの経路で `[]`（`ELEMENT_MEMBER`）
+- **段4 / 4'**（0.6 / 0.5÷N）: 型の分からない名前を、プロジェクト全体の同名の定義（2〜4 候補まで）へ弱い関係にする。組込みによくある名前は除く
+- 引数・分割代入の変数も定義にする（型の手掛かりのため）が、引数には言語サーバのシンボルの解決キーを付けない（`attachAstKeys()`）
 - 結合先は AST の定義（`table_definitions`）。言語サーバのシンボルには依存しない
 - **RESOLVE_VERSION**（`resolve.ts`）: 解決規則を変えたら上げる。`table_files.resolved_version` が異なるファイルを解決し直す。事実が変わると、そのファイルと import しているファイルが未解決に戻る
 - 解決は SQL ではなく TypeScript で行う（モジュールと定義の解決が交互に現れる連鎖を SQL で表しにくいため。`docs/ast-plan.md` §7.3）
-- 精度検証: `yarn verify:accuracy`（LSP 由来の関係を正解とし、`verification/ast-accuracy/report.md` を書き出す）
+- 精度検証: `yarn verify:accuracy`（LSP 由来の関係を正解とし、`verification/ast-accuracy/report.md` を書き出す）。**実行中にリポジトリのファイルを編集しない事**（差分キューが再調査し、計測が壊れる）
+- 差分更新の再解決は「変わったファイルと import しているファイル」だけで、段3 の推移的な型・段4 の同名の定義の増減は追わない（Stage 4 で対応。`docs/ast-plan.md` §9）
 
 ---
 
@@ -493,7 +497,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 ## 最終更新
 
 - **日付**: 2026-10-08
-- **バージョン**: 0.3.38
+- **バージョン**: 0.3.39
 - **作成者**: Claude Code
 
 このファイルはプロジェクトの進化に伴い定期的に更新してください。

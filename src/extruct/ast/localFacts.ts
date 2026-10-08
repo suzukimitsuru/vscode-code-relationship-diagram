@@ -7,7 +7,7 @@ import { RelationshipKind, relationshipKindOf, relationshipKindRank } from './re
  * @description クエリや抽出規則を変えたら上げる。DB の facts_version がこれと異なるファイルは、
  *              内容が変わっていなくても次の全走査で事実だけを抽出し直す
  */
-export const FACTS_VERSION = 2;
+export const FACTS_VERSION = 3;
 
 /**
  * 自ファイルを指すモジュール指定子
@@ -49,6 +49,312 @@ export interface AstDefinition {
 
     /** 定義ノードの終了行 (0起点) */
     readonly endLine: number;
+
+    /** 値の型の手掛かり (関数・メソッドは戻り値の型。分からなければ null。Stage 3) */
+    readonly type: AstTypeRef | null;
+}
+
+/**
+ * 型の手掛かりの種類 (Stage 3)
+ * - annotation: 型注釈 (関数・メソッドは戻り値の型注釈。Promise<T> と T | null は T にする)
+ * - new:        `new X()` で初期化した値 (型は X)
+ * - call:       `f()` / `await a.f()` で初期化した値 (型は f の戻り値の型)
+ * - value:      `a` / `a.b` で初期化した値 (型は a.b の型)
+ * - element:    `for (const x of xs)` / `xs.map(x => …)` の x (型は xs の要素の型)
+ */
+export type AstTypeMode = 'annotation' | 'new' | 'call' | 'value' | 'element';
+
+/** 型の手掛かり: 型名か式を、参照出現と同じ形 (根の名前・メンバの経路・束縛) で持つ */
+export interface AstTypeRef {
+    readonly mode: AstTypeMode;
+    readonly rootName: string;
+    readonly memberPath: string | null;
+    readonly scopeId: number | null;
+    readonly bindingFqn: string | null;
+    /** annotation で、型が配列 (T[] / Array<T> / Set<T> など) か。要素の型が rootName / memberPath */
+    readonly array: boolean;
+}
+
+/**
+ * コールバックの引数の型を、レシーバから引けるメソッド (メソッド名 → 引数の位置 → 要素 / 値)
+ * - element: レシーバの要素の型 (xs.map(x => …) の x、xs.sort((a, b) => …) の a と b、xs.reduce((acc, x) => …) の x)
+ * - value:   レシーバの値の型 (promise.then(v => …) の v。Promise<T> は T として扱う)
+ */
+const CALLBACK_PARAMETERS: ReadonlyMap<string, readonly ('element' | 'value' | null)[]> = new Map<string, readonly ('element' | 'value' | null)[]>([
+    ...['forEach', 'map', 'filter', 'find', 'findLast', 'findIndex', 'findLastIndex', 'some', 'every', 'flatMap']
+        .map(method => [method, ['element']] as const),
+    ['sort', ['element', 'element']], ['toSorted', ['element', 'element']],
+    ['reduce', [null, 'element']], ['reduceRight', [null, 'element']],
+    ['then', ['value']],
+]);
+
+/** 要素の型を変えずに配列を返す配列のメソッド (xs.filter(…).map(x => …) の x は xs の要素) */
+const ARRAY_PRESERVING_METHODS: ReadonlySet<string> = new Set([
+    'filter', 'slice', 'sort', 'reverse', 'concat', 'toSorted', 'toReversed', 'toSpliced', 'values',
+]);
+
+/** 要素を1つ返す配列のメソッド (const x = xs.find(…) の x は xs の要素) */
+const ELEMENT_RETURNING_METHODS: ReadonlySet<string> = new Set(['find', 'findLast', 'at', 'pop', 'shift', 'get']);
+
+/**
+ * メンバの経路で、添字による要素の取り出しを表すメンバ名 (`a[i].b` の経路は `[].b`)
+ * @description 名前には現れない文字列にする。段3 で配列の要素の型へ進む
+ */
+export const ELEMENT_MEMBER = '[]';
+
+/** 要素の型を表す型引数を持つ総称型 (配列として扱う) */
+const ELEMENT_GENERICS: ReadonlySet<string> = new Set(['Array', 'ReadonlyArray', 'Set', 'ReadonlySet', 'Iterable', 'IterableIterator']);
+
+/** 値の型を2つ目の型引数に持つ総称型 (値の配列として扱う。get() と values() が値を返す) */
+const MAP_GENERICS: ReadonlySet<string> = new Set(['Map', 'ReadonlyMap', 'WeakMap']);
+
+/**
+ * 型注釈から、メンバを引く対象の名前付きの型を取り出す
+ * @param typeNode 型注釈・型のノード
+ * @returns 型名のノード (type_identifier / nested_type_identifier) と配列か。取り出せなければ null
+ * @description Promise<T> と PromiseLike<T> は T、T | null | undefined は T、T[] / Array<T> / Set<T> は要素 T (配列)
+ */
+function namedTypeOf(typeNode: AstNode | null): { node: AstNode, array: boolean } | null {
+    let node = typeNode;
+    let array = false;
+    for (let depth = 0; node && depth < 16; depth++) {
+        switch (node.type) {
+            case 'type_annotation':
+            case 'parenthesized_type':
+            case 'readonly_type':
+                node = node.namedChildren[0] ?? null;
+                break;
+            case 'union_type':
+                node = node.namedChildren.find(child => child.type !== 'literal_type' &&
+                    !(child.type === 'predefined_type' && ['null', 'undefined', 'void', 'never'].includes(child.text))) ?? null;
+                break;
+            case 'array_type':
+                array = true;
+                node = node.namedChildren[0] ?? null;
+                break;
+            case 'generic_type': {
+                const name = node.childForFieldName('name');
+                const argument = node.childForFieldName('type_arguments')?.namedChildren[0] ?? null;
+                if (name && (name.text === 'Promise' || name.text === 'PromiseLike')) {
+                    node = argument;
+                } else if (name && ELEMENT_GENERICS.has(name.text)) {
+                    array = true;
+                    node = argument;
+                } else if (name && MAP_GENERICS.has(name.text)) {
+                    array = true;
+                    node = node.childForFieldName('type_arguments')?.namedChildren[1] ?? null;
+                } else {
+                    return name ? { node: name, array: array } : null;
+                }
+                break;
+            }
+            case 'type_identifier':
+            case 'nested_type_identifier':
+                return { node: node, array: array };
+            default:
+                return null;
+        }
+    }
+    return null;
+}
+
+/** 名前の連鎖として型を引ける式の種類 */
+const CHAIN_TYPES: ReadonlySet<string> = new Set(['identifier', 'member_expression', 'subscript_expression', 'this']);
+
+/** 括弧・await・非 null 表明を外し、`a ?? b` / `a || b` は左辺、`a = b` は右辺を取った式 */
+function unwrapExpression(node: AstNode | null): AstNode | null {
+    let current = node;
+    for (let depth = 0; current && depth < 16; depth++) {
+        if (['parenthesized_expression', 'await_expression', 'non_null_expression'].includes(current.type)) {
+            current = current.namedChildren[0] ?? null;
+        } else if (current.type === 'assignment_expression') {
+            current = current.childForFieldName('right');
+        } else if (current.type === 'binary_expression' && ['??', '||'].includes(current.childForFieldName('operator')?.text ?? '')) {
+            current = current.childForFieldName('left');
+        } else {
+            break;
+        }
+    }
+    return current;
+}
+
+/**
+ * 配列を表す式から、型を引ける値の名前の連鎖を取り出す
+ * @param expression 配列を表す式 (`xs`・`a.b`・`f()`・`xs.filter(…)`・`(await f())`)
+ * @returns 名前の連鎖のノード (呼び出しは呼ぶ関数。その戻り値の型が配列の型になる)。取り出せなければ null
+ * @description 要素の型を変えないメソッド (filter / slice …) は、その手前の配列まで遡る
+ */
+function arraySourceOf(expression: AstNode | null): AstNode | null {
+    let current = unwrapExpression(expression);
+    for (let depth = 0; current && current.type === 'call_expression' && depth < 16; depth++) {
+        const callee = current.childForFieldName('function');
+        const method = callee?.type === 'member_expression' ? callee.childForFieldName('property') : null;
+        if (!method || !ARRAY_PRESERVING_METHODS.has(method.text)) {
+            break;
+        }
+        current = unwrapExpression(callee?.childForFieldName('object') ?? null);
+    }
+    if (current?.type === 'call_expression') {
+        current = current.childForFieldName('function');
+    }
+    return current && CHAIN_TYPES.has(current.type) ? current : null;
+}
+
+/** 型名・式の根と経路 (型名は nested_type_identifier も扱う) */
+function chainOf(node: AstNode): ReceiverChain | null {
+    if (node.type === 'type_identifier') {
+        return { root: node, members: [], nodes: [node.id] };
+    }
+    if (node.type === 'nested_type_identifier') {
+        const module = node.childForFieldName('module');
+        const name = node.childForFieldName('name');
+        const chain = module ? receiverChainOf(module) : null;
+        return chain && name ? { root: chain.root, members: [...chain.members, name.text], nodes: chain.nodes } : null;
+    }
+    return receiverChainOf(node);
+}
+
+/** 型の手掛かりの元 (型名・式のノードと、分割代入で取り出したメンバ) */
+interface TypeSource {
+    readonly mode: AstTypeMode;
+    readonly node: AstNode;
+    readonly array: boolean;
+
+    /** 分割代入で取り出したメンバ名 (`const { b } = a` の b。型は a.b の型) */
+    readonly member?: string;
+
+    /** 分割代入のキーのノード (取り出し元のメンバへの参照出現になる) */
+    readonly key?: AstNode;
+}
+
+/**
+ * 分割代入で取り出した名前の、取り出し元とキー
+ * @param name 名前のノード (`{ b }` の b、`{ b: c }` の c、`{ b = 1 }` の b)
+ * @returns 分割代入の宣言・引数 (パターンを直接持つもの) と、キー。分割代入でなければ null
+ */
+function destructuringOf(name: AstNode): { owner: AstNode, key: AstNode } | null {
+    let node = name;
+    if (node.parent && ['object_assignment_pattern', 'assignment_pattern'].includes(node.parent.type) &&
+        node.parent.childForFieldName('left')?.id === node.id) {
+        node = node.parent;
+    }
+    let key: AstNode | null = null;
+    if (name.type === 'shorthand_property_identifier_pattern') {
+        key = name;
+    } else if (node.parent?.type === 'pair_pattern' && node.parent.childForFieldName('value')?.id === node.id) {
+        node = node.parent;
+        key = node.childForFieldName('key');
+    }
+    const pattern = node.parent;
+    const owner = pattern?.parent;
+    if (!key || key.type !== 'property_identifier' && key.type !== 'shorthand_property_identifier_pattern' ||
+        pattern?.type !== 'object_pattern' || !owner) {
+        return null;
+    }
+    const direct = owner.type === 'variable_declarator' ? owner.childForFieldName('name')
+        : ['required_parameter', 'optional_parameter'].includes(owner.type) ? owner.childForFieldName('pattern') : null;
+    return direct?.id === pattern.id ? { owner: owner, key: key } : null;
+}
+
+/**
+ * 定義の値の型の手掛かりを、構文木から取り出す
+ * @param definition 定義の候補
+ * @returns 手掛かりの種類と、型名・式のノード。無ければ null
+ */
+function typeSourceOf(definition: { readonly node: AstNode, readonly nameNode: AstNode, readonly kind: string }): TypeSource | null {
+    const node = definition.node;
+    const annotated = (typeNode: AstNode | null): TypeSource | null => {
+        const named = namedTypeOf(typeNode);
+        return named ? { mode: 'annotation', node: named.node, array: named.array } : null;
+    };
+
+    // const { b } = a / function f({ b }: A) の b は、a.b / A.b の型 (型リテラルの注釈なら b のメンバの型)
+    const destructuring = destructuringOf(definition.nameNode);
+    if (destructuring) {
+        const member = destructuring.key.text;
+        const typeNode = destructuring.owner.childForFieldName('type');
+        const literal = typeNode?.type === 'type_annotation' ? typeNode.namedChildren[0] : null;
+        if (literal?.type === 'object_type') {
+            const signature = literal.namedChildren.find(child =>
+                child.type === 'property_signature' && child.childForFieldName('name')?.text === member);
+            return annotated(signature?.childForFieldName('type') ?? null);
+        }
+        const named = namedTypeOf(typeNode);
+        if (named) {
+            return named.array ? null : { mode: 'value', node: named.node, array: false, member: member, key: destructuring.key };
+        }
+        const value = unwrapExpression(destructuring.owner.childForFieldName('value'));
+        return value && CHAIN_TYPES.has(value.type) ? { mode: 'value', node: value, array: false, member: member, key: destructuring.key } : null;
+    }
+
+    // 関数・メソッドは戻り値の型
+    if (['function_declaration', 'generator_function_declaration', 'method_definition', 'method_signature',
+        'function_signature', 'abstract_method_signature'].includes(node.type)) {
+        return annotated(node.childForFieldName('return_type'));
+    }
+
+    // 型注釈
+    const declared = annotated(node.childForFieldName('type'));
+    if (declared) {
+        return declared;
+    }
+
+    // 初期化子 (変数・クラスのプロパティ)
+    if (node.type === 'variable_declarator' || node.type === 'public_field_definition' || node.type === 'field_definition') {
+        const value = unwrapExpression(node.childForFieldName('value'));
+        if (!value) {
+            return null;
+        }
+        if (value.type === 'arrow_function' || value.type === 'function_expression') {
+            return annotated(value.childForFieldName('return_type'));
+        }
+        if (value.type === 'as_expression' || value.type === 'satisfies_expression') {
+            return annotated(value.namedChildren[1] ?? null);
+        }
+        // xs.find(…) は要素、xs.filter(…) は同じ配列
+        if (value.type === 'call_expression') {
+            const callee = value.childForFieldName('function');
+            const method = callee?.type === 'member_expression' ? callee.childForFieldName('property') : null;
+            if (method && ELEMENT_RETURNING_METHODS.has(method.text)) {
+                const source = arraySourceOf(callee?.childForFieldName('object') ?? null);
+                return source ? { mode: 'element', node: source, array: false } : null;
+            }
+            if (method && ARRAY_PRESERVING_METHODS.has(method.text)) {
+                const source = arraySourceOf(value);
+                return source ? { mode: 'value', node: source, array: false } : null;
+            }
+        }
+        const target = value.type === 'new_expression' ? value.childForFieldName('constructor')
+            : value.type === 'call_expression' ? value.childForFieldName('function') : value;
+        const mode: AstTypeMode = value.type === 'new_expression' ? 'new' : value.type === 'call_expression' ? 'call' : 'value';
+        return target && CHAIN_TYPES.has(target.type) ? { mode: mode, node: target, array: false } : null;
+    }
+
+    // for (const x of xs) の x
+    const parent = node.parent;
+    if (parent && parent.type === 'for_in_statement' && parent.childForFieldName('left')?.id === node.id &&
+        parent.children.some(child => child.type === 'of')) {
+        const right = arraySourceOf(parent.childForFieldName('right'));
+        return right ? { mode: 'element', node: right, array: false } : null;
+    }
+
+    // xs.map(x => …) の x・promise.then(v => …) の v (メソッドに渡したコールバックの引数)
+    if (definition.kind === 'parameter') {
+        const parameter = node;
+        const list = parameter.parent;
+        const fn = list && list.type === 'formal_parameters' ? list.parent : list;
+        const position = list && list.type === 'formal_parameters' ? list.namedChildren.findIndex(child => child.id === parameter.id) : 0;
+        const args = fn?.parent;
+        const call = args?.type === 'arguments' && args.namedChildren[0]?.id === fn?.id ? args.parent : null;
+        const callee = call?.type === 'call_expression' ? call.childForFieldName('function') : null;
+        const method = callee?.type === 'member_expression' ? callee.childForFieldName('property') : null;
+        const receiver = arraySourceOf(callee?.type === 'member_expression' ? callee.childForFieldName('object') : null);
+        const role = method ? CALLBACK_PARAMETERS.get(method.text)?.[position] ?? null : null;
+        if (fn && (fn.type === 'arrow_function' || fn.type === 'function_expression') && role && receiver) {
+            return { mode: role, node: receiver, array: false };
+        }
+    }
+    return null;
 }
 
 /** import 束縛 (再エクスポート・副作用 import を含む) */
@@ -246,14 +552,22 @@ interface ReceiverChain {
 
 /**
  * レシーバをメンバ参照の連鎖として正規化する
- * @param receiver レシーバのノード (識別子・this・super・メンバ参照・型の修飾名)
- * @returns 連鎖。途中に呼び出しや添字を含む (`a().b`、`a[0].b`) なら null
+ * @param receiver レシーバのノード (識別子・this・super・メンバ参照・添字・型の修飾名)
+ * @returns 連鎖。途中に呼び出しを含む (`a().b`) なら null
+ * @description 添字は、文字列なら同名のメンバ (`a['b']` → b)、それ以外は要素 (`a[i].b` → a.[].b) として経路に含める
  */
 function receiverChainOf(receiver: AstNode): ReceiverChain | null {
     const members: string[] = [];
     const nodes: number[] = [];
     let node: AstNode | null = receiver;
-    while (node && (node.type === 'member_expression' || node.type === 'nested_identifier')) {
+    while (node && (node.type === 'member_expression' || node.type === 'nested_identifier' || node.type === 'subscript_expression')) {
+        if (node.type === 'subscript_expression') {
+            const index = node.childForFieldName('index');
+            const key = index?.type === 'string' ? unquote(index.text) : null;
+            members.unshift(key !== null && /^[A-Za-z_$][\w$]*$/.test(key) ? key : ELEMENT_MEMBER);
+            node = node.childForFieldName('object');
+            continue;
+        }
         const property = node.childForFieldName('property');
         if (!property || property.type !== 'property_identifier') {
             return null;
@@ -296,10 +610,12 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
     const exportStatements = new Set<number>();
     const exportDefaults = new Set<number>();
     const exportClauses: { local: string, name: string, line: number, character: number }[] = [];
-    const definitionNames = new Set<number>();
+    const definitionNames = new Map<number, number>();
     const imports: AstImport[] = [];
     const usedModules = new Set<number>();
     const bareModules: AstNode[] = [];
+    const objectKeys: AstNode[] = [];
+    const importLocals = new Set<number>();
 
     for (const match of matches) {
         const captures = capturesByName(match);
@@ -317,21 +633,32 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
                 exportStatements.add(capture.node.id);
             } else if (capture.name === 'export.default') {
                 exportDefaults.add(capture.node.id);
+            } else if (capture.name === 'key.object') {
+                objectKeys.push(capture.node);
+            } else if (capture.name === 'imp.local') {
+                importLocals.add(capture.node.id);
             }
         }
 
         // 定義
         const definition = match.captures.find(capture => capture.name.startsWith('def.') && capture.name !== 'def.node');
-        if (definition && !definitionNames.has(definition.node.id)) {
-            // 同じ名前ノードを複数のパターンが捉える事がある (public readonly x の x)
-            definitionNames.add(definition.node.id);
+        if (definition) {
+            // 同じ名前ノードを複数のパターンが捉える事がある (public readonly x の x は引数とプロパティの両方)。
+            // 引数よりコンストラクタ引数のプロパティを優先し、それ以外は最初の1つを残す
             const [, kind, modifier] = definition.name.split('.');
             const node = captures.get('def.node') ?? definition.node.parent;
-            if (node) {
-                definitionCandidates.push({
+            const existing = definitionNames.get(definition.node.id);
+            if (node && (existing === undefined || (definitionCandidates[existing].kind === 'parameter' && modifier === 'parameter'))) {
+                const candidate = {
                     name: definition.node.text, kind: kind, signature: modifier === 'signature', parameter: modifier === 'parameter',
                     node: node, nameNode: definition.node,
-                });
+                };
+                if (existing === undefined) {
+                    definitionNames.set(definition.node.id, definitionCandidates.length);
+                    definitionCandidates.push(candidate);
+                } else {
+                    definitionCandidates[existing] = candidate;
+                }
             }
         }
 
@@ -394,7 +721,8 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
     }
 
     // 2. 定義: 入れ子の親を求め、本体の無い宣言 (オーバーロード) を同名の定義へまとめる
-    const candidates = new NestedIntervals(definitionCandidates.map(candidate =>
+    //    import 束縛でもある名前 (const { a } = require('x') の a) は定義にしない
+    const candidates = new NestedIntervals(definitionCandidates.filter(candidate => !importLocals.has(candidate.nameNode.id)).map(candidate =>
         ({ start: candidate.node.startIndex, end: candidate.node.endIndex, value: candidate })));
     const dropped = new Set<number>();
     const groups = new Map<string, number[]>();
@@ -427,6 +755,7 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
     const fqns: (string | null)[] = new Array(candidates.length).fill(null);
     const taken = new Map<string, number>();
     const definitions: AstDefinition[] = [];
+    const keptCandidates: DefinitionCandidate[] = [];
     const keptIntervals: Interval<number>[] = [];
     for (let index = 0; index < candidates.length; index++) {
         if (dropped.has(index)) {
@@ -446,6 +775,7 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
         taken.set(base, count);
         fqns[index] = count === 1 ? base : `${base}~${count}`;
         keptIntervals.push({ start: candidate.node.startIndex, end: candidate.node.endIndex, value: definitions.length });
+        keptCandidates.push(candidate);
         definitions.push({
             fqn: fqns[index] as string,
             name: candidate.name,
@@ -456,6 +786,7 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
             nameCharacter: candidate.nameNode.startPosition.column,
             startLine: candidate.node.startPosition.row,
             endLine: candidate.node.endPosition.row,
+            type: null,
         });
     }
 
@@ -530,6 +861,26 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
         return { scopeId: null, bindingFqn: null };
     };
 
+    // 定義の値の型の手掛かり (型名・式を参照出現と同じ形で持ち、名前解決の段3で型を引く)
+    // 分割代入のキーは、取り出し元のメンバへの読み取りの参照出現にする (const { b } = a の b → a.b)
+    const destructuredKeys: { key: AstNode, type: AstTypeRef }[] = [];
+    const typedDefinitions = finalDefinitions.map((definition, index) => {
+        const source = typeSourceOf(keptCandidates[index]);
+        const chain = source ? chainOf(source.node) : null;
+        if (!source || !chain) {
+            return definition;
+        }
+        const members = source.member !== undefined ? [...chain.members, source.member] : chain.members;
+        const type: AstTypeRef = {
+            mode: source.mode, rootName: chain.root.text, memberPath: members.length > 0 ? members.join('.') : null,
+            ...bindingOf(chain.root.text, chain.root.startIndex), array: source.array,
+        };
+        if (source.key) {
+            destructuredKeys.push({ key: source.key, type: type });
+        }
+        return { ...definition, type: type };
+    });
+
     // 5. 参照出現: レシーバをメンバ参照の連鎖として正規化し、同じノードを捉えた候補から最も具体的な種類を残す
     //    連鎖 (A.B.c) の内側のノード (A, B) を捉えた読み取りは、連鎖全体の参照出現に含まれるため除く
     const chains = new Map<OccurrenceCandidate, ReceiverChain>();
@@ -573,7 +924,26 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
             ...bindingOf(rootNode.text, rootNode.startIndex),
         });
     }
-    occurrences.sort((a, b) => (a.line - b.line) || (a.character - b.character));
+    for (const { key, type } of destructuredKeys) {
+        const definition = enclosing.find(key.startIndex);
+        occurrences.push({
+            line: key.startPosition.row, character: key.startPosition.column, rootName: type.rootName, memberPath: type.memberPath,
+            kind: RelationshipKind.read,
+            enclosingFqn: definition >= 0 ? typedDefinitions[enclosing.item(definition).value].fqn : fileKey,
+            scopeId: type.scopeId, bindingFqn: type.bindingFqn,
+        });
+    }
+    // オブジェクトリテラルのキー (名前では解決しない。種類 object_key として記録だけする)
+    for (const key of objectKeys) {
+        const definition = enclosing.find(key.startIndex);
+        occurrences.push({
+            line: key.startPosition.row, character: key.startPosition.column, rootName: key.text, memberPath: null,
+            kind: RelationshipKind.object_key,
+            enclosingFqn: definition >= 0 ? typedDefinitions[enclosing.item(definition).value].fqn : fileKey,
+            scopeId: null, bindingFqn: null,
+        });
+    }
+    occurrences.sort((a, b) => (a.line - b.line) || (a.character - b.character) || (a.kind - b.kind));
 
     // import は同じ束縛の重複を除く
     const seen = new Set<string>();
@@ -586,7 +956,7 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
         return true;
     });
 
-    return { definitions: finalDefinitions, imports: uniqueImports, occurrences: occurrences, hasError: root.hasError };
+    return { definitions: typedDefinitions, imports: uniqueImports, occurrences: occurrences, hasError: root.hasError };
 }
 
 /**

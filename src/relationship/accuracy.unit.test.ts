@@ -64,6 +64,22 @@ describe('compareRelationships', () => {
         expect(report.astOnlyFiles).toEqual([]);
     });
 
+    it('確信度の閾値ごとの再現率・適合率と、帯ごとの適合率を数える', () => {
+        const withConfidence = (relationship: RelationshipV2, confidence: number): RelationshipV2 => ({ ...relationship, confidence });
+        const report = compareRelationships(SYMBOLS,
+            [{ referenceId: 'b/f', defineId: 'a/A' }, { referenceId: 'b/C.run', defineId: 'a/A.m' }],
+            [
+                withConfidence(ast('b.ts#f', 'a.ts#A'), 0.95),         // 段2: LSP にもある
+                withConfidence(ast('b.ts#C.run', 'a.ts#A.m'), 0.8),    // 段3: LSP にもある
+                withConfidence(ast('b.ts#C', 'a.ts#A'), 0.6),          // 段4: LSP に無い
+            ]);
+        const at = (threshold: number) => report.byThreshold.find(entry => entry.threshold === threshold);
+        expect(at(0)).toMatchObject({ recall: { matched: 2, total: 2 }, precision: { matched: 2, total: 3 } });
+        expect(at(0.7)).toMatchObject({ recall: { matched: 2, total: 2 }, precision: { matched: 2, total: 2 } });
+        expect(at(0.9)).toMatchObject({ recall: { matched: 1, total: 2 }, precision: { matched: 1, total: 1 } });
+        expect(report.byBand.map(band => [band.precision.matched, band.precision.total])).toEqual([[0, 0], [1, 1], [1, 1], [0, 1], [0, 0]]);
+    });
+
     it('片方だけが見つけたファイルの組を返す (AST 側は関係の種類も)', () => {
         const report = compareRelationships(SYMBOLS, [{ referenceId: 'b/f', defineId: 'a/A' }],
             [ast('a.ts#', 'b.ts#C', RelationshipKind.import), ast('a.ts#A.m', 'b.ts#C')]);
@@ -84,6 +100,37 @@ describe('compareRelationships', () => {
         expect(report.structuralLsp).toBe(1);
         expect(report.importDerived).toEqual({ matched: 1, total: 1, ratio: 1 });
         expect(report.fileRecall).toEqual({ matched: 1, total: 1, ratio: 1 });
+    });
+
+    it('オブジェクトリテラルのキーとしてだけ現れる名前の関係は、文脈による参照として比較から除く', () => {
+        const occurrence = (enclosingFqn: string, kind: RelationshipKind, rootName: string, memberPath: string | null = null) =>
+            ({ enclosingFqn, kind, rootName, memberPath });
+        const report = compareRelationships(SYMBOLS,
+            [{ referenceId: 'a/A.m', defineId: 'b/C.run' }, { referenceId: 'a/A', defineId: 'b/C.run' }],
+            [],
+            [
+                occurrence('a.ts#A.m', RelationshipKind.object_key, 'run'),            // { run: … } だけ → 除く
+                occurrence('a.ts#A', RelationshipKind.object_key, 'run'),
+                occurrence('a.ts#A', RelationshipKind.call, 'c', 'run'),                // c.run() もある → 残す
+            ]);
+        expect(report.contextualLsp).toBe(1);
+        expect(report.symbolRecall.total).toBe(1);
+    });
+
+    it('省略記法のキー { run } は変数の読み取りでもあるが、メンバの定義に対しては文脈による参照として除く', () => {
+        const occurrence = (enclosingFqn: string, kind: RelationshipKind, rootName: string) =>
+            ({ enclosingFqn, kind, rootName, memberPath: null });
+        const report = compareRelationships(SYMBOLS,
+            [{ referenceId: 'a/A.m', defineId: 'b/C.run' }, { referenceId: 'a/A.m', defineId: 'b/f' }],
+            [],
+            [
+                occurrence('a.ts#A.m', RelationshipKind.object_key, 'run'),     // { run } → C.run は除く
+                occurrence('a.ts#A.m', RelationshipKind.read, 'run'),
+                occurrence('a.ts#A.m', RelationshipKind.object_key, 'f'),       // { f } → トップレベルの f は変数 f の参照として残す
+                occurrence('a.ts#A.m', RelationshipKind.read, 'f'),
+            ]);
+        expect(report.contextualLsp).toBe(1);
+        expect(report.symbolRecall.total).toBe(1);
     });
 
     it('解決キーに辿り着けないシンボルの関係は比較から除いて数える', () => {

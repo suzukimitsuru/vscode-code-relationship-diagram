@@ -2,7 +2,7 @@
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-    AstDefinition, AstImport, AstParser, FactsExtractor, ModuleResolution, ModuleResolver,
+    AstDefinition, AstImport, AstOccurrence, AstParser, FactsExtractor, ModuleResolution, ModuleResolver,
     RelationshipKind, resolveAstResources,
 } from '../extruct/ast';
 import { CONFIDENCE, RelationshipV2, ResolutionLookup, ResolutionStats, resolveFile } from './resolve';
@@ -25,6 +25,17 @@ const PROJECT: Record<string, string> = {
     'src/cycle/b.ts': 'export * from "./a";',
     'src/side.ts': 'export {};',
     'src/alias.ts': 'export const target = () => 1;\nexport default target;',
+    'src/typed.ts': [
+        'import { Base } from "./base";',
+        'interface Point { x: number; run(): void }',
+        'interface Data { points: Point[] }',
+        'export function layout(data: Data, input: { base: Base }) {',
+        '    const { points } = data;',
+        '    points[0].x;',
+        '    const point = data.points[1]; point.run();',
+        '    const { base } = input; base.run();',
+        '}',
+    ].join('\n'),
     'src/main.ts': [
         'import main, { Base, helper } from "./base";',              // 0
         'import * as Barrel from "./barrel";',                         // 1
@@ -54,6 +65,7 @@ describe('resolveFile', () => {
     let parser: AstParser;
     const definitions = new Map<string, AstDefinition[]>();
     const imports = new Map<string, (AstImport & ModuleResolution)[]>();
+    const occurrences = new Map<string, AstOccurrence[]>();
     let relationships: RelationshipV2[];
     let stats: ResolutionStats;
 
@@ -61,6 +73,9 @@ describe('resolveFile', () => {
     const lookup: ResolutionLookup = {
         definitions: async (file) => definitions.get(file) ?? [],
         imports: async (file) => imports.get(file) ?? [],
+        occurrences: async (file) => occurrences.get(file) ?? [],
+        definitionsNamed: async (name) => [...definitions.entries()]
+            .flatMap(([file, entries]) => entries.filter(entry => entry.name === name).map(entry => ({ path: file, definition: entry }))),
     };
     const native = (file: string): string => file.split('/').join(path.sep);
     const fqn = (file: string, name: string): string => `${native(file)}#${name}`;
@@ -79,6 +94,7 @@ describe('resolveFile', () => {
             const facts = await extractor.extract(native(file), 'typescript', source);
             definitions.set(native(file), facts?.definitions ?? []);
             imports.set(native(file), facts?.imports ?? []);
+            occurrences.set(native(file), facts?.occurrences ?? []);
             if (file === 'src/main.ts') {
                 const resolved = await resolveFile({ path: native(file), imports: facts?.imports ?? [], occurrences: facts?.occurrences ?? [] }, lookup);
                 relationships = resolved.relationships;
@@ -156,9 +172,36 @@ describe('resolveFile', () => {
     it('解決しないものは理由ごとに数える', () => {
         expect(stats.external).toBe(2);           // vscode.window と import 文
         expect(stats.unresolvedImport).toBe(2);   // gone() と import 文
-        expect(stats.thisOrSuper).toBe(3);        // this.m / this.local / this.m (local の中)
-        expect(stats.unbound).toBe(1);            // console.log
-        expect(stats.localBinding).toBe(2);       // param (引数) の読み取り 2 回
+        expect(stats.unbound).toBe(1);            // console.log (組込み)
+        expect(stats.thisOrSuper).toBe(0);        // this のメンバは段3 で囲むクラスから引く
+    });
+
+    it('段3: this のメンバは囲むクラスから引き、再帰 (自分自身) は関係にしない', () => {
+        const local = (name: string): string => fqn('src/main.ts', name);
+        const inferred = relationships.filter(entry => entry.confidence === CONFIDENCE.inferred).map(entry => `${entry.referenceFqn} -> ${entry.defineFqn}`);
+        expect(inferred).toEqual(expect.arrayContaining([
+            `${local('Local.m')} -> ${local('Local.local')}`,
+            `${local('Local.local')} -> ${local('Local.m')}`,
+        ]));
+        expect(inferred).not.toContain(`${local('Local.m')} -> ${local('Local.m')}`);
+        expect(stats.inferred).toBe(2);
+        expect(stats.self).toBeGreaterThan(0);
+    });
+
+    it('段3: 添字は配列の要素の型、分割代入は取り出し元のメンバの型として引く', async () => {
+        const file = native('src/typed.ts');
+        const resolved = await resolveFile({ path: file, imports: imports.get(file) ?? [], occurrences: occurrences.get(file) ?? [] }, lookup);
+        const inferred = resolved.relationships.filter(entry => entry.confidence === CONFIDENCE.inferred)
+            .map(entry => `${entry.referenceFqn} -> ${entry.defineFqn}`);
+        const local = (name: string): string => fqn('src/typed.ts', name);
+        expect(inferred).toEqual(expect.arrayContaining([
+            `${local('layout')} -> ${local('Point.x')}`,                 // points[0].x (const { points } = data)
+            `${local('layout')} -> ${local('Point.run')}`,               // const point = data.points[1]; point.run()
+            `${local('layout')} -> ${fqn('src/base.ts', 'Base.run')}`,  // const { base } = input (型リテラルの注釈)
+        ]));
+        // 分割代入のキーは取り出し元のメンバの読み取り
+        expect(resolved.relationships.map(entry => `${entry.referenceFqn} -> ${entry.defineFqn}`))
+            .toContain(`${local('layout.points')} -> ${local('Data.points')}`);
     });
 
     it('重みは種類ごとの基本重み、ファイルの両端と行を記録する', () => {
