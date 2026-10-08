@@ -3,6 +3,7 @@
 ; キャプチャ名の規約 (言語間で統一する事。docs/ast-plan.md §6.2):
 ;   def.<種別>             定義。fqn / export_name の元になる
 ;   def.<種別>.signature   本体の無い宣言 (オーバーロード・宣言ファイル)。同じ親・同じ名前の定義と1つにまとめる
+;   def.<種別>.parameter   コンストラクタ引数のプロパティ。親をコンストラクタの1つ外側 (クラス) にする
 ;   def.node               定義ノードを明示する (省略時は名前ノードの親が定義ノード)
 ;   imp.local              import 束縛のファイル内での名前 (1マッチ = 1束縛)
 ;   imp.imported           取り込む名前 (名前付き import / 再エクスポート)
@@ -20,7 +21,7 @@
 ;   scope                  レキシカルスコープを作るノード
 ;   bind.<種別>            定義以外の束縛 (引数・型引数・分割代入・catch 等)
 ;   ref.<kind>             参照出現。<kind> がそのまま RelationshipKind になる
-;   ref.receiver           メンバ参照のレシーバ (a.b() の a、および this / super)
+;   ref.receiver           メンバ参照のレシーバ (a.b() の a、this / super、A.B.c() の A.B のようなメンバ参照の連鎖)
 ;
 ; def / bind / imp にキャプチャされたノードは参照出現にならない。
 ; 同じノードを複数の ref パターンが捉えた時は relationshipKind.ts の優先順位で1つに絞る。
@@ -42,6 +43,11 @@
 (class_body (method_signature name: (property_identifier) @def.method.signature))
 (abstract_method_signature name: (property_identifier) @def.method.signature)
 (public_field_definition name: (property_identifier) @def.property)
+; コンストラクタ引数のプロパティ (constructor(public readonly x: T)) はクラスのメンバ。親はコンストラクタではなくクラスになる
+(required_parameter (accessibility_modifier) pattern: (identifier) @def.property.parameter)
+(required_parameter "readonly" pattern: (identifier) @def.property.parameter)
+(optional_parameter (accessibility_modifier) pattern: (identifier) @def.property.parameter)
+(optional_parameter "readonly" pattern: (identifier) @def.property.parameter)
 ; 型のメンバはインターフェースと型エイリアスの本体に限る
 ; (引数や戻り値の型注釈に書いた型リテラルのメンバは定義にしない)
 (interface_body (method_signature name: (property_identifier) @def.method.signature))
@@ -152,64 +158,53 @@
   property: (property_identifier) @ref.inheritance))
 (extends_type_clause type: (type_identifier) @ref.inheritance)
 (extends_type_clause type: (nested_type_identifier
-  module: (identifier) @ref.receiver
+  module: [(identifier) (nested_identifier)] @ref.receiver
   name: (type_identifier) @ref.inheritance))
 (implements_clause (type_identifier) @ref.implementation)
 (implements_clause (nested_type_identifier
-  module: (identifier) @ref.receiver
+  module: [(identifier) (nested_identifier)] @ref.receiver
   name: (type_identifier) @ref.implementation))
 
 ; kind = instantiation
 (new_expression constructor: (identifier) @ref.instantiation)
 (new_expression constructor: (member_expression
-  object: (identifier) @ref.receiver
+  object: [(identifier) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.instantiation))
 
 ; kind = call
 (call_expression function: (identifier) @ref.call)
 (call_expression function: (member_expression
-  object: (identifier) @ref.receiver
-  property: (property_identifier) @ref.call))
-; this / super をレシーバとする呼び出し (@ref.receiver の文字列が 'this' / 'super' になる)
-(call_expression function: (member_expression
-  object: [(this) (super)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.call))
 
 ; kind = type_reference (型の位置に現れる型名は全て)
 (type_identifier) @ref.type_reference
 (nested_type_identifier
-  module: (identifier) @ref.receiver
+  module: [(identifier) (nested_identifier)] @ref.receiver
   name: (type_identifier) @ref.type_reference)
 
 ; kind = write
 (assignment_expression left: (identifier) @ref.write)
 (assignment_expression left: (member_expression
-  object: (identifier) @ref.receiver
-  property: (property_identifier) @ref.write))
-(assignment_expression left: (member_expression
-  object: [(this) (super)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.write))
 (augmented_assignment_expression left: (identifier) @ref.write)
 (augmented_assignment_expression left: (member_expression
-  object: [(identifier) (this) (super)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.write))
 
 ; kind = decorator
 (decorator (identifier) @ref.decorator)
 (decorator (call_expression function: (identifier) @ref.decorator))
 (decorator (call_expression function: (member_expression
-  object: (identifier) @ref.receiver
+  object: [(identifier) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.decorator)))
 
-; kind = read (メンバの読み取りと、値として渡される識別子)
+; kind = read (メンバの読み取りと、値として現れる識別子は全て)
+; 素の識別子は包括的に捉える。定義名・束縛・import 名は除外され、呼び出し等のより具体的な種類が優先される。
+; メンバ参照の連鎖 (A.B.c) の内側の識別子は、連鎖全体の参照出現に含まれるため除かれる
 (member_expression
-  object: [(identifier) (this) (super)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
   property: (property_identifier) @ref.read)
-(arguments (identifier) @ref.read)
-(variable_declarator value: (identifier) @ref.read)
-(return_statement (identifier) @ref.read)
-(pair value: (identifier) @ref.read)
+(identifier) @ref.read
 (shorthand_property_identifier) @ref.read
-(array (identifier) @ref.read)
-(spread_element (identifier) @ref.read)
-(assignment_expression right: (identifier) @ref.read)

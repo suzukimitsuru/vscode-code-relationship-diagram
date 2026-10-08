@@ -1,9 +1,9 @@
 /** @file シンボルへの解決キーの付与の単体テスト */
 import * as path from 'path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import * as SYMBOL from './symbol';
-import { attachAstKeys } from './codeSymbols';
+import { attachAstKeys, extract } from './codeSymbols';
 import { AstParser, LocalFacts, collectLocalFacts, resolveAstResources } from './ast';
 
 const FILE = 'src/sample.ts';
@@ -77,5 +77,37 @@ describe('attachAstKeys', () => {
         const symbols = [symbolOf('run', [1, 4], [1, 4, 1, 18]), symbolOf('run', [1, 4], [1, 4, 1, 18])];
         expect(attachAstKeys(FILE, symbols, facts.definitions)).toBe(1);
         expect(symbols.map(symbol => symbol.fqn)).toEqual([`${FILE}#Sample.run`, null]);
+    });
+});
+
+describe('extract', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    /** DocumentSymbolProvider の結果 (本文は範囲の行の文字列) */
+    const documentSymbol = (name: string, line: number, children: unknown[] = []): unknown => ({
+        name: name, kind: vscode.SymbolKind.Variable,
+        range: new vscode.Range(new vscode.Position(line, 0), new vscode.Position(line, 10)),
+        selectionRange: new vscode.Range(new vscode.Position(line, 6), new vscode.Position(line, 6 + name.length)),
+        children: children,
+    });
+
+    it('種類・名前・本文が同じ兄弟の ID は文書順の番号で区別する (主キー違反でファイルの保存が失敗しないよう)', async () => {
+        const lines = ['function f() {', 'for (const x of a) {}', 'for (const x of a) {}', 'for (const x of a) {}', '}'];
+        vi.spyOn(vscode.commands, 'executeCommand').mockResolvedValue([
+            documentSymbol('f', 0, [documentSymbol('x', 1), documentSymbol('x', 2), documentSymbol('x', 3)]),
+        ] as never);
+        const document = {
+            uri: vscode.Uri.file('/w/a.ts'), lineCount: lines.length,
+            getText: (range: vscode.Range) => lines[range.start.line],
+        } as unknown as vscode.TextDocument;
+
+        const symbols = await extract('a.ts', document);
+        const ids = symbols.map(symbol => symbol.id);
+        expect(new Set(ids).size).toBe(ids.length);
+        const xs = symbols.filter(symbol => symbol.name === 'x').map(symbol => symbol.id);
+        expect(xs[1]).toBe(`${xs[0]}~2`);
+        expect(xs[2]).toBe(`${xs[0]}~3`);
     });
 });

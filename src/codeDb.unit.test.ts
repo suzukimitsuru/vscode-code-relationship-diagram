@@ -8,6 +8,7 @@ import * as codeDb from './codeDb';
 import * as codeFiles from './extruct/codeFiles';
 import * as SYMBOL from './extruct/symbol';
 import { FileFacts, RelationshipKind } from './extruct/ast';
+import { RelationshipV2 } from './relationship/resolve';
 
 /** 初版 (0.3.36 まで) のスキーマ */
 const V1_SCHEMA = [
@@ -32,14 +33,17 @@ const countOf = async (db: codeDb.Db, table: string): Promise<number> =>
 
 const FACTS: FileFacts = {
     relativePath: 'src/a.ts',
-    definitions: [],
+    definitions: [
+        { fqn: 'src/a.ts#A', name: 'A', kind: 'class', parentFqn: 'src/a.ts#', exportName: 'A', nameLine: 3, nameCharacter: 13, startLine: 3, endLine: 6 },
+        { fqn: 'src/a.ts#A.m', name: 'm', kind: 'method', parentFqn: 'src/a.ts#A', exportName: null, nameLine: 4, nameCharacter: 4, startLine: 4, endLine: 5 },
+    ],
     imports: [
         { localName: 'B', importedName: 'B', exportName: null, moduleSpec: './b', line: 0, character: 20, resolvedPath: 'src/b.ts', isExternal: false },
         { localName: 'vscode', importedName: '*', exportName: null, moduleSpec: 'vscode', line: 1, character: 24, resolvedPath: null, isExternal: true },
     ],
     occurrences: [
-        { line: 3, character: 10, rootName: 'B', memberPath: null, kind: RelationshipKind.inheritance, enclosingFqn: 'src/a.ts#A', scopeId: 0 },
-        { line: 4, character: 8, rootName: 'this', memberPath: 'run', kind: RelationshipKind.call, enclosingFqn: 'src/a.ts#A.m', scopeId: null },
+        { line: 3, character: 10, rootName: 'B', memberPath: null, kind: RelationshipKind.inheritance, enclosingFqn: 'src/a.ts#A', scopeId: 0, bindingFqn: null },
+        { line: 4, character: 8, rootName: 'this', memberPath: 'run', kind: RelationshipKind.call, enclosingFqn: 'src/a.ts#A.m', scopeId: null, bindingFqn: null },
     ],
     hasError: false,
     elapsedMs: 1,
@@ -68,12 +72,15 @@ describe('codeDb', () => {
             expect(await columnsOf(db, 'table_imports')).toEqual(
                 ['path', 'local_name', 'imported_name', 'export_name', 'module_spec', 'resolved_path', 'is_external', 'line', 'character']);
             expect(await columnsOf(db, 'table_occurrences')).toEqual(
-                ['path', 'line', 'character', 'root_name', 'member_path', 'kind', 'enclosing_fqn', 'scope_id']);
-            expect(await columnsOf(db, 'table_relationships_v2')).toContain('confidence');
+                ['path', 'line', 'character', 'root_name', 'member_path', 'kind', 'enclosing_fqn', 'scope_id', 'binding_fqn']);
+            expect(await columnsOf(db, 'table_relationships_v2')).toEqual(expect.arrayContaining(['confidence', 'reference_path', 'define_path']));
+            expect(await columnsOf(db, 'table_definitions')).toEqual(
+                ['path', 'fqn', 'name', 'kind', 'parent_fqn', 'export_name', 'name_line', 'name_character', 'start_line', 'end_line']);
+            expect(await columnsOf(db, 'table_files')).toContain('resolved_version');
             expect(await countOf(db, 'view_relationship_strength')).toBe(0);
         });
 
-        it('v1 の DB を、行を保持したまま v2 へ移行する', async () => {
+        it('v1 の DB を、行を保持したまま最新の版へ移行する', async () => {
             const db = open();
             for (const sql of V1_SCHEMA) {
                 await db.executeQuery(sql);
@@ -84,7 +91,7 @@ describe('codeDb', () => {
 
             await db.table_create();
 
-            expect(await db.schema_version()).toBe(2);
+            expect(await db.schema_version()).toBe(codeDb.SCHEMA_VERSION);
             expect(await countOf(db, 'table_files')).toBe(1);
             expect(await countOf(db, 'table_symbols')).toBe(1);
             expect(await countOf(db, 'table_relationships')).toBe(1);
@@ -93,11 +100,37 @@ describe('codeDb', () => {
             expect((await db.codeFile_queryFactsVersions()).get('src/a.ts')).toBeNull();
         });
 
+        it('v2 の DB を、事実を保持したまま v3 へ移行する', async () => {
+            const db = open();
+            for (const sql of V1_SCHEMA) {
+                await db.executeQuery(sql);
+            }
+            // 0.3.37 (v2) の状態を作る: v2 までの移行だけを実行した DB
+            await db.executeQuery('CREATE TABLE table_schema_version (version INTEGER)');
+            await db.executeQuery('INSERT INTO table_schema_version VALUES (2)');
+            await db.executeQuery('ALTER TABLE table_files ADD COLUMN facts_version INTEGER');
+            await db.executeQuery(`CREATE TABLE table_occurrences (path TEXT, line INTEGER, character INTEGER, root_name TEXT,
+                member_path TEXT, kind INTEGER, enclosing_fqn TEXT, scope_id INTEGER)`);
+            await db.executeQuery(`CREATE TABLE table_relationships_v2 (reference_fqn TEXT, define_fqn TEXT, kind INTEGER DEFAULT 0,
+                weight REAL DEFAULT 1.0, confidence REAL DEFAULT 1.0, reference_line INTEGER, is_intra_file BOOLEAN DEFAULT FALSE)`);
+            await db.executeQuery("INSERT INTO table_files VALUES ('src/a.ts', 'typescript', '2026-01-01 00:00:00', 1)");
+            await db.executeQuery("INSERT INTO table_occurrences VALUES ('src/a.ts', 1, 2, 'B', NULL, 2, 'src/a.ts#A', 0)");
+
+            await db.table_create();
+
+            expect(await db.schema_version()).toBe(3);
+            expect(await countOf(db, 'table_occurrences')).toBe(1);
+            expect(await columnsOf(db, 'table_occurrences')).toContain('binding_fqn');
+            expect(await countOf(db, 'table_definitions')).toBe(0);
+            // 事実は v1 の版数のままなので、次の全走査で抽出し直される (定義表を埋めるため)
+            expect((await db.codeFile_queryFactsVersions()).get('src/a.ts')).toBe(1);
+        });
+
         it('移行は何度実行しても同じ結果になる', async () => {
             const db = open();
             await db.table_create();
             await db.table_create();
-            expect(await db.schema_version()).toBe(2);
+            expect(await db.schema_version()).toBe(codeDb.SCHEMA_VERSION);
             expect(await countOf(db, 'table_schema_version')).toBe(1);
         });
 
@@ -122,7 +155,7 @@ describe('codeDb', () => {
 
             await db.table_create();
 
-            expect(await db.schema_version()).toBe(2);
+            expect(await db.schema_version()).toBe(codeDb.SCHEMA_VERSION);
             expect({
                 files: await countOf(db, 'table_files'),
                 symbols: await countOf(db, 'table_symbols'),
@@ -134,11 +167,12 @@ describe('codeDb', () => {
     });
 
     describe('事実', () => {
-        it('import 束縛と参照出現を保存し、読み戻せる', async () => {
+        it('定義・import 束縛・参照出現を保存し、読み戻せる', async () => {
             const db = open();
             await db.table_create();
             await db.facts_replace('src/a.ts', FACTS);
             const found = await db.facts_query('src/a.ts');
+            expect(found.definitions).toEqual(FACTS.definitions);
             expect(found.imports).toEqual(FACTS.imports);
             expect(found.occurrences).toEqual(FACTS.occurrences);
         });
@@ -160,7 +194,7 @@ describe('codeDb', () => {
             await db.facts_replace('src/a.ts', FACTS);
             const broken = { ...FACTS, occurrences: [{ ...FACTS.occurrences[0], kind: 'not a number' as unknown as RelationshipKind }] };
             await expect(db.facts_replace('src/a.ts', broken)).rejects.toThrow();
-            expect(await db.facts_query('src/a.ts')).toEqual({ imports: FACTS.imports, occurrences: FACTS.occurrences });
+            expect(await db.facts_query('src/a.ts')).toEqual({ definitions: FACTS.definitions, imports: FACTS.imports, occurrences: FACTS.occurrences });
         });
 
         it('大量の参照出現を分割して挿入できる', async () => {
@@ -181,6 +215,44 @@ describe('codeDb', () => {
             expect((await db.codeFile_queryFactsVersions()).get('src/b.c')).toBe(7);
         });
 
+        it('事実を置き換えると、そのファイルと import しているファイルの名前解決が未解決に戻る', async () => {
+            const db = open();
+            await db.table_create();
+            for (const file of ['src/a.ts', 'src/b.ts', 'src/c.ts']) {
+                await db.codeFile_upsert(new codeFiles.File(file, 'typescript', new Date()), 1);
+            }
+            await db.relationships_v2_replace(['src/a.ts', 'src/b.ts', 'src/c.ts'], [], 1);
+            expect(await db.resolution_pendingFiles(1, 1)).toEqual([]);
+
+            // a.ts は b.ts を import している (FACTS の imports)。b.ts の事実が変わると a.ts も解決し直す
+            await db.facts_replace('src/a.ts', FACTS);
+            expect(await db.resolution_pendingFiles(1, 1)).toEqual(['src/a.ts']);
+            await db.relationships_v2_replace(['src/a.ts'], [], 1);
+            await db.facts_replace('src/b.ts', null);
+            expect(await db.resolution_pendingFiles(1, 1)).toEqual(['src/a.ts', 'src/b.ts']);
+            // 版数が上がれば全ファイルが対象になり、事実が古いファイルは対象外
+            expect(await db.resolution_pendingFiles(1, 2)).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts']);
+            expect(await db.resolution_pendingFiles(2, 1)).toEqual([]);
+        });
+
+        it('関係 (v2) を参照元ファイル単位で置き換える', async () => {
+            const db = open();
+            await db.table_create();
+            await db.codeFile_upsert(new codeFiles.File('src/a.ts', 'typescript', new Date()), 1);
+            const relationship: RelationshipV2 = {
+                referencePath: 'src/a.ts', referenceFqn: 'src/a.ts#A', definePath: 'src/b.ts', defineFqn: 'src/b.ts#B',
+                kind: RelationshipKind.inheritance, weight: 10, confidence: 0.95, referenceLine: 3, isIntraFile: false,
+            };
+            await db.relationships_v2_replace(['src/a.ts'], [relationship, { ...relationship, referenceLine: 9 }], 1);
+            await db.relationships_v2_replace(['src/b.ts'], [{ ...relationship, referencePath: 'src/b.ts' }], 1);
+            await db.relationships_v2_replace(['src/a.ts'], [relationship], 1);
+            expect(await db.relationships_v2_query('src/a.ts')).toEqual([relationship]);
+            expect(await db.relationships_v2_query()).toHaveLength(2);
+            // 集約ビューは fqn の組と種類ごとにまとめる (2行とも src/a.ts#A → src/b.ts#B の継承)。確信度は DOUBLE で誤差が乗らない
+            const strength = await db.executeQuery('SELECT occurrence_count, strength FROM view_relationship_strength');
+            expect(strength.map(row => [Number(row.occurrence_count), Number(row.strength)])).toEqual([[2, 19]]);
+        });
+
         it('ファイル単位で事実を削除する', async () => {
             const db = open();
             await db.table_create();
@@ -188,6 +260,7 @@ describe('codeDb', () => {
             await db.facts_replace('src/b.ts', FACTS);
             await db.facts_deleteFile('src/a.ts');
             expect((await db.facts_query('src/a.ts')).occurrences).toHaveLength(0);
+            expect((await db.facts_query('src/a.ts')).definitions).toHaveLength(0);
             expect((await db.facts_query('src/b.ts')).occurrences).toHaveLength(2);
         });
     });

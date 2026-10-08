@@ -7,7 +7,15 @@ import { RelationshipKind, relationshipKindOf, relationshipKindRank } from './re
  * @description クエリや抽出規則を変えたら上げる。DB の facts_version がこれと異なるファイルは、
  *              内容が変わっていなくても次の全走査で事実だけを抽出し直す
  */
-export const FACTS_VERSION = 1;
+export const FACTS_VERSION = 2;
+
+/**
+ * 自ファイルを指すモジュール指定子
+ * @description `export default a` / `export { a as b }` で、既に別の名前で export している定義を
+ *              もう1つの名前で export する時、「自ファイルからの再エクスポート」として import 束縛に記録する
+ *              (export_name は1つしか持てないため)。モジュール解決はこのファイル自身へ解決する
+ */
+export const SELF_MODULE_SPEC = '';
 
 /** 字句的な束縛を作らない定義の種別 (メンバは `a.m` のようにしか参照できない) */
 const MEMBER_KINDS: ReadonlySet<string> = new Set(['method', 'property', 'enum_member']);
@@ -93,6 +101,13 @@ export interface AstOccurrence {
      *              null = ファイル内に束縛が無い (グローバル・組込み) か、根が this / super
      */
     readonly scopeId: number | null;
+
+    /**
+     * 根の名前を束縛しているファイル内の定義の完全修飾名
+     * @description import 束縛・定義以外の束縛 (引数・分割代入の変数など)・ファイル内に束縛が無い場合は null。
+     *              同じスコープで import と定義が同じ名前を束縛する場合 (const fs = require('fs')) は import を優先して null
+     */
+    readonly bindingFqn: string | null;
 }
 
 /** 1ファイルのローカル事実 */
@@ -205,8 +220,53 @@ interface DefinitionCandidate {
     readonly name: string;
     readonly kind: string;
     readonly signature: boolean;
+    /** コンストラクタ引数のプロパティ (親はコンストラクタの1つ外側のクラス) */
+    readonly parameter: boolean;
     readonly node: AstNode;
     readonly nameNode: AstNode;
+}
+
+/** 束縛の種類 (優先順位は BINDER_PRIORITY) */
+interface Binder {
+    readonly type: 'import' | 'definition' | 'local';
+    readonly fqn: string | null;
+}
+
+/** 同じスコープ・同じ名前を複数が束縛する時の優先順位 (小さいほど優先) */
+const BINDER_PRIORITY: Readonly<Record<Binder['type'], number>> = { import: 0, definition: 1, local: 2 };
+
+/** メンバ参照の連鎖として正規化したレシーバ (A.B.c() のレシーバ A.B → 根 A・経路 [B]) */
+interface ReceiverChain {
+    readonly root: AstNode;
+    readonly members: string[];
+
+    /** 連鎖を構成するノード (根と途中のメンバ) */
+    readonly nodes: number[];
+}
+
+/**
+ * レシーバをメンバ参照の連鎖として正規化する
+ * @param receiver レシーバのノード (識別子・this・super・メンバ参照・型の修飾名)
+ * @returns 連鎖。途中に呼び出しや添字を含む (`a().b`、`a[0].b`) なら null
+ */
+function receiverChainOf(receiver: AstNode): ReceiverChain | null {
+    const members: string[] = [];
+    const nodes: number[] = [];
+    let node: AstNode | null = receiver;
+    while (node && (node.type === 'member_expression' || node.type === 'nested_identifier')) {
+        const property = node.childForFieldName('property');
+        if (!property || property.type !== 'property_identifier') {
+            return null;
+        }
+        members.unshift(property.text);
+        nodes.push(property.id);
+        node = node.childForFieldName('object');
+    }
+    if (!node || (node.type !== 'identifier' && node.type !== 'this' && node.type !== 'super')) {
+        return null;
+    }
+    nodes.push(node.id);
+    return { root: node, members: members, nodes: nodes };
 }
 
 /** 参照出現の候補 (種類の絞り込み前) */
@@ -235,7 +295,8 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
     const excluded = new Set<number>();         // 参照出現にしないノード (定義名・束縛・import・export)
     const exportStatements = new Set<number>();
     const exportDefaults = new Set<number>();
-    const exportClauses: { local: string, name: string }[] = [];
+    const exportClauses: { local: string, name: string, line: number, character: number }[] = [];
+    const definitionNames = new Set<number>();
     const imports: AstImport[] = [];
     const usedModules = new Set<number>();
     const bareModules: AstNode[] = [];
@@ -261,12 +322,14 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
 
         // 定義
         const definition = match.captures.find(capture => capture.name.startsWith('def.') && capture.name !== 'def.node');
-        if (definition) {
+        if (definition && !definitionNames.has(definition.node.id)) {
+            // 同じ名前ノードを複数のパターンが捉える事がある (public readonly x の x)
+            definitionNames.add(definition.node.id);
             const [, kind, modifier] = definition.name.split('.');
             const node = captures.get('def.node') ?? definition.node.parent;
             if (node) {
                 definitionCandidates.push({
-                    name: definition.node.text, kind: kind, signature: modifier === 'signature',
+                    name: definition.node.text, kind: kind, signature: modifier === 'signature', parameter: modifier === 'parameter',
                     node: node, nameNode: definition.node,
                 });
             }
@@ -276,11 +339,13 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
         const exportLocal = captures.get('export.local');
         const exportName = captures.get('export.name');
         if (exportLocal && exportName) {
-            exportClauses.push({ local: exportLocal.text, name: exportName.text });
+            exportClauses.push({ local: exportLocal.text, name: exportName.text,
+                line: exportLocal.startPosition.row, character: exportLocal.startPosition.column });
         }
         const exportDefaultLocal = captures.get('export.default.local');
         if (exportDefaultLocal) {
-            exportClauses.push({ local: exportDefaultLocal.text, name: 'default' });
+            exportClauses.push({ local: exportDefaultLocal.text, name: 'default',
+                line: exportDefaultLocal.startPosition.row, character: exportDefaultLocal.startPosition.column });
         }
 
         // import 束縛 (1マッチ = 1束縛)
@@ -367,11 +432,14 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
         if (dropped.has(index)) {
             continue;
         }
+        const candidate = candidates.item(index).value;
         let parent = candidates.parentOf(index);
+        if (candidate.parameter && parent >= 0) {
+            parent = candidates.parentOf(parent);
+        }
         while (parent >= 0 && dropped.has(parent)) {
             parent = candidates.parentOf(parent);
         }
-        const candidate = candidates.item(index).value;
         const parentFqn = parent >= 0 ? fqns[parent] as string : fileKey;
         const base = parent >= 0 ? `${parentFqn}.${candidate.name}` : `${parentFqn}${candidate.name}`;
         const count = (taken.get(base) ?? 0) + 1;
@@ -392,31 +460,46 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
     }
 
     // export { local as name } / export default <識別子> をトップレベルの定義へ反映する
+    // 既に別の名前で export している定義と、import した名前の export は、再エクスポートとして import 束縛に記録する
     const exported = definitions.map(definition => definition.exportName);
     for (const clause of exportClauses) {
+        const position = { line: clause.line, character: clause.character };
+        let found = false;
         definitions.forEach((definition, index) => {
-            if (definition.parentFqn === fileKey && definition.name === clause.local && exported[index] === null) {
-                exported[index] = clause.name;
+            if (definition.parentFqn === fileKey && definition.name === clause.local) {
+                found = true;
+                if (exported[index] === null) {
+                    exported[index] = clause.name;
+                } else if (exported[index] !== clause.name) {
+                    imports.push({ localName: null, importedName: clause.local, exportName: clause.name, moduleSpec: SELF_MODULE_SPEC, ...position });
+                }
             }
         });
+        const imported = found ? undefined : imports.find(entry => entry.localName === clause.local);
+        if (imported && imported.importedName !== null) {
+            imports.push({ localName: null, importedName: imported.importedName, exportName: clause.name, moduleSpec: imported.moduleSpec, ...position });
+        }
     }
     const finalDefinitions = definitions.map((definition, index) =>
         exported[index] === definition.exportName ? definition : { ...definition, exportName: exported[index] });
 
-    // 4. スコープと束縛
+    // 4. スコープと束縛 (同じスコープ・同じ名前では import > 定義 > 定義以外の束縛 の順に優先する)
     const scopes = new NestedIntervals(scopeNodes.map(node => ({ start: node.startIndex, end: node.endIndex, value: node.id })));
-    const bindings = new Map<number, Set<string>>();
-    const bind = (scopeId: number, name: string): void => {
+    const bindings = new Map<number, Map<string, Binder>>();
+    const bind = (scopeId: number, name: string, binder: Binder): void => {
         let names = bindings.get(scopeId);
         if (!names) {
-            names = new Set<string>();
+            names = new Map<string, Binder>();
             bindings.set(scopeId, names);
         }
-        names.add(name);
+        const current = names.get(name);
+        if (!current || BINDER_PRIORITY[binder.type] < BINDER_PRIORITY[current.type]) {
+            names.set(name, binder);
+        }
     };
     for (const entry of imports) {
         if (entry.localName) {
-            bind(0, entry.localName);
+            bind(0, entry.localName, { type: 'import', fqn: null });
         }
     }
     for (let index = 0; index < candidates.length; index++) {
@@ -429,27 +512,42 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
         if (scope >= 0 && scopes.item(scope).start === candidate.node.startIndex && scopes.item(scope).end === candidate.node.endIndex) {
             scope = scopes.parentOf(scope);
         }
-        bind(scope + 1, candidate.name);
+        bind(scope + 1, candidate.name, { type: 'definition', fqn: fqns[index] });
     }
     for (const node of bindNodes) {
-        bind(scopes.find(node.startIndex) + 1, node.text);
+        bind(scopes.find(node.startIndex) + 1, node.text, { type: 'local', fqn: null });
     }
-    const scopeIdOf = (name: string, position: number): number | null => {
+    const bindingOf = (name: string, position: number): { scopeId: number | null, bindingFqn: string | null } => {
         if (name === 'this' || name === 'super') {
-            return null;
+            return { scopeId: null, bindingFqn: null };
         }
-        for (let scope = scopes.find(position); scope >= 0; scope = scopes.parentOf(scope)) {
-            if (bindings.get(scope + 1)?.has(name)) {
-                return scope + 1;
+        for (let scope = scopes.find(position); scope >= -1; scope = scope >= 0 ? scopes.parentOf(scope) : -2) {
+            const binder = bindings.get(scope + 1)?.get(name);
+            if (binder) {
+                return { scopeId: scope + 1, bindingFqn: binder.type === 'definition' ? binder.fqn : null };
             }
         }
-        return bindings.get(0)?.has(name) ? 0 : null;
+        return { scopeId: null, bindingFqn: null };
     };
 
-    // 5. 参照出現: 同じノードを捉えた候補から最も具体的な種類を残す
+    // 5. 参照出現: レシーバをメンバ参照の連鎖として正規化し、同じノードを捉えた候補から最も具体的な種類を残す
+    //    連鎖 (A.B.c) の内側のノード (A, B) を捉えた読み取りは、連鎖全体の参照出現に含まれるため除く
+    const chains = new Map<OccurrenceCandidate, ReceiverChain>();
+    const chainNodes = new Set<number>();
+    for (const candidate of occurrenceCandidates) {
+        if (!candidate.receiver) {
+            continue;
+        }
+        const chain = receiverChainOf(candidate.receiver);
+        if (chain) {
+            chains.set(candidate, chain);
+            chain.nodes.forEach(id => chainNodes.add(id));
+        }
+    }
     const selected = new Map<number, OccurrenceCandidate>();
     for (const candidate of occurrenceCandidates) {
-        if (excluded.has(candidate.target.id)) {
+        if (excluded.has(candidate.target.id) || (candidate.receiver && !chains.has(candidate)) ||
+            (candidate.kind === RelationshipKind.read && chainNodes.has(candidate.target.id))) {
             continue;
         }
         const current = selected.get(candidate.target.id);
@@ -462,16 +560,17 @@ export function extractLocalFacts(relativePath: string, root: AstNode, matches: 
     const enclosing = new NestedIntervals(keptIntervals);
     const occurrences: AstOccurrence[] = [];
     for (const candidate of selected.values()) {
-        const rootNode = candidate.receiver ?? candidate.target;
+        const chain = chains.get(candidate);
+        const rootNode = chain?.root ?? candidate.target;
         const definition = enclosing.find(candidate.target.startIndex);
         occurrences.push({
             line: candidate.target.startPosition.row,
             character: candidate.target.startPosition.column,
             rootName: rootNode.text,
-            memberPath: candidate.receiver ? candidate.target.text : null,
+            memberPath: chain ? [...chain.members, candidate.target.text].join('.') : null,
             kind: candidate.kind,
             enclosingFqn: definition >= 0 ? finalDefinitions[enclosing.item(definition).value].fqn : fileKey,
-            scopeId: scopeIdOf(rootNode.text, rootNode.startIndex),
+            ...bindingOf(rootNode.text, rootNode.startIndex),
         });
     }
     occurrences.sort((a, b) => (a.line - b.line) || (a.character - b.character));

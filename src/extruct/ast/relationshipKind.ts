@@ -18,6 +18,23 @@ export enum RelationshipKind {
 }
 
 /**
+ * 種類ごとの基本重み (docs/ast-plan.md §5.3)
+ * @description 関係の強さ strength = Σ(基本重み × confidence)
+ */
+export const RELATIONSHIP_WEIGHTS: Readonly<Record<RelationshipKind, number>> = {
+    [RelationshipKind.unknown]: 1,
+    [RelationshipKind.import]: 1,
+    [RelationshipKind.inheritance]: 10,
+    [RelationshipKind.implementation]: 8,
+    [RelationshipKind.instantiation]: 5,
+    [RelationshipKind.call]: 3,
+    [RelationshipKind.type_reference]: 2,
+    [RelationshipKind.read]: 1,
+    [RelationshipKind.write]: 4,
+    [RelationshipKind.decorator]: 5,
+};
+
+/**
  * 同じ識別子を複数のパターンが捉えた時に残す種類の優先順位 (先頭ほど強い)
  * @description tree-sitter のクエリはパターン間に優先順位が無く、例えば `this.m()` の `m` は
  *              呼び出しとメンバ読み取りの両方に一致する。より具体的な種類を残す

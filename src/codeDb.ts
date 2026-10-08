@@ -4,13 +4,16 @@ import * as path from 'path';
 import * as codeFiles from './extruct/codeFiles';
 import * as SYMBOL from './extruct/symbol';
 import * as codeRelationships from './relationship/codeRelationships';
-import type { AstImport, AstOccurrence, FileFacts, ModuleResolution } from './extruct/ast';
+import type { AstDefinition, AstImport, AstOccurrence, FileFacts, ModuleResolution } from './extruct/ast';
+import type { RelationshipV2 } from './relationship/resolve';
 
 /**
  * スキーマの版数
- * @description 1 = 初版 (files / symbols / relationships)、2 = AST の事実 (docs/ast-plan.md §5.2)
+ * @description 1 = 初版 (files / symbols / relationships)、
+ *              2 = AST の事実 (docs/ast-plan.md §5.2)、
+ *              3 = 定義表と名前解決 (Stage 2)
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * v1 → v2 の移行 (docs/ast-plan.md §5.4)
@@ -75,6 +78,64 @@ const MIGRATION_V2: readonly string[] = [
         FROM table_relationships_v2
         GROUP BY reference_fqn, define_fqn, kind;`,
 ];
+
+/**
+ * v2 → v3 の移行 (Stage 2: 名前解決)
+ * @description 既存の行は保持し、列とテーブルの追加だけを行う
+ */
+const MIGRATION_V3: readonly string[] = [
+    // AST の定義 (名前解決の結合先。言語サーバのシンボルに付かなかった定義も含む)
+    `CREATE TABLE IF NOT EXISTS table_definitions (
+        path TEXT,
+        fqn TEXT,
+        name TEXT,
+        kind TEXT,
+        parent_fqn TEXT,
+        export_name TEXT,
+        name_line INTEGER,
+        name_character INTEGER,
+        start_line INTEGER,
+        end_line INTEGER
+    );`,
+    'CREATE INDEX IF NOT EXISTS idx_definitions_path ON table_definitions(path);',
+    'CREATE INDEX IF NOT EXISTS idx_definitions_fqn ON table_definitions(fqn);',
+
+    // 参照出現の根の名前を束縛しているファイル内の定義
+    'ALTER TABLE table_occurrences ADD COLUMN IF NOT EXISTS binding_fqn TEXT;',
+
+    // 関係 (v2) を作り直す: 両端のファイル (ファイル単位の置き換えと集計に使う) を加え、
+    // weight / confidence を DOUBLE にする (v2 の REAL は 32 ビットで、0.95 が 0.9499999881 になり strength の和に誤差が乗る)。
+    // v2 ではこの表に書き込む処理が無いため、作り直しても失う行は無い
+    'DROP VIEW IF EXISTS view_relationship_strength;',
+    'DROP TABLE IF EXISTS table_relationships_v2;',
+    `CREATE TABLE table_relationships_v2 (
+        reference_path TEXT,
+        reference_fqn TEXT,
+        define_path TEXT,
+        define_fqn TEXT,
+        kind INTEGER DEFAULT 0,
+        weight DOUBLE DEFAULT 1.0,
+        confidence DOUBLE DEFAULT 1.0,
+        reference_line INTEGER,
+        is_intra_file BOOLEAN DEFAULT FALSE
+    );`,
+    'CREATE INDEX IF NOT EXISTS idx_relationships_v2_reference ON table_relationships_v2(reference_fqn);',
+    'CREATE INDEX IF NOT EXISTS idx_relationships_v2_define ON table_relationships_v2(define_fqn);',
+    'CREATE INDEX IF NOT EXISTS idx_relationships_v2_reference_path ON table_relationships_v2(reference_path);',
+    'CREATE INDEX IF NOT EXISTS idx_relationships_v2_define_path ON table_relationships_v2(define_path);',
+    `CREATE OR REPLACE VIEW view_relationship_strength AS
+        SELECT reference_fqn, define_fqn, kind,
+               COUNT(*) AS occurrence_count,
+               SUM(weight * confidence) AS strength
+        FROM table_relationships_v2
+        GROUP BY reference_fqn, define_fqn, kind;`,
+
+    // 名前解決の版数 (NULL = 未解決。事実か、import 先の事実が変わると NULL に戻す)
+    'ALTER TABLE table_files ADD COLUMN IF NOT EXISTS resolved_version INTEGER;',
+];
+
+/** 版数ごとの移行 (古い順) */
+const MIGRATIONS: readonly [number, readonly string[]][] = [[2, MIGRATION_V2], [3, MIGRATION_V3]];
 
 /** 一括挿入1文あたりの行数 (プレースホルダの数を抑える) */
 const INSERT_CHUNK_ROWS = 500;
@@ -220,14 +281,16 @@ export class Db extends vscode.Disposable {
         }
         await this._run('CREATE TABLE IF NOT EXISTS table_schema_version (version INTEGER);');
         const version = await this.schema_version();
-        if (version < 2) {
-            await this._transaction(async () => {
-                for (const sql of MIGRATION_V2) {
-                    await this._run(sql);
-                }
-                await this._run('DELETE FROM table_schema_version;');
-                await this._run('INSERT INTO table_schema_version (version) VALUES (?);', 2);
-            });
+        for (const [target, sqls] of MIGRATIONS) {
+            if (version < target) {
+                await this._transaction(async () => {
+                    for (const sql of sqls) {
+                        await this._run(sql);
+                    }
+                    await this._run('DELETE FROM table_schema_version;');
+                    await this._run('INSERT INTO table_schema_version (version) VALUES (?);', target);
+                });
+            }
         }
         await this._run('ANALYZE;');
     }
@@ -839,18 +902,29 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description 1ファイルの事実 (import 束縛・参照出現) を置き換える
+     * @description 1ファイルの事実 (定義・import 束縛・参照出現) を置き換える
      * @param relativePath 相対パス
      * @param facts 事実 (null なら削除だけ行う。内容が変わって事実を抽出できなかった場合に古い事実を残さない)
      * @param factsVersion 事実抽出の版数を table_files へ書く場合に指定する (ファイル行が在る事が前提)
      * @returns 完了
-     * @description 削除と挿入を1トランザクションで行う
+     * @description 削除と挿入を1トランザクションで行う。このファイルと、このファイルを import している
+     *              ファイルの名前解決を未解決に戻す (定義や export が変わった可能性があるため)
      */
     public facts_replace(relativePath: string, facts: FileFacts | null, factsVersion?: number | null): Promise<void> {
         return this._transaction(async () => {
+            await this._markUnresolved(relativePath);
+            await this._run('DELETE FROM table_definitions WHERE path = ?;', relativePath);
             await this._run('DELETE FROM table_imports WHERE path = ?;', relativePath);
             await this._run('DELETE FROM table_occurrences WHERE path = ?;', relativePath);
             if (facts) {
+                for (let offset = 0; offset < facts.definitions.length; offset += INSERT_CHUNK_ROWS) {
+                    const chunk = facts.definitions.slice(offset, offset + INSERT_CHUNK_ROWS);
+                    await this._run(
+                        'INSERT INTO table_definitions (path, fqn, name, kind, parent_fqn, export_name, name_line, name_character, start_line, end_line) ' +
+                        `VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')};`,
+                        ...chunk.flatMap(entry => [relativePath, entry.fqn, entry.name, entry.kind, entry.parentFqn, entry.exportName,
+                            entry.nameLine, entry.nameCharacter, entry.startLine, entry.endLine]));
+                }
                 for (let offset = 0; offset < facts.imports.length; offset += INSERT_CHUNK_ROWS) {
                     const chunk = facts.imports.slice(offset, offset + INSERT_CHUNK_ROWS);
                     await this._run(
@@ -862,10 +936,10 @@ export class Db extends vscode.Disposable {
                 for (let offset = 0; offset < facts.occurrences.length; offset += INSERT_CHUNK_ROWS) {
                     const chunk = facts.occurrences.slice(offset, offset + INSERT_CHUNK_ROWS);
                     await this._run(
-                        'INSERT INTO table_occurrences (path, line, character, root_name, member_path, kind, enclosing_fqn, scope_id) ' +
-                        `VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ')};`,
+                        'INSERT INTO table_occurrences (path, line, character, root_name, member_path, kind, enclosing_fqn, scope_id, binding_fqn) ' +
+                        `VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')};`,
                         ...chunk.flatMap(entry => [relativePath, entry.line, entry.character, entry.rootName,
-                            entry.memberPath, entry.kind, entry.enclosingFqn, entry.scopeId]));
+                            entry.memberPath, entry.kind, entry.enclosingFqn, entry.scopeId, entry.bindingFqn]));
                 }
             }
             if (factsVersion !== undefined) {
@@ -880,8 +954,24 @@ export class Db extends vscode.Disposable {
      * @returns 完了
      */
     public async facts_deleteFile(relativePath: string): Promise<void> {
-        await this._run('DELETE FROM table_imports WHERE path = ?;', relativePath);
-        await this._run('DELETE FROM table_occurrences WHERE path = ?;', relativePath);
+        await this._transaction(async () => {
+            await this._markUnresolved(relativePath);
+            await this._run('DELETE FROM table_definitions WHERE path = ?;', relativePath);
+            await this._run('DELETE FROM table_imports WHERE path = ?;', relativePath);
+            await this._run('DELETE FROM table_occurrences WHERE path = ?;', relativePath);
+            await this._run('DELETE FROM table_relationships_v2 WHERE reference_path = ?;', relativePath);
+        });
+    }
+
+    /**
+     * @description ファイルと、そのファイルを import しているファイルの名前解決を未解決に戻す
+     * @param relativePath 相対パス
+     */
+    private async _markUnresolved(relativePath: string): Promise<void> {
+        await this._run(
+            'UPDATE table_files SET resolved_version = NULL WHERE relative_path = ? ' +
+            'OR relative_path IN (SELECT DISTINCT path FROM table_imports WHERE resolved_path = ?);',
+            relativePath, relativePath);
     }
 
     /**
@@ -889,20 +979,98 @@ export class Db extends vscode.Disposable {
      * @param relativePath 相対パス
      * @returns import 束縛と参照出現 (それぞれ位置順)
      */
-    public async facts_query(relativePath: string): Promise<{ imports: (AstImport & ModuleResolution)[], occurrences: AstOccurrence[] }> {
-        const imports = await this._all('SELECT * FROM table_imports WHERE path = ? ORDER BY line, character;', relativePath);
+    public async facts_query(relativePath: string): Promise<{
+        definitions: AstDefinition[], imports: (AstImport & ModuleResolution)[], occurrences: AstOccurrence[] }> {
         const occurrences = await this._all('SELECT * FROM table_occurrences WHERE path = ? ORDER BY line, character;', relativePath);
         return {
-            imports: imports.map(row => ({
-                localName: row.local_name, importedName: row.imported_name, exportName: row.export_name,
-                moduleSpec: row.module_spec, resolvedPath: row.resolved_path, isExternal: row.is_external,
-                line: row.line, character: row.character,
-            })),
+            definitions: await this.definitions_query(relativePath),
+            imports: await this.imports_query(relativePath),
             occurrences: occurrences.map(row => ({
                 line: row.line, character: row.character, rootName: row.root_name, memberPath: row.member_path,
-                kind: row.kind, enclosingFqn: row.enclosing_fqn, scopeId: row.scope_id,
+                kind: row.kind, enclosingFqn: row.enclosing_fqn, scopeId: row.scope_id, bindingFqn: row.binding_fqn,
             })),
         };
+    }
+
+    /**
+     * @description 1ファイルの import 束縛を読み込む
+     * @param relativePath 相対パス
+     * @returns import 束縛 (位置順)
+     */
+    public async imports_query(relativePath: string): Promise<(AstImport & ModuleResolution)[]> {
+        const rows = await this._all('SELECT * FROM table_imports WHERE path = ? ORDER BY line, character;', relativePath);
+        return rows.map(row => ({
+            localName: row.local_name, importedName: row.imported_name, exportName: row.export_name,
+            moduleSpec: row.module_spec, resolvedPath: row.resolved_path, isExternal: row.is_external,
+            line: row.line, character: row.character,
+        }));
+    }
+
+    /**
+     * @description 1ファイルの定義を読み込む
+     * @param relativePath 相対パス
+     * @returns 定義 (位置順)
+     */
+    public async definitions_query(relativePath: string): Promise<AstDefinition[]> {
+        const rows = await this._all('SELECT * FROM table_definitions WHERE path = ? ORDER BY name_line, name_character;', relativePath);
+        return rows.map(row => ({
+            fqn: row.fqn, name: row.name, kind: row.kind, parentFqn: row.parent_fqn, exportName: row.export_name,
+            nameLine: row.name_line, nameCharacter: row.name_character, startLine: row.start_line, endLine: row.end_line,
+        }));
+    }
+
+    /**
+     * @description 名前解決が必要なファイル (事実が最新で、名前解決が未解決か古い版数のもの)
+     * @param factsVersion 最新の事実抽出の版数
+     * @param resolveVersion 最新の名前解決の版数
+     * @returns 相対パスの配列 (名前順)
+     */
+    public async resolution_pendingFiles(factsVersion: number, resolveVersion: number): Promise<string[]> {
+        const rows = await this._all(
+            'SELECT relative_path FROM table_files WHERE facts_version = ? AND resolved_version IS DISTINCT FROM ? ORDER BY relative_path;',
+            factsVersion, resolveVersion);
+        return rows.map(row => row.relative_path as string);
+    }
+
+    /**
+     * @description 参照元ファイル単位で関係 (v2) を置き換え、名前解決の版数を記録する
+     * @param relativePaths 参照元ファイル
+     * @param relationships そのファイル群から出る関係
+     * @param resolveVersion 名前解決の版数
+     * @returns 完了
+     */
+    public relationships_v2_replace(relativePaths: string[], relationships: RelationshipV2[], resolveVersion: number): Promise<void> {
+        return this._transaction(async () => {
+            for (let offset = 0; offset < relativePaths.length; offset += INSERT_CHUNK_ROWS) {
+                const chunk = relativePaths.slice(offset, offset + INSERT_CHUNK_ROWS);
+                const placeholders = chunk.map(() => '?').join(', ');
+                await this._run(`DELETE FROM table_relationships_v2 WHERE reference_path IN (${placeholders});`, ...chunk);
+                await this._run(`UPDATE table_files SET resolved_version = ? WHERE relative_path IN (${placeholders});`, resolveVersion, ...chunk);
+            }
+            for (let offset = 0; offset < relationships.length; offset += INSERT_CHUNK_ROWS) {
+                const chunk = relationships.slice(offset, offset + INSERT_CHUNK_ROWS);
+                await this._run(
+                    'INSERT INTO table_relationships_v2 (reference_path, reference_fqn, define_path, define_fqn, kind, weight, confidence, reference_line, is_intra_file) ' +
+                    `VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')};`,
+                    ...chunk.flatMap(entry => [entry.referencePath, entry.referenceFqn, entry.definePath, entry.defineFqn,
+                        entry.kind, entry.weight, entry.confidence, entry.referenceLine, entry.isIntraFile]));
+            }
+        });
+    }
+
+    /**
+     * @description 関係 (v2) を読み込む
+     * @param referencePath 参照元ファイル (省略時は全て)
+     * @returns 関係 (参照元ファイル・行の順)
+     */
+    public async relationships_v2_query(referencePath?: string): Promise<RelationshipV2[]> {
+        const rows = referencePath === undefined
+            ? await this._all('SELECT * FROM table_relationships_v2 ORDER BY reference_path, reference_line, define_fqn;')
+            : await this._all('SELECT * FROM table_relationships_v2 WHERE reference_path = ? ORDER BY reference_line, define_fqn;', referencePath);
+        return rows.map(row => ({
+            referencePath: row.reference_path, referenceFqn: row.reference_fqn, definePath: row.define_path, defineFqn: row.define_fqn,
+            kind: row.kind, weight: row.weight, confidence: row.confidence, referenceLine: row.reference_line, isIntraFile: row.is_intra_file,
+        }));
     }
 
     /**

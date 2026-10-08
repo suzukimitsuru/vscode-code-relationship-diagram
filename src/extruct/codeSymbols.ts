@@ -78,12 +78,25 @@ export function extract(filepath: string, document: vscode.TextDocument): Promis
                 Buffer.alloc(32), null
             );
             symbols.push(rootSymbol);
+
+            // 同じ親の下に種類・名前・本文が全て同じ兄弟があると ID が衝突し、table_symbols の主キー違反で
+            // ファイル全体の保存が失敗する (同じ関数で2回書いた for (const x of …) の x、同じ書き方のコールバック等)。
+            // 2つ目以降に文書順の番号 ~2, ~3 … を付ける (1つ目の ID は変えない)
+            const ids = new Set<string>([rootSymbol.id]);
+            const uniqueId = (base: string): string => {
+                let id = base;
+                for (let ordinal = 2; ids.has(id); ordinal++) {
+                    id = `${base}~${ordinal}`;
+                }
+                ids.add(id);
+                return id;
+            };
             const sumSymbol = (found: vscode.DocumentSymbol, parent: SYMBOL.SymbolModel) => {
                 const kind = vscode.SymbolKind[found.kind] || 'Unknown';
                 const hash = createHash('sha256').update(document.getText(found.range)).digest();
                 const define = found.selectionRange;
                 const branch = new SYMBOL.SymbolModel(
-                    `${parent.id}/${kind}.${found.name}@${hash.toString('hex')}`,
+                    uniqueId(`${parent.id}/${kind}.${found.name}@${hash.toString('hex')}`),
                     found.name, found.kind, filepath,
                     define.start, found.range.start, found.range.end,
                     hash, parent.id

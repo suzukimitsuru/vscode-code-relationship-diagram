@@ -8,6 +8,10 @@ import { Item, Difference } from './item';
 import { SymbolCache } from './symbolCache';
 import { ExamineTask, CancelToken, Cancelled } from '../examine';
 import { FactsExtractor } from '../../extruct/ast';
+import { Resolver, ResolutionStats, addResolutionStats, emptyResolutionStats } from '../resolve';
+
+/** 名前解決を1回のコミット区間で行うファイル数 (区間の間に他のタスクのコミットを挟めるよう分割する) */
+const RESOLVE_CHUNK_FILES = 50;
 
 /** @description 進捗通知イベント */
 export interface Progress {
@@ -51,7 +55,13 @@ export class QueueProcessor {
     private readonly _active = new Set<Promise<void>>();
     private readonly _symbols: SymbolCache;
     private readonly _task: ExamineTask;
+    private readonly _resolver: Resolver | null;
     private _commit_chain: Promise<void> = Promise.resolve();
+    /** 実行中の名前解決 (キューが空になる度に1回行う) */
+    private _resolving: Promise<void> | null = null;
+    /** 今回キューが空になってから名前解決を済ませたか (新しい項目が登録されると戻す) */
+    private _resolution_ran = false;
+    private _resolution_summary = '';
     private _indexing: Promise<void> | null = null;
     private _disposed = false;
 
@@ -81,6 +91,7 @@ export class QueueProcessor {
         );
         this._task = new ExamineTask(options.workspaceFolder, options.db, this._symbols,
             (message) => this._options.log(message), options.facts ?? null);
+        this._resolver = options.facts ? new Resolver(options.db) : null;
     }
 
     /**
@@ -115,6 +126,8 @@ export class QueueProcessor {
                 this._enqueueFacts(item);
             }
         }
+        // 変更が無くても、前回の名前解決が途中で終わっていれば続きを行う
+        this._checkDrained();
     }
 
     /**
@@ -128,7 +141,7 @@ export class QueueProcessor {
     }
 
     public get isProcessing(): boolean {
-        return (this._queue.size > 0) || (this._running.size > 0);
+        return (this._queue.size > 0) || (this._running.size > 0) || (this._resolving !== null);
     }
 
     public get queueSize(): number {
@@ -141,6 +154,7 @@ export class QueueProcessor {
         this._queue.clear();
         for (const token of this._running.values()) { token.cancel(); }
         await Promise.allSettled([...this._active]);
+        await this._resolving;
         await this._commit_chain.catch(() => {});
         this._onProgress.dispose();
         this._onCompleted.dispose();
@@ -161,6 +175,7 @@ export class QueueProcessor {
         if (!this._queue.has(item.relative_path)) {
             this._total++;
         }
+        this._resolution_ran = false;
         this._queue.set(item.relative_path, item);
         this._symbols.invalidate(item.relative_path);
         this._report();
@@ -293,9 +308,26 @@ export class QueueProcessor {
         this._onProgress.fire({ processed: done, total: this._total, message });
     }
 
-    /** @description キューが空になったら完了を通知し、キャッシュをクリアする */
+    /**
+     * @description キューが空になったら名前解決を行い、その後で完了を通知してキャッシュをクリアする
+     * 名前解決が要るファイルは DB が覚えている (resolved_version) ため、途中で終わっても次の機会に続きを行う
+     */
     private _checkDrained(): void {
         if (this._disposed || this.isProcessing) { return; }
+        if (this._resolver && !this._resolution_ran) {
+            this._resolution_ran = true;
+            this._resolving = this._runResolution(this._resolver)
+                .catch(error => {
+                    this._options.error('FileDifference.QueueProcessor(resolve): ', error);
+                    this._onError.fire(error);
+                })
+                .finally(() => {
+                    this._resolving = null;
+                    this._checkDrained();
+                });
+            return;
+        }
+        this._resolution_ran = false;
         this._symbols.clear();
         this._indexing = null;
         const elapsed = performance.now() - this._busy_start;
@@ -303,13 +335,36 @@ export class QueueProcessor {
             `processed ${this._processed.toLocaleString()}/${this._total.toLocaleString()} files, ` +
             `${this._line_count.toLocaleString()} lines, ` +
             `${this._relationship_count.toLocaleString()} relationships, ` +
-            `${this._facts_count.toLocaleString()} facts-only files`);
+            `${this._facts_count.toLocaleString()} facts-only files${this._resolution_summary}`);
+        this._resolution_summary = '';
         this._onCompleted.fire({
             processed: this._processed,
             elapsedMs: elapsed,
             lineCount: this._line_count,
             relationshipCount: this._relationship_count,
         });
+    }
+
+    /**
+     * @description 名前解決 (Phase B) を行う
+     * 読み込みから保存までの間に他ファイルの事実が変わらないよう、コミットと同じ直列区間で少しずつ行う
+     */
+    private async _runResolution(resolver: Resolver): Promise<void> {
+        const pending = await resolver.pendingFiles();
+        if (pending.length === 0) { return; }
+        const started = performance.now();
+        const stats: ResolutionStats = emptyResolutionStats();
+        let relationships = 0;
+        for (let offset = 0; offset < pending.length && !this._disposed; offset += RESOLVE_CHUNK_FILES) {
+            this._report(undefined, `Resolving relationships ${offset.toLocaleString()}/${pending.length.toLocaleString()}...`);
+            const chunk = pending.slice(offset, offset + RESOLVE_CHUNK_FILES);
+            const result = await this._commit(() => resolver.resolveFiles(chunk));
+            relationships += result.relationships;
+            addResolutionStats(stats, result.stats);
+        }
+        this._resolution_summary = `, resolved ${pending.length.toLocaleString()} files into ${relationships.toLocaleString()} AST relationships`;
+        this._options.log(`Resolved relationships: ${pending.length} files, ${relationships} relationships ` +
+            `in ${this._secondsToTime(performance.now() - started)} ${JSON.stringify(stats)}`);
     }
 
     /** @description ミリ秒を時間表示文字列に変換する */

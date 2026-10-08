@@ -3,7 +3,7 @@ import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AstParser } from './parser';
 import { resolveAstResources } from './resources';
-import { AstOccurrence, LocalFacts, collectLocalFacts, fileFqn } from './localFacts';
+import { AstOccurrence, LocalFacts, SELF_MODULE_SPEC, collectLocalFacts, fileFqn } from './localFacts';
 import { RelationshipKind } from './relationshipKind';
 
 // 資産は dist/ 配下に置かれる (vitest.config.mts の globalSetup が配置する)
@@ -91,6 +91,14 @@ describe('localFacts', () => {
             expect(fqns(found)).toEqual([`${FILE}#Pair`, `${FILE}#Pair.left`, `${FILE}#Pair.swap`, `${FILE}#A`, `${FILE}#A.m`, `${FILE}#A.m.doc`]);
         });
 
+        it('コンストラクタ引数のプロパティはクラスのメンバとして定義する', async () => {
+            const found = await facts('class A {\n    constructor(public readonly a: X, readonly b: Y, private c?: Z, d: W) {}\n}');
+            expect(fqns(found)).toEqual([`${FILE}#A`, `${FILE}#A.constructor`, `${FILE}#A.a`, `${FILE}#A.b`, `${FILE}#A.c`]);
+            // 引数の型注釈の参照元はプロパティ (言語サーバのシンボルの単位と揃う)
+            expect(occurrence(found, 'X')?.enclosingFqn).toBe(`${FILE}#A.a`);
+            expect(occurrence(found, 'W')?.enclosingFqn).toBe(`${FILE}#A.constructor`);
+        });
+
         it('列挙子と名前空間を定義として扱う', async () => {
             const found = await facts('enum E { A, B = 2 }\nnamespace N { export function f() {} }');
             expect(fqns(found)).toEqual([`${FILE}#E`, `${FILE}#E.A`, `${FILE}#E.B`, `${FILE}#N`, `${FILE}#N.f`]);
@@ -125,6 +133,23 @@ describe('localFacts', () => {
             const found = await facts('class A {}\nfunction b() {}\nconst c = 1;\nexport { A, b as renamed };\nexport default c;');
             const names = Object.fromEntries(found.definitions.map(definition => [definition.name, definition.exportName]));
             expect(names).toEqual({ A: 'A', b: 'renamed', c: 'default' });
+        });
+
+        it('既に export している定義の別名 export は、自ファイルからの再エクスポートとして記録する', async () => {
+            const found = await facts('export const a = 1;\nexport default a;\nexport { a as b };');
+            expect(found.definitions.map(definition => [definition.name, definition.exportName])).toEqual([['a', 'a']]);
+            expect(found.imports.map(entry => [entry.localName, entry.importedName, entry.exportName, entry.moduleSpec])).toEqual([
+                [null, 'a', 'default', SELF_MODULE_SPEC],
+                [null, 'a', 'b', SELF_MODULE_SPEC],
+            ]);
+        });
+
+        it('import した名前の export は、import 先からの再エクスポートとして記録する', async () => {
+            const found = await facts('import { x } from "./x";\nexport { x as y };');
+            expect(found.imports.map(entry => [entry.localName, entry.importedName, entry.exportName, entry.moduleSpec])).toEqual([
+                ['x', 'x', null, './x'],
+                [null, 'x', 'y', './x'],
+            ]);
         });
 
         it('入れ子の定義には export 名を付けない', async () => {
@@ -269,6 +294,82 @@ describe('localFacts', () => {
             expect(occurrence(found, 'B')?.kind).toBe(RelationshipKind.inheritance);
             expect(occurrence(found, 'C')).toMatchObject({ kind: RelationshipKind.instantiation, enclosingFqn: `${FILE}#A.m` });
             expect(occurrence(found, 'this', 'n')?.kind).toBe(RelationshipKind.call);
+        });
+    });
+
+    describe('束縛している定義 (Stage 2)', () => {
+        it('根の名前を束縛しているファイル内の定義の完全修飾名を付ける', async () => {
+            const found = await facts([
+                'import { helper } from "./helper";',               // 0
+                'function top() {}',                                // 1
+                'class Box { static create() {} }',                 // 2
+                'export function run(param: number) {',             // 3
+                '    function inner() {}',                          // 4
+                '    top(); inner(); helper(); param.toFixed();',   // 5
+                '    Box.create(); console.log(param);',            // 6
+                '}',
+            ].join('\n'));
+            expect(occurrence(found, 'top')).toMatchObject({ scopeId: 0, bindingFqn: `${FILE}#top` });
+            expect(occurrence(found, 'inner')?.bindingFqn).toBe(`${FILE}#run.inner`);
+            expect(occurrence(found, 'Box', 'create')).toMatchObject({ scopeId: 0, bindingFqn: `${FILE}#Box` });
+            // import・定義以外の束縛・ファイル内に束縛の無い名前は null
+            expect(occurrence(found, 'helper')).toMatchObject({ scopeId: 0, bindingFqn: null });
+            expect(occurrence(found, 'param', 'toFixed')?.bindingFqn).toBeNull();
+            expect(occurrence(found, 'console', 'log')).toMatchObject({ scopeId: null, bindingFqn: null });
+        });
+
+        it('同じスコープで import と定義が同じ名前を束縛する時は import を優先する', async () => {
+            const found = await facts('const fs = require("fs");\nfs.readFileSync("a");', 'javascript');
+            expect(occurrence(found, 'fs', 'readFileSync')).toMatchObject({ scopeId: 0, bindingFqn: null });
+        });
+    });
+
+    describe('メンバ参照の連鎖 (Stage 2)', () => {
+        it('A.B.C を根 A と経路 B.C にまとめる', async () => {
+            const found = await facts([
+                'import * as Relationship from "./relationship";',
+                'const queue = new Relationship.FileDifference.QueueProcessor();',
+                'let item: Relationship.FileDifference.Item;',
+                'Relationship.FileDifference.scan();',
+            ].join('\n'));
+            expect(occurrence(found, 'Relationship', 'FileDifference.QueueProcessor')).toMatchObject({ kind: RelationshipKind.instantiation, scopeId: 0 });
+            expect(occurrence(found, 'Relationship', 'FileDifference.Item')?.kind).toBe(RelationshipKind.type_reference);
+            expect(occurrence(found, 'Relationship', 'FileDifference.scan')?.kind).toBe(RelationshipKind.call);
+            // 連鎖の内側 (Relationship / Relationship.FileDifference) を別の参照出現にしない
+            expect(found.occurrences.filter(entry => entry.rootName === 'Relationship')).toHaveLength(3);
+        });
+
+        it('this をレシーバとする連鎖も根を this にする', async () => {
+            const found = await facts('class A { m() { this.db.query(); } }');
+            expect(occurrence(found, 'this', 'db.query')).toMatchObject({ kind: RelationshipKind.call, scopeId: null });
+            expect(found.occurrences).toHaveLength(1);
+        });
+
+        it('途中に呼び出しや添字を含む連鎖は根が定まらないため参照出現にしない', async () => {
+            const found = await facts('make().run(); list[0].go();');
+            expect(found.occurrences.map(entry => `${entry.rootName}:${entry.memberPath}`)).toEqual(['make:null', 'list:null']);
+        });
+    });
+
+    describe('値として現れる識別子 (Stage 2)', () => {
+        it('二項演算・三項演算・条件など式中の識別子も読み取りとして捉える', async () => {
+            const found = await facts([
+                'import { Cancelled, A, B } from "./errors";',
+                'function f(e: unknown, flag: boolean) {',
+                '    if (e instanceof Cancelled) { return flag ? A : B; }',
+                '}',
+            ].join('\n'));
+            for (const name of ['Cancelled', 'A', 'B']) {
+                expect(occurrence(found, name), name).toMatchObject({ kind: RelationshipKind.read, scopeId: 0 });
+            }
+        });
+
+        it('呼び出し・継承などのより具体的な種類が読み取りより優先される', async () => {
+            const found = await facts('import { f, Base } from "./m";\nclass A extends Base { m() { f(); } }');
+            expect(found.occurrences.map(entry => [entry.rootName, entry.kind])).toEqual([
+                ['Base', RelationshipKind.inheritance],
+                ['f', RelationshipKind.call],
+            ]);
         });
     });
 
