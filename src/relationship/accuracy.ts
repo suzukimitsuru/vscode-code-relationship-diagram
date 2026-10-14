@@ -10,6 +10,14 @@ export interface AccuracySymbol {
     readonly fqn: string | null;
 }
 
+/** 参照出現 (table_occurrences の必要な列。文脈による参照の見分けに使う) */
+export interface AccuracyOccurrence {
+    readonly enclosingFqn: string;
+    readonly kind: RelationshipKind;
+    readonly rootName: string;
+    readonly memberPath: string | null;
+}
+
 /** LSP 由来の関係 (table_relationships の1行。参照元 → 定義のシンボル ID) */
 export interface AccuracyLspRelationship {
     readonly referenceId: string;
@@ -23,14 +31,49 @@ export interface AccuracyMetric {
     readonly ratio: number;
 }
 
+/** 確信度の閾値ごとのシンボル単位の再現率・適合率 */
+export interface AccuracyThreshold {
+    /** この確信度以上の AST の関係だけを使う */
+    readonly threshold: number;
+    readonly recall: AccuracyMetric;
+    readonly precision: AccuracyMetric;
+}
+
+/** 確信度の帯 (解決の段) ごとの適合率 */
+export interface AccuracyBand {
+    readonly label: string;
+    /** 帯の下限 (含む) */
+    readonly min: number;
+    /** 帯の上限 (含まない。最上位の帯は含む) */
+    readonly max: number;
+    /** AST の関係 (組の最大の確信度がこの帯) のうち LSP にもあるもの */
+    readonly precision: AccuracyMetric;
+}
+
+/** レポートに出す確信度の閾値 (0.7 が Stage 3 の受け入れ基準) */
+export const ACCURACY_THRESHOLDS: readonly number[] = [0, 0.5, 0.7, 0.9];
+
+/** 確信度の帯 (resolve.ts の CONFIDENCE と対応させる事) */
+export const ACCURACY_BANDS: readonly { label: string, min: number, max: number }[] = [
+    { label: '段1 ファイル内の定義（1.0）', min: 1.0, max: 1.0 },
+    { label: '段2 import（0.95）', min: 0.9, max: 1.0 },
+    { label: '段3 型推論（0.8）', min: 0.7, max: 0.9 },
+    { label: '段4 一意名（0.6）', min: 0.55, max: 0.7 },
+    { label: "段4' 曖昧候補・モジュール単位（≤ 0.5）", min: 0, max: 0.55 },
+];
+
 /** 突き合わせの結果 */
 export interface AccuracyReport {
     /** import 由来の関係 (定義がトップレベル) の再現率 — Stage 2 の受け入れ基準 */
     readonly importDerived: AccuracyMetric;
-    /** シンボル単位の全ての関係の再現率 (メンバの参照を含む。Stage 3 の対象) */
+    /** シンボル単位の全ての関係の再現率 (メンバの参照を含む。確信度の閾値なし) */
     readonly symbolRecall: AccuracyMetric;
-    /** シンボル単位の適合率 (AST のファイル間の関係のうち LSP にもあるもの) */
+    /** シンボル単位の適合率 (AST のファイル間の関係のうち LSP にもあるもの。確信度の閾値なし) */
     readonly symbolPrecision: AccuracyMetric;
+    /** 確信度の閾値ごとのシンボル単位の再現率・適合率 (Stage 3 の受け入れ基準は閾値 0.7) */
+    readonly byThreshold: readonly AccuracyThreshold[];
+    /** 確信度の帯 (解決の段) ごとの適合率 */
+    readonly byBand: readonly AccuracyBand[];
     /** ファイル単位の再現率 */
     readonly fileRecall: AccuracyMetric;
     /** ファイル単位の適合率 */
@@ -50,6 +93,15 @@ export interface AccuracyReport {
      *              記録される (本番コード → テストのオブジェクトリテラル のような依存ではない関係)
      */
     readonly structuralLsp: number;
+    /**
+     * オブジェクトリテラルのキーによる LSP の関係の数 (比較から除く)
+     * @description `const f: FileFacts = { definitions: … }` / `push({ id })` のように、キーが文脈の型のプロパティを
+     *              参照するもの。参照元にその名前がオブジェクトリテラルのキーとしてだけ現れる関係を数える
+     *              (`x.definitions` のようなメンバ参照もあれば、名前で解決できる関係として比較に残す。
+     *              省略記法 `{ db }` の db は変数の参照でもあるが、根の名前はメンバの定義を指さないため、
+     *              メンバの定義に対してはメンバ参照だけを「キー以外の出現」に数える)
+     */
+    readonly contextualLsp: number;
 }
 
 const metric = (matched: number, total: number): AccuracyMetric =>
@@ -97,9 +149,10 @@ const pathOf = (fqn: string): string => fqn.slice(0, fqn.lastIndexOf('#'));
  * - シンボル単位の比較は import 関係 (ファイル → 取り込んだ定義) を除く。LSP は import 文の位置の参照を
  *   どのシンボルにも結び付けない (ルートシンボルを参照元にしない) ため
  * - 定義側が名前付きの宣言でない LSP の関係 (structuralLsp) は比較から除く。名前解決の対象ではないため
+ * - オブジェクトリテラルのキーによる LSP の関係 (contextualLsp) も構造的な参照として比較から除く (Stage 3 で決定)
  */
 export function compareRelationships(symbols: readonly AccuracySymbol[], lsp: readonly AccuracyLspRelationship[],
-    ast: readonly RelationshipV2[]): AccuracyReport {
+    ast: readonly RelationshipV2[], occurrences: readonly AccuracyOccurrence[] = []): AccuracyReport {
     const byId = new Map(symbols.map(symbol => [symbol.id, symbol]));
     const attached = new Set(symbols.map(symbol => symbol.fqn).filter((fqn): fqn is string => fqn !== null));
     const fqnOfSymbol = (id: string): string | null => {
@@ -112,10 +165,30 @@ export function compareRelationships(symbols: readonly AccuracySymbol[], lsp: re
     };
     const key = (reference: string, define: string): string => JSON.stringify([reference, define]);
 
+    // 参照元ごとに、オブジェクトリテラルのキーとして現れる名前と、それ以外として現れる名前 (根・メンバ)。
+    // 根の名前は変数・import の束縛なので、メンバの定義を指す事は無い ({ db } の db はキーと変数の両方)
+    const keyNames = new Set<string>();
+    const usedRoots = new Set<string>();
+    const usedMembers = new Set<string>();
+    for (const occurrence of occurrences) {
+        const reference = normalizeFqn(occurrence.enclosingFqn, attached);
+        if (occurrence.kind === RelationshipKind.object_key) {
+            keyNames.add(key(reference, occurrence.rootName));
+        } else {
+            usedRoots.add(key(reference, occurrence.rootName));
+            for (const name of occurrence.memberPath ? occurrence.memberPath.split('.') : []) {
+                usedMembers.add(key(reference, name));
+            }
+        }
+    }
+    const isUsed = (name: string, define: string): boolean => usedMembers.has(name) || (isTopLevel(define) && usedRoots.has(name));
+    const memberNameOf = (fqn: string): string => fqn.slice(fqn.lastIndexOf('#') + 1).split('.').pop()!.replace(/~\d+$/, '');
+
     // LSP: シンボル ID → 解決キー (参照元は祖先へ揃え、定義は名前付きの宣言そのものに限る)
     const lspPairs = new Map<string, [string, string]>();
     let unmappedLsp = 0;
     let structuralLsp = 0;
+    let contextualLsp = 0;
     for (const relationship of lsp) {
         const reference = fqnOfSymbol(relationship.referenceId);
         const defineSymbol = byId.get(relationship.defineId);
@@ -125,12 +198,18 @@ export function compareRelationships(symbols: readonly AccuracySymbol[], lsp: re
         } else if (defineSymbol?.fqn === null) {
             structuralLsp++;
         } else if (pathOf(reference) !== pathOf(define)) {
-            lspPairs.set(key(reference, define), [reference, define]);
+            const name = key(reference, memberNameOf(define));
+            if (keyNames.has(name) && !isUsed(name, define)) {
+                contextualLsp++;
+            } else {
+                lspPairs.set(key(reference, define), [reference, define]);
+            }
         }
     }
 
     // AST: 完全修飾名をシンボルのある単位へ正規化する
     const astPairs = new Set<string>();
+    const astConfidence = new Map<string, number>();
     const astFiles = new Map<string, Set<RelationshipKind>>();
     for (const relationship of ast) {
         if (relationship.definePath === relationship.referencePath) {
@@ -139,7 +218,9 @@ export function compareRelationships(symbols: readonly AccuracySymbol[], lsp: re
         const files = key(relationship.referencePath, relationship.definePath);
         astFiles.set(files, (astFiles.get(files) ?? new Set<RelationshipKind>()).add(relationship.kind));
         if (relationship.kind !== RelationshipKind.import) {
-            astPairs.add(key(normalizeFqn(relationship.referenceFqn, attached), normalizeFqn(relationship.defineFqn, attached)));
+            const pair = key(normalizeFqn(relationship.referenceFqn, attached), normalizeFqn(relationship.defineFqn, attached));
+            astPairs.add(pair);
+            astConfidence.set(pair, Math.max(astConfidence.get(pair) ?? 0, relationship.confidence));
         }
     }
 
@@ -153,6 +234,22 @@ export function compareRelationships(symbols: readonly AccuracySymbol[], lsp: re
         importDerived: metric(imported.length - missed.length, imported.length),
         symbolRecall: metric([...lspPairs.keys()].filter(pair => astPairs.has(pair)).length, lspPairs.size),
         symbolPrecision: metric([...astPairs].filter(pair => lspPairs.has(pair)).length, astPairs.size),
+        byThreshold: ACCURACY_THRESHOLDS.map(threshold => {
+            const kept = [...astPairs].filter(pair => (astConfidence.get(pair) ?? 0) >= threshold);
+            const keptSet = new Set(kept);
+            return {
+                threshold: threshold,
+                recall: metric([...lspPairs.keys()].filter(pair => keptSet.has(pair)).length, lspPairs.size),
+                precision: metric(kept.filter(pair => lspPairs.has(pair)).length, kept.length),
+            };
+        }),
+        byBand: ACCURACY_BANDS.map(band => {
+            const inBand = [...astPairs].filter(pair => {
+                const confidence = astConfidence.get(pair) ?? 0;
+                return confidence >= band.min && (confidence < band.max || (band.max === 1.0 && confidence === 1.0 && band.min === 1.0));
+            });
+            return { ...band, precision: metric(inBand.filter(pair => lspPairs.has(pair)).length, inBand.length) };
+        }),
         fileRecall: metric([...lspFiles].filter(pair => astFiles.has(pair)).length, lspFiles.size),
         filePrecision: metric([...astFiles.keys()].filter(pair => lspFiles.has(pair)).length, astFiles.size),
         missedImportDerived: missed.sort(byPair),
@@ -161,5 +258,6 @@ export function compareRelationships(symbols: readonly AccuracySymbol[], lsp: re
             .map(([pair, kinds]) => [...unkey(pair), [...kinds].sort((a, b) => a - b)] as [string, string, RelationshipKind[]]).sort(byPair),
         unmappedLsp: unmappedLsp,
         structuralLsp: structuralLsp,
+        contextualLsp: contextualLsp,
     };
 }

@@ -3,7 +3,7 @@ import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AstParser } from './parser';
 import { resolveAstResources } from './resources';
-import { AstOccurrence, LocalFacts, SELF_MODULE_SPEC, collectLocalFacts, fileFqn } from './localFacts';
+import { AstOccurrence, ELEMENT_MEMBER, LocalFacts, SELF_MODULE_SPEC, collectLocalFacts, fileFqn } from './localFacts';
 import { RelationshipKind } from './relationshipKind';
 
 // 資産は dist/ 配下に置かれる (vitest.config.mts の globalSetup が配置する)
@@ -26,7 +26,9 @@ describe('localFacts', () => {
         expect(found).not.toBeNull();
         return found as LocalFacts;
     };
-    const fqns = (found: LocalFacts): string[] => found.definitions.map(definition => definition.fqn);
+    /** 構造を見るテストでは引数の定義 (Stage 3 の型推論の手掛かり) を除く */
+    const fqns = (found: LocalFacts): string[] => found.definitions.filter(definition => definition.kind !== 'parameter').map(definition => definition.fqn);
+    const typeOf = (found: LocalFacts, fqn: string): unknown => found.definitions.find(definition => definition.fqn === fqn)?.type;
     const occurrence = (found: LocalFacts, rootName: string, memberPath: string | null = null): AstOccurrence | undefined =>
         found.occurrences.find(entry => entry.rootName === rootName && entry.memberPath === memberPath);
 
@@ -96,7 +98,7 @@ describe('localFacts', () => {
             expect(fqns(found)).toEqual([`${FILE}#A`, `${FILE}#A.constructor`, `${FILE}#A.a`, `${FILE}#A.b`, `${FILE}#A.c`]);
             // 引数の型注釈の参照元はプロパティ (言語サーバのシンボルの単位と揃う)
             expect(occurrence(found, 'X')?.enclosingFqn).toBe(`${FILE}#A.a`);
-            expect(occurrence(found, 'W')?.enclosingFqn).toBe(`${FILE}#A.constructor`);
+            expect(occurrence(found, 'W')?.enclosingFqn).toBe(`${FILE}#A.constructor.d`);
         });
 
         it('列挙子と名前空間を定義として扱う', async () => {
@@ -233,7 +235,8 @@ describe('localFacts', () => {
             expect(occurrence(found, 'Base')).toMatchObject({ kind: RelationshipKind.inheritance, enclosingFqn: `${FILE}#Sample` });
             expect(occurrence(found, 'Marker')).toMatchObject({ kind: RelationshipKind.implementation });
             expect(occurrence(found, 'vscode', 'Position')).toMatchObject({ kind: RelationshipKind.type_reference, enclosingFqn: `${FILE}#Sample.position` });
-            expect(occurrence(found, 'Target')).toMatchObject({ kind: RelationshipKind.type_reference, enclosingFqn: `${FILE}#Sample.run` });
+            // 引数の型注釈の参照元は引数の定義 (言語サーバのシンボルが無いため、比較では外側の run に揃う)
+            expect(occurrence(found, 'Target')).toMatchObject({ kind: RelationshipKind.type_reference, enclosingFqn: `${FILE}#Sample.run.helper` });
             expect(occurrence(found, 'Helper')).toMatchObject({ kind: RelationshipKind.instantiation, enclosingFqn: `${FILE}#Sample.run.created`, line: 5 });
             expect(occurrence(found, 'created', 'execute')).toMatchObject({ kind: RelationshipKind.call, line: 6 });
         });
@@ -314,13 +317,146 @@ describe('localFacts', () => {
             expect(occurrence(found, 'Box', 'create')).toMatchObject({ scopeId: 0, bindingFqn: `${FILE}#Box` });
             // import・定義以外の束縛・ファイル内に束縛の無い名前は null
             expect(occurrence(found, 'helper')).toMatchObject({ scopeId: 0, bindingFqn: null });
-            expect(occurrence(found, 'param', 'toFixed')?.bindingFqn).toBeNull();
+            // 引数は定義 (Stage 3)。型推論の手掛かりにするため束縛している定義になる
+            expect(occurrence(found, 'param', 'toFixed')?.bindingFqn).toBe(`${FILE}#run.param`);
             expect(occurrence(found, 'console', 'log')).toMatchObject({ scopeId: null, bindingFqn: null });
         });
 
         it('同じスコープで import と定義が同じ名前を束縛する時は import を優先する', async () => {
             const found = await facts('const fs = require("fs");\nfs.readFileSync("a");', 'javascript');
             expect(occurrence(found, 'fs', 'readFileSync')).toMatchObject({ scopeId: 0, bindingFqn: null });
+        });
+    });
+
+    describe('型の手掛かり (Stage 3)', () => {
+        it('引数・for-of の変数・コールバックの引数を定義にする', async () => {
+            const found = await facts('function f(a: A, b?: B) { for (const x of xs) {} xs.map(y => y); xs.find((z) => z); }');
+            expect(found.definitions.filter(definition => definition.kind === 'parameter').map(definition => definition.fqn))
+                .toEqual([`${FILE}#f.a`, `${FILE}#f.b`, `${FILE}#f.y`, `${FILE}#f.z`]);
+            expect(found.definitions.find(definition => definition.name === 'x')).toMatchObject({ fqn: `${FILE}#f.x`, kind: 'variable' });
+        });
+
+        it('型注釈から型名を取り出す (Promise<T> と T | null は T、配列は要素の型)', async () => {
+            const found = await facts([
+                'import * as ns from "./ns";',
+                'let a: Foo;',
+                'let b: ns.Bar | null;',
+                'let c: Foo[];',
+                'let d: ReadonlyArray<ns.Bar>;',
+                'async function f(): Promise<Foo | undefined> { return undefined; }',
+                'const g = async (): Promise<Foo> => new Foo();',
+                'let h: string;',
+            ].join('\n'));
+            expect(typeOf(found, `${FILE}#a`)).toEqual({ mode: 'annotation', rootName: 'Foo', memberPath: null, scopeId: null, bindingFqn: null, array: false });
+            expect(typeOf(found, `${FILE}#b`)).toMatchObject({ mode: 'annotation', rootName: 'ns', memberPath: 'Bar', scopeId: 0, array: false });
+            expect(typeOf(found, `${FILE}#c`)).toMatchObject({ rootName: 'Foo', array: true });
+            expect(typeOf(found, `${FILE}#d`)).toMatchObject({ rootName: 'ns', memberPath: 'Bar', array: true });
+            expect(typeOf(found, `${FILE}#f`)).toMatchObject({ mode: 'annotation', rootName: 'Foo' });
+            expect(typeOf(found, `${FILE}#g`)).toMatchObject({ mode: 'annotation', rootName: 'Foo' });
+            expect(typeOf(found, `${FILE}#h`)).toBeNull();
+        });
+
+        it('初期化子から型の手掛かりを取り出す (new・呼び出し・値・as)', async () => {
+            const found = await facts([
+                'class C { m() {',
+                '    const a = new Foo();',
+                '    const b = await this.task.run();',
+                '    const c = this.items;',
+                '    const d = make() as Bar;',
+                '} }',
+            ].join('\n'));
+            expect(typeOf(found, `${FILE}#C.m.a`)).toMatchObject({ mode: 'new', rootName: 'Foo', memberPath: null });
+            expect(typeOf(found, `${FILE}#C.m.b`)).toMatchObject({ mode: 'call', rootName: 'this', memberPath: 'task.run', scopeId: null });
+            expect(typeOf(found, `${FILE}#C.m.c`)).toMatchObject({ mode: 'value', rootName: 'this', memberPath: 'items' });
+            expect(typeOf(found, `${FILE}#C.m.d`)).toMatchObject({ mode: 'annotation', rootName: 'Bar' });
+        });
+
+        it('for-of の変数と配列のメソッドに渡したコールバックの引数は、要素の型を手掛かりにする', async () => {
+            const found = await facts('function f(items: Foo[]) { for (const x of items) {} items.forEach(y => y); items.sort((a, b) => 0); }');
+            expect(typeOf(found, `${FILE}#f.x`)).toMatchObject({ mode: 'element', rootName: 'items', bindingFqn: `${FILE}#f.items` });
+            expect(typeOf(found, `${FILE}#f.y`)).toMatchObject({ mode: 'element', rootName: 'items' });
+            // sort の比較関数の引数は両方とも要素
+            expect(typeOf(found, `${FILE}#f.a`)).toMatchObject({ mode: 'element', rootName: 'items' });
+        });
+
+        it('要素の型を変えない配列のメソッド・呼び出しの戻り値・要素を返すメソッドを辿る', async () => {
+            const found = await facts([
+                'function f(items: Foo[]) {',
+                '    items.filter(a => a).slice(0).map(b => b);',
+                '    (await load()).forEach(c => c);',
+                '    const d = items.find(x => x);',
+                '    const e = items.filter(x => x);',
+                '    for (const g of this.list()) {}',
+                '}',
+            ].join('\n'));
+            expect(typeOf(found, `${FILE}#f.b`)).toMatchObject({ mode: 'element', rootName: 'items', memberPath: null });
+            expect(typeOf(found, `${FILE}#f.c`)).toMatchObject({ mode: 'element', rootName: 'load', memberPath: null });
+            expect(typeOf(found, `${FILE}#f.d`)).toMatchObject({ mode: 'element', rootName: 'items' });
+            expect(typeOf(found, `${FILE}#f.e`)).toMatchObject({ mode: 'value', rootName: 'items' });
+            expect(typeOf(found, `${FILE}#f.g`)).toMatchObject({ mode: 'element', rootName: 'this', memberPath: 'list' });
+        });
+
+        it('sort / reduce / then のコールバックの引数と、連鎖した代入の右辺を辿る', async () => {
+            const found = await facts([
+                'function f(xs: Foo[]) {',
+                '    xs.sort((a, b) => 0);',
+                '    xs.reduce((acc, x) => acc, 0);',
+                '    load().then(v => v);',
+                '    const w = cache = new Foo();',
+                '}',
+            ].join('\n'));
+            expect(typeOf(found, `${FILE}#f.a`)).toMatchObject({ mode: 'element', rootName: 'xs' });
+            expect(typeOf(found, `${FILE}#f.b`)).toMatchObject({ mode: 'element', rootName: 'xs' });
+            expect(typeOf(found, `${FILE}#f.acc`)).toBeNull();
+            expect(typeOf(found, `${FILE}#f.x`)).toMatchObject({ mode: 'element', rootName: 'xs' });
+            expect(typeOf(found, `${FILE}#f.v`)).toMatchObject({ mode: 'value', rootName: 'load' });
+            expect(typeOf(found, `${FILE}#f.w`)).toMatchObject({ mode: 'new', rootName: 'Foo' });
+        });
+
+        it('添字で取り出した要素は、配列の値の要素を手掛かりにする', async () => {
+            const found = await facts('function f(data: Data) { const node = data.nodes[i]; for (const x of rows[0]) {} }');
+            expect(typeOf(found, `${FILE}#f.node`)).toMatchObject({ mode: 'value', rootName: 'data', memberPath: `nodes.${ELEMENT_MEMBER}` });
+            expect(typeOf(found, `${FILE}#f.x`)).toMatchObject({ mode: 'element', rootName: 'rows', memberPath: ELEMENT_MEMBER });
+        });
+
+        it('分割代入で取り出した変数・引数は、取り出し元のメンバを手掛かりにし、キーを読み取りにする', async () => {
+            const found = await facts([
+                'function f(data: Data, { size }: Options, { name }: { name: Label }) {',
+                '    const { nodes, links: edges = [] } = data;',
+                '    const { a } = this.store;',
+                '}',
+            ].join('\n'));
+            expect(typeOf(found, `${FILE}#f.nodes`)).toMatchObject({ mode: 'value', rootName: 'data', memberPath: 'nodes', bindingFqn: `${FILE}#f.data` });
+            expect(typeOf(found, `${FILE}#f.edges`)).toMatchObject({ mode: 'value', rootName: 'data', memberPath: 'links' });
+            expect(typeOf(found, `${FILE}#f.a`)).toMatchObject({ mode: 'value', rootName: 'this', memberPath: 'store.a' });
+            // 型注釈の分割代入は型のメンバ、型リテラルの注釈はそのメンバの型
+            expect(typeOf(found, `${FILE}#f.size`)).toMatchObject({ mode: 'value', rootName: 'Options', memberPath: 'size' });
+            expect(typeOf(found, `${FILE}#f.name`)).toMatchObject({ mode: 'annotation', rootName: 'Label', memberPath: null });
+            // キーは取り出し元のメンバの読み取り (省略記法は変数自身が囲む定義になる)
+            expect(occurrence(found, 'data', 'nodes')).toMatchObject({ kind: RelationshipKind.read, enclosingFqn: `${FILE}#f.nodes`, line: 1 });
+            expect(occurrence(found, 'data', 'links')).toMatchObject({ kind: RelationshipKind.read, enclosingFqn: `${FILE}#f` });
+            expect(occurrence(found, 'Options', 'size')?.kind).toBe(RelationshipKind.read);
+            // 変数自身は参照出現にしない
+            expect(occurrence(found, 'nodes')).toBeUndefined();
+        });
+
+        it('require の分割代入は import 束縛のままにし、定義にしない', async () => {
+            const found = await facts('const { readFile } = require("fs");', 'javascript');
+            expect(found.definitions.map(definition => definition.name)).not.toContain('readFile');
+            expect(found.imports).toEqual([expect.objectContaining({ localName: 'readFile', importedName: 'readFile', moduleSpec: 'fs' })]);
+        });
+
+        it('引数の型注釈に書いた型リテラルのメンバは、引数の入れ子の定義にする', async () => {
+            const found = await facts('function f(input: { report: Report }) { const { report } = input; }');
+            expect(typeOf(found, `${FILE}#f.input.report`)).toMatchObject({ mode: 'annotation', rootName: 'Report' });
+            expect(typeOf(found, `${FILE}#f.report`)).toMatchObject({ mode: 'value', rootName: 'input', memberPath: 'report' });
+        });
+
+        it('Map<K, V> は値 V の配列として扱い、get() と ?? の左辺を辿る', async () => {
+            const found = await facts('function f(m: Map<string, Foo>, xs: X[]) { const a = m.get("k"); const b = (await g()) ?? []; }');
+            expect(typeOf(found, `${FILE}#f.m`)).toMatchObject({ mode: 'annotation', rootName: 'Foo', array: true });
+            expect(typeOf(found, `${FILE}#f.a`)).toMatchObject({ mode: 'element', rootName: 'm' });
+            expect(typeOf(found, `${FILE}#f.b`)).toMatchObject({ mode: 'call', rootName: 'g' });
         });
     });
 
@@ -345,9 +481,18 @@ describe('localFacts', () => {
             expect(found.occurrences).toHaveLength(1);
         });
 
-        it('途中に呼び出しや添字を含む連鎖は根が定まらないため参照出現にしない', async () => {
-            const found = await facts('make().run(); list[0].go();');
-            expect(found.occurrences.map(entry => `${entry.rootName}:${entry.memberPath}`)).toEqual(['make:null', 'list:null']);
+        it('途中に呼び出しを含む連鎖は根が定まらないため参照出現にしない', async () => {
+            const found = await facts('make().run(); make().x = 1;');
+            expect(found.occurrences.map(entry => `${entry.rootName}:${entry.memberPath}`)).toEqual(['make:null', 'make:null']);
+        });
+
+        it('添字は要素 [] (文字列の添字は同名のメンバ) として連鎖に含める (Stage 3)', async () => {
+            const found = await facts('list[i].go(); a.b[0].c = 1; m["key"].run(); m["a-b"].x;');
+            expect(found.occurrences.map(entry => `${entry.rootName}:${entry.memberPath}`)).toEqual([
+                'i:null', 'list:[].go', 'a:b.[].c', 'm:key.run', 'm:[].x',
+            ]);
+            expect(occurrence(found, 'list', `${ELEMENT_MEMBER}.go`)?.kind).toBe(RelationshipKind.call);
+            expect(occurrence(found, 'a', `b.${ELEMENT_MEMBER}.c`)?.kind).toBe(RelationshipKind.write);
         });
     });
 

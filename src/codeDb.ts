@@ -13,7 +13,7 @@ import type { RelationshipV2 } from './relationship/resolve';
  *              2 = AST の事実 (docs/ast-plan.md §5.2)、
  *              3 = 定義表と名前解決 (Stage 2)
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * v1 → v2 の移行 (docs/ast-plan.md §5.4)
@@ -134,11 +134,35 @@ const MIGRATION_V3: readonly string[] = [
     'ALTER TABLE table_files ADD COLUMN IF NOT EXISTS resolved_version INTEGER;',
 ];
 
+/**
+ * v3 → v4 の移行 (Stage 3: 型推論)
+ * @description 定義の値の型の手掛かり (AstTypeRef) と、名前で定義を引く索引を加える
+ */
+const MIGRATION_V4: readonly string[] = [
+    'ALTER TABLE table_definitions ADD COLUMN IF NOT EXISTS type_mode TEXT;',
+    'ALTER TABLE table_definitions ADD COLUMN IF NOT EXISTS type_root TEXT;',
+    'ALTER TABLE table_definitions ADD COLUMN IF NOT EXISTS type_member TEXT;',
+    'ALTER TABLE table_definitions ADD COLUMN IF NOT EXISTS type_scope_id INTEGER;',
+    'ALTER TABLE table_definitions ADD COLUMN IF NOT EXISTS type_binding_fqn TEXT;',
+    'ALTER TABLE table_definitions ADD COLUMN IF NOT EXISTS type_array BOOLEAN;',
+    'CREATE INDEX IF NOT EXISTS idx_definitions_name ON table_definitions(name);',
+];
+
 /** 版数ごとの移行 (古い順) */
-const MIGRATIONS: readonly [number, readonly string[]][] = [[2, MIGRATION_V2], [3, MIGRATION_V3]];
+const MIGRATIONS: readonly [number, readonly string[]][] = [[2, MIGRATION_V2], [3, MIGRATION_V3], [4, MIGRATION_V4]];
 
 /** 一括挿入1文あたりの行数 (プレースホルダの数を抑える) */
 const INSERT_CHUNK_ROWS = 500;
+
+/** table_definitions の1行を定義にする */
+const definitionOf = (row: Record<string, any>): AstDefinition => ({
+    fqn: row.fqn, name: row.name, kind: row.kind, parentFqn: row.parent_fqn, exportName: row.export_name,
+    nameLine: row.name_line, nameCharacter: row.name_character, startLine: row.start_line, endLine: row.end_line,
+    type: row.type_mode ? {
+        mode: row.type_mode, rootName: row.type_root, memberPath: row.type_member,
+        scopeId: row.type_scope_id, bindingFqn: row.type_binding_fqn, array: row.type_array === true,
+    } : null,
+});
 
 import * as duckdb from 'duckdb';
 import * as fs from 'fs';
@@ -920,10 +944,13 @@ export class Db extends vscode.Disposable {
                 for (let offset = 0; offset < facts.definitions.length; offset += INSERT_CHUNK_ROWS) {
                     const chunk = facts.definitions.slice(offset, offset + INSERT_CHUNK_ROWS);
                     await this._run(
-                        'INSERT INTO table_definitions (path, fqn, name, kind, parent_fqn, export_name, name_line, name_character, start_line, end_line) ' +
-                        `VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')};`,
+                        'INSERT INTO table_definitions (path, fqn, name, kind, parent_fqn, export_name, name_line, name_character, start_line, end_line, ' +
+                        'type_mode, type_root, type_member, type_scope_id, type_binding_fqn, type_array) ' +
+                        `VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')};`,
                         ...chunk.flatMap(entry => [relativePath, entry.fqn, entry.name, entry.kind, entry.parentFqn, entry.exportName,
-                            entry.nameLine, entry.nameCharacter, entry.startLine, entry.endLine]));
+                            entry.nameLine, entry.nameCharacter, entry.startLine, entry.endLine,
+                            entry.type?.mode ?? null, entry.type?.rootName ?? null, entry.type?.memberPath ?? null,
+                            entry.type?.scopeId ?? null, entry.type?.bindingFqn ?? null, entry.type?.array ?? null]));
                 }
                 for (let offset = 0; offset < facts.imports.length; offset += INSERT_CHUNK_ROWS) {
                     const chunk = facts.imports.slice(offset, offset + INSERT_CHUNK_ROWS);
@@ -981,15 +1008,24 @@ export class Db extends vscode.Disposable {
      */
     public async facts_query(relativePath: string): Promise<{
         definitions: AstDefinition[], imports: (AstImport & ModuleResolution)[], occurrences: AstOccurrence[] }> {
-        const occurrences = await this._all('SELECT * FROM table_occurrences WHERE path = ? ORDER BY line, character;', relativePath);
         return {
             definitions: await this.definitions_query(relativePath),
             imports: await this.imports_query(relativePath),
-            occurrences: occurrences.map(row => ({
-                line: row.line, character: row.character, rootName: row.root_name, memberPath: row.member_path,
-                kind: row.kind, enclosingFqn: row.enclosing_fqn, scopeId: row.scope_id, bindingFqn: row.binding_fqn,
-            })),
+            occurrences: await this.occurrences_query(relativePath),
         };
+    }
+
+    /**
+     * @description 1ファイルの参照出現を読み込む
+     * @param relativePath 相対パス
+     * @returns 参照出現 (位置順)
+     */
+    public async occurrences_query(relativePath: string): Promise<AstOccurrence[]> {
+        const rows = await this._all('SELECT * FROM table_occurrences WHERE path = ? ORDER BY line, character;', relativePath);
+        return rows.map(row => ({
+            line: row.line, character: row.character, rootName: row.root_name, memberPath: row.member_path,
+            kind: row.kind, enclosingFqn: row.enclosing_fqn, scopeId: row.scope_id, bindingFqn: row.binding_fqn,
+        }));
     }
 
     /**
@@ -1013,10 +1049,17 @@ export class Db extends vscode.Disposable {
      */
     public async definitions_query(relativePath: string): Promise<AstDefinition[]> {
         const rows = await this._all('SELECT * FROM table_definitions WHERE path = ? ORDER BY name_line, name_character;', relativePath);
-        return rows.map(row => ({
-            fqn: row.fqn, name: row.name, kind: row.kind, parentFqn: row.parent_fqn, exportName: row.export_name,
-            nameLine: row.name_line, nameCharacter: row.name_character, startLine: row.start_line, endLine: row.end_line,
-        }));
+        return rows.map(definitionOf);
+    }
+
+    /**
+     * @description 名前で定義を引く (名前解決の段4: プロジェクト全体での一意名)
+     * @param name 名前
+     * @returns 定義とそのファイル (ファイル・位置順)
+     */
+    public async definitions_queryNamed(name: string): Promise<{ path: string, definition: AstDefinition }[]> {
+        const rows = await this._all('SELECT * FROM table_definitions WHERE name = ? ORDER BY path, name_line, name_character;', name);
+        return rows.map(row => ({ path: row.path as string, definition: definitionOf(row) }));
     }
 
     /**

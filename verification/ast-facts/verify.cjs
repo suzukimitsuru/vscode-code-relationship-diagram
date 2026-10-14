@@ -31,7 +31,7 @@ const ASSOCIATIONS = {
 /** 受け入れ基準: パース時間の中央値 (ミリ秒/ファイル) */
 const MEDIAN_LIMIT_MS = 20;
 
-const KIND_NAMES = ['unknown', 'import', 'inheritance', 'implementation', 'instantiation', 'call', 'type_reference', 'read', 'write', 'decorator'];
+const KIND_NAMES = ['unknown', 'import', 'inheritance', 'implementation', 'instantiation', 'call', 'type_reference', 'read', 'write', 'decorator', 'object_key'];
 
 const percentile = (sorted, ratio) => sorted.length === 0 ? 0 : sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))];
 const pad = (value, width) => String(value).padStart(width);

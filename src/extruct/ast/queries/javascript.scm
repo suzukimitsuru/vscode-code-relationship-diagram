@@ -12,6 +12,15 @@
 (method_definition name: (property_identifier) @def.method)
 (field_definition property: (property_identifier) @def.property)
 (variable_declarator name: (identifier) @def.variable)
+; 引数と for-of の変数 (Stage 3: 型推論の手掛かり。言語サーバのシンボルには無い)
+(formal_parameters (identifier) @def.parameter @def.node)
+(arrow_function parameter: (identifier) @def.parameter @def.node)
+(for_in_statement kind: _ left: (identifier) @def.variable @def.node)
+; 分割代入で取り出した変数 (取り出し元の値のメンバから型を引く)
+(variable_declarator name: (object_pattern (shorthand_property_identifier_pattern) @def.variable @def.node))
+(variable_declarator name: (object_pattern (object_assignment_pattern left: (shorthand_property_identifier_pattern) @def.variable @def.node)))
+(variable_declarator name: (object_pattern (pair_pattern value: (identifier) @def.variable @def.node)))
+(variable_declarator name: (object_pattern (pair_pattern value: (assignment_pattern left: (identifier) @def.variable @def.node))))
 
 ; ------------------------------------------------------------------
 ; import 束縛 (1マッチ = 1束縛)
@@ -114,17 +123,17 @@
 ; kind = call
 (call_expression function: (identifier) @ref.call)
 (call_expression function: (member_expression
-  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression) (subscript_expression)] @ref.receiver
   property: (property_identifier) @ref.call))
 
 ; kind = write
 (assignment_expression left: (identifier) @ref.write)
 (assignment_expression left: (member_expression
-  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression) (subscript_expression)] @ref.receiver
   property: (property_identifier) @ref.write))
 (augmented_assignment_expression left: (identifier) @ref.write)
 (augmented_assignment_expression left: (member_expression
-  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression) (subscript_expression)] @ref.receiver
   property: (property_identifier) @ref.write))
 
 ; kind = decorator
@@ -138,7 +147,15 @@
 ; 素の識別子は包括的に捉える。定義名・束縛・import 名は除外され、呼び出し等のより具体的な種類が優先される。
 ; メンバ参照の連鎖 (A.B.c) の内側の識別子は、連鎖全体の参照出現に含まれるため除かれる
 (member_expression
-  object: [(identifier) (this) (super) (member_expression)] @ref.receiver
+  object: [(identifier) (this) (super) (member_expression) (subscript_expression)] @ref.receiver
   property: (property_identifier) @ref.read)
 (identifier) @ref.read
 (shorthand_property_identifier) @ref.read
+
+; ------------------------------------------------------------------
+; オブジェクトリテラルのキー (kind = object_key)
+; 文脈の型のプロパティへの参照。名前解決はせず、精度検証で構造的な参照を見分けるために記録する
+; ------------------------------------------------------------------
+(object (pair key: (property_identifier) @key.object))
+(object (shorthand_property_identifier) @key.object)
+(object (method_definition name: (property_identifier) @key.object))

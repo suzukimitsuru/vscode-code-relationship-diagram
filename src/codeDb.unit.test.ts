@@ -34,8 +34,9 @@ const countOf = async (db: codeDb.Db, table: string): Promise<number> =>
 const FACTS: FileFacts = {
     relativePath: 'src/a.ts',
     definitions: [
-        { fqn: 'src/a.ts#A', name: 'A', kind: 'class', parentFqn: 'src/a.ts#', exportName: 'A', nameLine: 3, nameCharacter: 13, startLine: 3, endLine: 6 },
-        { fqn: 'src/a.ts#A.m', name: 'm', kind: 'method', parentFqn: 'src/a.ts#A', exportName: null, nameLine: 4, nameCharacter: 4, startLine: 4, endLine: 5 },
+        { fqn: 'src/a.ts#A', name: 'A', kind: 'class', parentFqn: 'src/a.ts#', exportName: 'A', nameLine: 3, nameCharacter: 13, startLine: 3, endLine: 6, type: null },
+        { fqn: 'src/a.ts#A.m', name: 'm', kind: 'method', parentFqn: 'src/a.ts#A', exportName: null, nameLine: 4, nameCharacter: 4, startLine: 4, endLine: 5,
+            type: { mode: 'annotation', rootName: 'Base', memberPath: null, scopeId: 0, bindingFqn: null, array: true } },
     ],
     imports: [
         { localName: 'B', importedName: 'B', exportName: null, moduleSpec: './b', line: 0, character: 20, resolvedPath: 'src/b.ts', isExternal: false },
@@ -75,7 +76,8 @@ describe('codeDb', () => {
                 ['path', 'line', 'character', 'root_name', 'member_path', 'kind', 'enclosing_fqn', 'scope_id', 'binding_fqn']);
             expect(await columnsOf(db, 'table_relationships_v2')).toEqual(expect.arrayContaining(['confidence', 'reference_path', 'define_path']));
             expect(await columnsOf(db, 'table_definitions')).toEqual(
-                ['path', 'fqn', 'name', 'kind', 'parent_fqn', 'export_name', 'name_line', 'name_character', 'start_line', 'end_line']);
+                ['path', 'fqn', 'name', 'kind', 'parent_fqn', 'export_name', 'name_line', 'name_character', 'start_line', 'end_line',
+                    'type_mode', 'type_root', 'type_member', 'type_scope_id', 'type_binding_fqn', 'type_array']);
             expect(await columnsOf(db, 'table_files')).toContain('resolved_version');
             expect(await countOf(db, 'view_relationship_strength')).toBe(0);
         });
@@ -118,7 +120,7 @@ describe('codeDb', () => {
 
             await db.table_create();
 
-            expect(await db.schema_version()).toBe(3);
+            expect(await db.schema_version()).toBe(codeDb.SCHEMA_VERSION);
             expect(await countOf(db, 'table_occurrences')).toBe(1);
             expect(await columnsOf(db, 'table_occurrences')).toContain('binding_fqn');
             expect(await countOf(db, 'table_definitions')).toBe(0);

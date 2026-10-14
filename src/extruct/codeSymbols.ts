@@ -16,8 +16,11 @@ import { createHash, hash } from 'crypto';
  *   どちらも UTF-16 の桁で数えるため、そのまま比較できる
  * - 位置が一致しなければ、シンボルの範囲内に名前がある同名の定義を付ける
  * - 1つの定義は1つのシンボルにしか付けない。付かなかったシンボルの解決キーは null にする
+ * - 引数の定義 (Stage 3 の型推論の手掛かり) は付けない
  */
-export function attachAstKeys(relativePath: string, symbols: SYMBOL.SymbolModel[], definitions: AstDefinition[]): number {
+export function attachAstKeys(relativePath: string, symbols: SYMBOL.SymbolModel[], allDefinitions: AstDefinition[]): number {
+    // 引数は言語サーバのシンボルに無い (コールバックのシンボルは引数と同じ位置から始まるため、位置で取り違える)
+    const definitions = allDefinitions.filter(definition => definition.kind !== 'parameter');
     const byPosition = new Map<string, AstDefinition>();
     for (const definition of definitions) {
         byPosition.set(JSON.stringify([definition.nameLine, definition.nameCharacter]), definition);
