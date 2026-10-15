@@ -13,6 +13,19 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Changed
+
+- **DuckDB バインディングのビルド環境を見直した**（`.github/workflows/build-duckdb-binaries.yml`）
+  - Node.js: 18 / 20 / 22 / 23 → **22 / 24 / 26**（18・20・23 はサポート終了）。duckdb は N-API なので、Node.js 20 の拡張機能ホストでは `v22` のバイナリを読み込む
+  - OS: `macos-14`（2026-11-02 廃止）→ `macos-15`、`windows-2022` → `windows-2025`。Windows でも Node.js 22 以降をビルドする。Linux は glibc の互換性のため `ubuntu-22.04` のまま
+  - DuckDB: `^1.3.1` → `^1.4.4`（`duckdb` パッケージの最終版）
+  - Python: 3.11 → 3.13（npm 11 に同梱の node-gyp 12 でビルドするため）
+  - actions: `checkout` / `setup-node` / `setup-python` / `upload-artifact` を v7 に上げた（Node.js 20 ランタイムの非推奨警告が出ていた）
+
+### Fixed
+
+- **DuckDB バインディングのビルドが Node.js 22 / 23 で失敗していた**: npm 10.x が vitest@4 の optional peer の連鎖（vite → `@vitejs/devtools` → vitest@5）を解決する途中で `Cannot read properties of null (reading 'edgesOut')` を出して落ちていた。ワークフローで npm 11 に上げる
+
 ## [0.3.39] - 2026-10-08
 
 ### Added
