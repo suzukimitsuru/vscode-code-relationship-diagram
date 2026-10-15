@@ -101,46 +101,111 @@ GitHub Actions では、`main` への push と、パッケージに関わるフ�
 `package.json` の `publisher`（`suzukimitsuru`）が Marketplace の publisher ID。
 [publisher の管理ページ](https://marketplace.visualstudio.com/manage) で確認する。
 
-### 4.2 認証方式を選ぶ
+### 4.2 公開の方法を選ぶ
 
 > **重要**: Azure DevOps の**グローバル PAT（全組織で使える PAT）は 2026-12-01 に廃止される**。
-> VS Code の公式ドキュメントは、Microsoft Entra ID（ワークロード ID フェデレーション + マネージド ID）での公開を推奨している。
+> 自動で公開し続けるなら、Microsoft Entra ID で認証する。
 
-| 方式 | 長所 | 短所 |
-|---|---|---|
-| A. Microsoft Entra ID（推奨） | 長期間有効な秘密情報を持たない。PAT 廃止の影響を受けない | Azure（サブスクリプション）での準備が要る |
-| B. PAT | 準備が簡単 | 2026-12-01 以降、グローバル PAT は使えない |
+| 方式 | Azure のサブスクリプション | 自動化 | 準備 |
+|---|---|---|---|
+| A. Web から手動で公開 | 不要 | なし | 不要（0.3.40 はこの方法で公開した） |
+| B. Microsoft Entra ID の**アプリの登録**（推奨） | 不要 | あり | 4.3 の手順（初回だけ） |
+| C. PAT | 不要 | あり | 2026-12-01 以降、グローバル PAT は使えない |
 
-ワークフローは、GitHub の変数 `AZURE_CLIENT_ID` が設定されていれば A を、無ければ B（`VSCE_PAT`）を使う。
+- 公式ドキュメントはマネージド ID を例にしているが、**マネージド ID は Azure のリソースなので有効なサブスクリプションが無いと作れない**（Azure ポータルのサブスクリプション一覧が空なら作れない）。アプリの登録はテナント（ディレクトリ）に作るため、サブスクリプションは要らない
+- ワークフローは、GitHub の変数 `AZURE_CLIENT_ID` が設定されていれば B を、無ければ C（`VSCE_PAT`）を使う
 
-### 4.3 A. Microsoft Entra ID で公開する場合
+### 4.3 B. Microsoft Entra ID（アプリの登録）で公開する場合
 
-公式ドキュメントの手順は Azure Pipelines 向けなので、ここでは GitHub Actions 向けに読み替えている。
-**この読み替えはまだ実際に公開して確かめていない**。最初の公開で手順を確定させること。
+2026-10-15 に、この手順で GitHub Actions から Entra ID にログインし、Marketplace の拡張機能の情報を読めるところまで確認した。
+（0.3.40 は手動で公開済みだったため、アプリでのアップロードは次の版で確かめる。）
 
-1. **マネージド ID を作る（Azure）**
-   - Azure ポータルで「ユーザー割り当てマネージド ID」を作る
-   - クライアント ID とテナント ID を控える
-2. **フェデレーション資格情報を追加する（Azure）**
-   - マネージド ID の「フェデレーション資格情報」で「GitHub Actions」を選ぶ
-   - 組織 `suzukimitsuru`、リポジトリ `vscode-code-relationship-diagram`、エンティティ `Environment`、名前 `marketplace`
-   - サブジェクトは `repo:suzukimitsuru/vscode-code-relationship-diagram:environment:marketplace`、発行者は `https://token.actions.githubusercontent.com` になる
-3. **GitHub の environment を作る**
-   - リポジトリの Settings → Environments → `marketplace` を作る
-   - 公開前に承認を挟みたければ Required reviewers を設定する
-   - 変数（Variables）に `AZURE_CLIENT_ID` と `AZURE_TENANT_ID` を登録する
-4. **マネージド ID のプロファイル ID を調べる（1 回だけ）**
-   - マネージド ID でログインした状態で次を実行し、出力 JSON の `id` を控える
-     ```bash
-     az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me --resource 499b84ac-1321-427f-aa17-267ca6975798
-     ```
-   - GitHub Actions で一度だけ実行する場合は、`azure/login@v3`（`allow-no-subscriptions: true`）の後に上のコマンドを実行する一時的なワークフローを使う
-5. **Marketplace の publisher にメンバーとして追加する**
-   - [publisher の管理ページ](https://marketplace.visualstudio.com/manage) → publisher → Members で、4 の `id` を **Contributor** として追加する
+#### 1. アプリを登録する（Entra 管理センター）
 
-公開のステップは `azure/login@v3` でログインしてから `vsce publish --azure-credential` を実行する（`.github/workflows/package-vsix.yml` の publish ジョブ）。
+1. [Entra 管理センター](https://entra.microsoft.com) → アプリの登録 → 新規登録
+   - 名前: 例 `crd-marketplace-publisher`
+   - サポートされているアカウントの種類: この組織ディレクトリのみ（シングルテナント）
+2. 「概要」の **アプリケーション (クライアント) ID** と **ディレクトリ (テナント) ID** を控える
 
-### 4.4 B. PAT で公開する場合
+#### 2. フェデレーション資格情報を追加する（Entra 管理センター）
+
+アプリの「証明書とシークレット」→「フェデレーション資格情報」→「資格情報の追加」→ シナリオ「GitHub Actions」。
+
+| 項目 | 値 |
+|---|---|
+| 組織 | `suzukimitsuru` |
+| Organization ID | `796061`（所有者のユーザー ID） |
+| リポジトリ | `vscode-code-relationship-diagram` |
+| Repository ID | `934187440` |
+| エンティティ型 | 環境 |
+| GitHub 環境名 | `marketplace` |
+| サブジェクト識別子 | `repo:suzukimitsuru@796061/vscode-code-relationship-diagram@934187440:environment:marketplace` |
+| 名前 | 任意（例 `marketplace`） |
+
+- ID は `https://api.github.com/repos/suzukimitsuru/vscode-code-relationship-diagram` の `"id"`（リポジトリ）と `"owner"` の `"id"`（ユーザー）で確かめられる
+- サブジェクト識別子は、名前と変わらない数値 ID を含む **ID 入りの形式（immutable 形式）**。GitHub は 2026-07-15 以降に作った（または名前の変更・移管をした）リポジトリでこの形式を使い、それより前のリポジトリは名前だけの形式（`repo:suzukimitsuru/vscode-code-relationship-diagram:environment:marketplace`）のまま。**このリポジトリは 3 でオプトインして ID 入りの形式にしている**。形式が食い違うと、公開ジョブの `Azure login` が「一致する資格情報が無い」という趣旨のエラーで失敗する
+
+#### 3. GitHub のリポジトリを ID 入りのサブジェクトにオプトインする
+
+リポジトリ単位の REST API（`PUT /repos/{owner}/{repo}/actions/oidc/customization/sub` の `use_immutable_subject`）で切り替える。
+GitHub CLI（`brew install gh` → `gh auth login`。既定で `repo` スコープが付く）を使う場合:
+
+```zsh
+# オプトインする
+gh api -X PUT repos/suzukimitsuru/vscode-code-relationship-diagram/actions/oidc/customization/sub \
+  -F use_default=true -F use_immutable_subject=true
+
+# 確かめる（"use_immutable_subject": true、"sub_claim_prefix": "repo:suzukimitsuru@796061/vscode-code-relationship-diagram@934187440"）
+gh api repos/suzukimitsuru/vscode-code-relationship-diagram/actions/oidc/customization/sub
+```
+
+元に戻す場合は `-F use_immutable_subject=false` で同じ `PUT` を送る。
+
+#### 4. GitHub の environment を作る
+
+リポジトリの Settings → Environments → **New environment** で `marketplace` を作り、変数（Variables）を登録する。
+
+| 名前 | 値 |
+|---|---|
+| `AZURE_CLIENT_ID` | アプリケーション (クライアント) ID |
+| `AZURE_TENANT_ID` | ディレクトリ (テナント) ID |
+
+公開前に承認を挟みたければ Required reviewers を設定する。`VSCE_PAT` は登録しない。
+
+#### 5. アプリのプロファイル ID を調べる（手元の Mac で 1 回だけ）
+
+アプリとしてログインした状態でしか取れないので、一時的なクライアント シークレットでログインして調べ、終わったらシークレットを削除する。
+
+1. **Azure CLI を入れる**
+   ```zsh
+   brew update && brew install azure-cli
+   az version
+   ```
+   > Apple Silicon の Mac で Homebrew が `/usr/local`（Intel 用の場所）にあると、`Bad CPU type in executable` で失敗する（Intel Mac から移行した環境で起きる）。Apple Silicon 用の Homebrew を `/opt/homebrew` に入れ、`~/.zprofile` に `eval "$(/opt/homebrew/bin/brew shellenv)"` を足して優先させる。
+2. **一時的なクライアント シークレットを作る**: アプリの「証明書とシークレット」→「クライアント シークレット」→「新しいクライアント シークレット」（有効期限は最短）。表示された **「値」**（「シークレット ID」ではない）をコピーする
+3. **アプリとしてログインし、プロファイル ID を取得する**
+   ```zsh
+   APP_ID=<アプリケーション (クライアント) ID>
+   TENANT_ID=<ディレクトリ (テナント) ID>
+   read -s "SECRET?クライアントシークレットの値: "; echo
+
+   # サブスクリプションが無いので --allow-no-subscriptions を付ける
+   az login --service-principal --username "$APP_ID" --password "$SECRET" --tenant "$TENANT_ID" --allow-no-subscriptions
+
+   # 499b84ac-... は Azure DevOps を表す固定の ID
+   az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
+     --resource 499b84ac-1321-427f-aa17-267ca6975798 --query id -o tsv
+   ```
+   表示された GUID がアプリのプロファイル ID。
+4. **後片付け**: `az logout` と `unset SECRET` を実行し、Entra 管理センターで 2 のシークレットを**削除**する
+
+#### 6. Marketplace の publisher にメンバーとして追加する
+
+[publisher の管理ページ](https://marketplace.visualstudio.com/manage) → publisher `suzukimitsuru` → **Members** → Add で、5 のプロファイル ID を **Contributor** として追加する。
+
+公開の権限は、アプリとしてログインした状態で `npx @vscode/vsce@4.0.0 verify-pat --azure-credential suzukimitsuru` を実行して確かめられる（5 のシークレットを削除する前に行う）。
+
+### 4.4 C. PAT で公開する場合
 
 1. [Azure DevOps](https://go.microsoft.com/fwlink/?LinkId=307137) の User settings → Personal access tokens → New Token
 2. Organization は **All accessible organizations**、Scopes は Custom defined → **Marketplace: Manage**
@@ -149,15 +214,23 @@ GitHub Actions では、`main` への push と、パッケージに関わるフ�
 
 ## 5. 公開する
 
-### 5.1 GitHub Actions で公開する（推奨）
+どの方法でも、先に `package.json` の `version` を上げ、`CHANGELOG.md` を更新して `main` にマージする。
 
-1. `package.json` の `version` を上げ、`CHANGELOG.md` を更新して `main` にマージする
-2. Actions → **Package platform-specific VSIX** → **Run workflow** → `publish` にチェックを入れて実行する
-3. package ジョブが全ターゲットの VSIX を作り、publish ジョブが全部を 1 回の `vsce publish --packagePath vsix/*.vsix` で公開する
+### 5.1 Web から手動で公開する（0.3.40 で実施）
+
+1. VSIX を用意する: Actions の成果物 `vsix` をダウンロードするか、手元で `node scripts/package-vsix.mjs` を実行する（8 個）
+2. [publisher の管理ページ](https://marketplace.visualstudio.com/manage) で、拡張機能の更新（Update）から VSIX をアップロードする
+3. 8 ターゲット分を 1 つずつ繰り返す。VSIX のマニフェストにターゲットが入っているので、それぞれのターゲットの版として登録される
+
+### 5.2 GitHub Actions で公開する（推奨・4.3 の準備が必要）
+
+1. Actions → **Package platform-specific VSIX** → **Run workflow** → `publish` にチェックを入れて実行する
+2. package ジョブが全ターゲットの VSIX を作り、publish ジョブが全部を 1 回の `vsce publish --packagePath vsix/*.vsix` で公開する
    - environment に承認者を設定していれば、承認後に公開される
-   - `--skip-duplicate` を付けているので、途中で失敗した後の再実行では公開済みのターゲットを飛ばす
+   - `--skip-duplicate` を付けているので、**同じ版・同じターゲットが公開済みなら、アップロードせずに成功で終わる**。ログの `Version x.y.z is already published. Skipping publish.` で分かる。途中で失敗した後の再実行では、公開済みのターゲットを飛ばして残りを公開する
+3. 公開ジョブのログの `Azure login` に、トークンのサブジェクト（`subject claim - repo:suzukimitsuru@796061/...:environment:marketplace`）が出る。ログインに失敗した場合は、4.3 の 2 のサブジェクト識別子と一致しているかを確かめる
 
-### 5.2 手元から公開する
+### 5.3 手元から公開する
 
 ```bash
 node scripts/package-vsix.mjs
@@ -196,6 +269,10 @@ Open VSX のサイズ上限は 250MB と報告されている。この拡張機�
 - [Retirement of global Personal Access Tokens in Azure DevOps](https://devblogs.microsoft.com/devops/retirement-of-global-personal-access-tokens-in-azure-devops/)
 - [microsoft/vscode-platform-specific-sample](https://github.com/microsoft/vscode-platform-specific-sample)（公式のサンプルと CI）
 - [Azure/login](https://github.com/Azure/login)（GitHub Actions から Entra ID でログインする）
+- [GitHub Docs: OpenID Connect reference - Immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims)
+- [GitHub REST API: OIDC](https://docs.github.com/en/rest/actions/oidc)（`use_immutable_subject`）
+- [Microsoft Entra: Migrate GitHub Actions federated credentials to immutable subjects](https://learn.microsoft.com/en-us/entra/workload-id/workload-identities-github-immutable-subjects)
+- [Microsoft Learn: Manage user-assigned managed identities](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/how-manage-user-assigned-managed-identities)（マネージド ID にはサブスクリプションが要る）
 - [@duckdb/node-api](https://www.npmjs.com/package/@duckdb/node-api)・[@duckdb/node-bindings](https://www.npmjs.com/package/@duckdb/node-bindings)
 - [microsoft/vsmarketplace #1541: What is the maximum allowed VSIX size?](https://github.com/microsoft/vsmarketplace/issues/1541)
 - [konveyor/editor-extensions #1494: VSIX exceeds Open VSX size limit](https://github.com/konveyor/editor-extensions/issues/1494)

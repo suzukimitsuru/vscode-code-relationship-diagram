@@ -13,6 +13,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Changed
+
+- **Marketplace への公開手順を、実際に通った手順に書き換えた**（`docs/marketplace-platform-specific.md`）: Microsoft Entra ID はマネージド ID（Azure のサブスクリプションが必要）ではなくアプリの登録で認証する。フェデレーション資格情報の入力値（ID 入りのサブジェクト）、GitHub の OIDC のオプトイン（`use_immutable_subject`）、Azure CLI でアプリのプロファイル ID を調べる方法、Web から手動で公開する方法を書いた
+
 ### Fixed
 
 - **VSIX の作成に必要な Node.js の版の記載が誤っていた**: `@vscode/vsce` 4 は Node.js 22.12.0 以上が必要（22.11 以前では `ERR_REQUIRE_ESM` で失敗する）。`docs/marketplace-platform-specific.md` を直し、macOS で Node.js を更新する方法を書き足した。`scripts/package-vsix.mjs` は最初に版を確かめ、足りなければ止まる
