@@ -16,6 +16,14 @@ import { createRequire } from 'node:module';
 /** vsce の版 (依存が重いので devDependencies には入れず npx で実行する) */
 const VSCE = '@vscode/vsce@4.0.0';
 
+// vsce 4 は ES Module 専用の依存 (parse5 8) を require() するため、require() で ES Module を読める Node.js 22.12.0 以上が要る。
+// vsce の engines は ">= 22" だが、22.11 以前では ERR_REQUIRE_ESM で落ちる
+const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
+if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 12)) {
+    console.error(`Node.js ${process.versions.node} では ${VSCE} を実行できません。Node.js 22.12.0 以上に更新して下さい (docs/marketplace-platform-specific.md)`);
+    process.exit(1);
+}
+
 /** VS Code のターゲット → DuckDB のバイナリのパッケージ名の接尾辞 (linux-armhf は DuckDB が配布していない) */
 const TARGETS = {
     'win32-x64': 'win32-x64',

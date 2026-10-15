@@ -58,7 +58,20 @@ Linux の glibc と musl（Alpine）の判定には `detect-libc` を使う。
 
 ## 3. VSIX を作る
 
-前提: Node.js 22 以上（`@vscode/vsce` 4 の要件）、`yarn install` 済み、npm レジストリに接続できること。
+前提: **Node.js 22.12.0 以上**、`yarn install` 済み、npm レジストリに接続できること。
+
+> `@vscode/vsce` 4 は ES Module 専用の依存（`parse5` 8）を `require()` で読み込むため、`require()` で ES Module を読める Node.js 22.12.0 以上が必要。vsce の `package.json` は `node: ">= 22"` としているが、22.11 以前では `ERR_REQUIRE_ESM` で失敗する。`scripts/package-vsix.mjs` は最初に版を確かめ、足りなければ止まる。
+
+#### Node.js を更新する（macOS）
+
+`which node` の場所で、どの方法で入れたかが分かる。更新後は `node -v` で 22.12.0 以上（22 系の最新は 22.23.3、24 系は 24.22.0。2026-10-15 時点）になっている事を確かめる。
+
+| `which node` の場所 | 入れ方 | 更新方法 |
+|---|---|---|
+| `/usr/local/bin/node` | 公式インストーラ | [nodejs.org](https://nodejs.org/) から 24 系（LTS）か 22 系の最新の macOS インストーラ（`.pkg`）を入れ直す |
+| `/opt/homebrew/...` | Homebrew | `brew update && brew install node@24`（または `node@22`）。版付きの formula は PATH に入らないので、`~/.zprofile` に `export PATH="/opt/homebrew/opt/node@24/bin:$PATH"` を足す。`brew install node` は最新の 26 系になる |
+| `~/.nvm/...` | nvm | `nvm install 24 && nvm alias default 24`（または 22）。グローバルに入れた yarn は版ごとなので `npm install -g yarn@1.22.22` を入れ直す |
+| `~/.volta/...` / `~/.local/share/fnm/...` など | Volta / fnm / mise | 各ツールで 24 系か 22 系の最新を入れ、既定にする（例: `volta install node@24`、`fnm install 24 && fnm default 24`） |
 
 ```bash
 # 全ターゲット（vsix/ に 8 個できる。1 個あたり 20 秒ほど）
