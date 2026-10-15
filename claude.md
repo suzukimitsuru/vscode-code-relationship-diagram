@@ -457,7 +457,7 @@ ls bindings/
 
 - VSCode: 1.96.0以上
 - Node.js: 22/24/26 (DuckDBバインディングは N-API のため、拡張機能ホストの Node.js 20 でも動く)
-- プラットフォーム: macOS (arm64/x64), Windows (x64), Linux (x64)
+- プラットフォーム: macOS (arm64/x64), Windows (x64), Linux (x64/arm64)
 
 ---
 

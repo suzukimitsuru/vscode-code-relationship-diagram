@@ -59,6 +59,7 @@ codesign -s - -f ../../bindings/duckdb-darwin-arm64-v24.node
 | Platform | Node.js Versions | Build Runner |
 |----------|------------------|--------------|
 | Linux x64 | 22, 24, 26 | ubuntu-22.04 (glibc 2.35+) |
+| Linux arm64 | 22, 24, 26 | ubuntu-22.04-arm (glibc 2.35+) |
 | macOS arm64 | 22, 24, 26 | macos-15 (macOS 10.15+) |
 | Windows x64 | 22, 24, 26 | windows-2025 |
 

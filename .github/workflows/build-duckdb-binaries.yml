@@ -23,7 +23,7 @@ jobs:
         # duckdb は N-API（NAPI_VERSION=6）なので、拡張機能ホストの Node.js が古くても近いバージョンのバイナリで動く
         include:
           # Linux x64
-          # 22.04 でビルドして glibc 2.35 以上の環境で動くようにする（24.04 だと glibc 2.39 以上が必要になる）
+          # x64・arm64 とも 22.04 でビルドして glibc 2.35 以上の環境で動くようにする（24.04 だと glibc 2.39 以上が必要になる）
           - os: ubuntu-22.04
             arch: x64
             platform: linux
@@ -34,6 +34,20 @@ jobs:
             node-version: 24
           - os: ubuntu-22.04
             arch: x64
+            platform: linux
+            node-version: 26
+
+          # Linux arm64（Graviton・Ampere などのサーバへの Remote SSH、Raspberry Pi など）
+          - os: ubuntu-22.04-arm
+            arch: arm64
+            platform: linux
+            node-version: 22
+          - os: ubuntu-22.04-arm
+            arch: arm64
+            platform: linux
+            node-version: 24
+          - os: ubuntu-22.04-arm
+            arch: arm64
             platform: linux
             node-version: 26
 
