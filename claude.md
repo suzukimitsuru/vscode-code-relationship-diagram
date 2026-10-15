@@ -30,7 +30,7 @@
 ### コア技術
 
 - **言語**: TypeScript 5.x
-- **ランタイム**: Node.js 18/20/22 (VSCode組み込み)
+- **ランタイム**: Node.js 20〜24 (VSCode組み込み。VS Code 1.97 は 20、現行は 24)
 - **フレームワーク**: VSCode Extension API 1.96.x
 - **データベース**: DuckDB (埋め込み型SQL)
 - **可視化**: Cosmos.gl (GPU加速WebGLレンダラー、`enableSimulation: false` で純粋レンダラーとして使用)
@@ -456,8 +456,8 @@ ls bindings/
 ### 互換性
 
 - VSCode: 1.96.0以上
-- Node.js: 18/20/22 (ABI 108/115/127)
-- プラットフォーム: macOS (arm64/x64), Windows (x64), Linux (x64)
+- Node.js: 22/24/26 (DuckDBバインディングは N-API のため、拡張機能ホストの Node.js 20 でも動く)
+- プラットフォーム: macOS (arm64/x64), Windows (x64), Linux (x64/arm64)
 
 ---
 
