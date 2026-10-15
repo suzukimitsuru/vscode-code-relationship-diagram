@@ -425,6 +425,48 @@
             accent-color: BUTTON_NO_POINT_BG_PLACEHOLDER;
         }
 
+        /* Relationship (link) controls */
+        .link-section {
+            width: 100%;
+            border-top: BORDER_STYLE_PLACEHOLDER;
+            padding-top: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .section-title {
+            font-size: 10px;
+            opacity: 0.7;
+        }
+        #link-kind-list {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            column-gap: 8px;
+            row-gap: 2px;
+        }
+        .kind-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 10px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .kind-row input[type="checkbox"] {
+            margin: 0;
+            cursor: pointer;
+            accent-color: BUTTON_NO_POINT_BG_PLACEHOLDER;
+        }
+        .kind-swatch {
+            width: 12px;
+            height: 3px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        .link-section .depth-row span {
+            width: 40px;
+        }
+
         /* Legend panel */
         #legend-panel {
             position: absolute;
@@ -518,6 +560,20 @@
                 <label for="toggle-symbols">Symbols</label>
             </div>
         </div>
+        <!-- Relationship (link) controls: 種類の色見本を兼ねるチェックボックスは graphView.ts が作る -->
+        <div class="link-section">
+            <div class="section-title">関係の種類（線の色）</div>
+            <div id="link-kind-list"></div>
+            <div class="depth-row" title="強さ（Σ 種類の重み × 確信度）の下位を隠し、幹線だけを残す">
+                <label>強さ</label>
+                <input type="range" id="strength-slider" min="0" max="95" step="5" value="0">
+                <span id="strength-value">All</span>
+            </div>
+            <div class="toggle-row">
+                <input type="checkbox" id="toggle-intra-file">
+                <label for="toggle-intra-file">ファイル内の関係</label>
+            </div>
+        </div>
 
         <!-- Custom Panzoom Controls -->
         <div class="panzoom-controls">
@@ -563,7 +619,7 @@
         <div class="legend-item"><div class="legend-dot" style="background:#FFD700"></div><span class="legend-label">God Function</span></div>
         <div class="legend-item"><div class="legend-dot" style="background:#9E9E9E;opacity:0.6"></div><span class="legend-label">Dead Code</span></div>
         <hr class="legend-sep">
-        <div class="legend-item"><div class="legend-dot" style="background:#3498DB;border-radius:2px;height:3px;margin-top:5px"></div><span class="legend-label">参照リンク</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:linear-gradient(90deg,#E040FB,#42A5F5,#9E9E9E);border-radius:2px;height:3px;margin-top:5px"></div><span class="legend-label">参照リンク（色は種類・太さは強さ）</span></div>
         <div class="legend-item"><div class="legend-dot" style="background:#FF4444;border-radius:2px;height:3px;margin-top:5px"></div><span class="legend-label">循環参照</span></div>
     </div>
 

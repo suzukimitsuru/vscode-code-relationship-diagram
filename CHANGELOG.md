@@ -11,9 +11,19 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - [Fixed] for any bug fixes.
 - [Security] in case of vulnerabilities.
 
-## [Unreleased]
+## [0.4.1] - 2026-10-16
+
+### Added
+
+- **関係の種類と強さを図に描く**（`docs/ast-plan.md` Stage 5）
+  - 線の色を関係の種類（継承・実装・生成・呼び出し・書き込み・デコレータ・型の参照・読み取り・import・参照（LSP））で分ける。1本の線が複数の種類を含む時は、最も強い種類の色にする
+  - 線の太さを関係の強さ（Σ 種類の基本重み × 確信度）の対数にする。言語サーバ由来の関係は 1 件 = 1
+  - 操作パネルに「関係の種類」（種類ごとの表示切替。色見本を兼ねる）、「強さ」スライダー（強さの下位を隠して幹線だけを残す）、「ファイル内の関係」（既定は非表示）を加えた
 
 ### Fixed
+
+- **図に参照の線が1本も描かれていなかった**: 矢印の指定（`setLinkArrows`）に Cosmos.gl 2.6 が受けない形（`Uint8Array`）を渡していたため、線の描画が失敗していた
+- **書き出した HTML がデータを読み込めなかった**: 書き出しと読み込みでデータの変数名が食い違っていた
 
 - **ファイル単位の読み込み（`WHERE path = ?`）が 0 件を返し、削除で DB が使えなくなる事があった**: DuckDB 1.4 以降の不具合（[duckdb/duckdb#26828](https://github.com/duckdb/duckdb/issues/26828)・[#26106](https://github.com/duckdb/duckdb/issues/26106)）で、WAL を再生した後の最初のチェックポイントが自動か終了時だと、再生した行の無い副索引が書き出される。拡張機能は VS Code の終了ごとに WAL を残すため、次の起動の後で起こりえた（0.3.40 の DuckDB 1.5 への更新から）。索引で引くシンボル・事実・関係が空になり、表を走査する削除は「Failed to delete all rows from index」の FATAL になる
   - DB を開いた直後に `CHECKPOINT` を実行し、再生した行を索引ごと書き出すようにした

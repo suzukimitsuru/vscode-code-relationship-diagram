@@ -541,6 +541,19 @@ confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider
 - `is_intra_file` の関係は既定で非表示（トグルで表示）。ファイル1個へズームしたときのみ有効化する運用を想定
 - 計画3 のバンドリング・集約エッジはこのビューをそのまま入力にできる
 
+**Stage 5 の実装**
+
+| 規則 | 内容 |
+| ---- | ---- |
+| 強さの集計 | VIEW ではなく、図に出す関係（`toSymbolRelationships()`。確信度 ≥ 閾値）を参照元・定義のシンボルの組ごとに種類別に足す（`Relationship.strengths`）。図のファイル間の線・シンボル間の線は、内包する組の強さを種類別に足す（`CosmosLink.strengths`）。VIEW は fqn の組で集計するが、図はシンボルのある祖先へ揃えた単位で集計する必要があるため |
+| LSP 由来の関係 | 種類が分からないため unknown に 1 件 = 1（従来の「参照数」と同じ太さになる） |
+| 色 | 表示する種類のうち最も強い種類の色（`dominantKindOf()`）。循環参照は赤が優先 |
+| 太さ | 表示する種類の強さの合計の対数（`linkWidthOf()`）。種類を絞ると残った強さで細くなる |
+| 強さの閾値 | 絶対値ではなく、表示候補の線の強さの下位 N%（0〜95%）を隠す（`strengthThresholdOf()`）。リポジトリの規模で強さの値域が変わるため |
+| ファイル内の関係 | 両端が別のシンボル（ルートシンボルを除く）のものだけを図のデータに入れ、シンボル間の線に `intraFile` の印を付ける。既定は非表示。シンボルの配置（公開シンボルから参照を辿る BFS）には常に使う |
+| 確信度 | 不透明度には割り当てていない（図に出すのは閾値以上だけのため） |
+| 共有 | 色・太さ・閾値の計算は `src/webview/linkStyle.ts` に置き、拡張機能（`cosmosAdapter.ts`）と Webview（`graphView.ts`）が共用する |
+
 ---
 
 ## 9. 差分更新との統合
@@ -650,7 +663,7 @@ Stage 2 の既知の限界（後から作られたファイルへの相対 impor
 | **2** | **完了** | Phase B 段1〜2（ローカル + import 解決）、`kind` 付与、`table_relationships_v2` への保存。表示は従来関係のまま | import 由来の関係の再現率 ≥ 95%（対 LSP、§11 のレポート） / 検証レポートが CI or スクリプトで再生成できる | 0.3.38 |
 | **3** | **完了** | Phase B 段3〜4'（型推論・一意名・曖昧候補）、confidence、Phase C 集約 VIEW | 関係全体の再現率 ≥ 90%、適合率 ≥ 90%（閾値 0.7 時。測り方は §11） / 段別内訳がレポートに出る | 0.3.39 |
 | **4** | **完了** | **主経路の切替**: `examine()` を AST 主体へ。LSP は低 confidence 検証と未対応言語フォールバックに降格。設定 `crd.ast.enabled` で旧経路へ戻せる。旧 `table_relationships` を DROP | 自リポジトリの `examineRelationships` 実行時間が現行比 ≤ 50% / 言語サーバ未導入の状態でも TS/JS の関係が出る / 旧経路へのロールバックが動く | 0.4.0 |
-| **5** | 未着手 | 描画反映: kind の色分け・strength の線幅・kind トグル・strength 閾値スライダー・ファイル内依存トグル | グラフ上で継承と import が区別できる / 閾値スライダーで幹線のみ表示できる | 0.4.1 |
+| **5** | **完了** | 描画反映: kind の色分け・strength の線幅・kind トグル・strength 閾値スライダー・ファイル内依存トグル | グラフ上で継承と import が区別できる / 閾値スライダーで幹線のみ表示できる | 0.4.1 |
 | **6** | 未着手 | 言語追加（需要順: Python → Go → Java/C#）。`.scm` とモジュール解決の追加のみで完結 | 追加言語で §11 のレポートが所定値を満たす / WASM は当該言語のファイルが在るときだけロードされる | 0.4.x |
 
 **計画2（メトリクス）は Stage 1 完了後に着手可能**（同じ AST 走査に相乗りする）。計画3 前半（円パッキング + LOD）は本計画と並行して進められる。
@@ -911,6 +924,39 @@ LSP による確定は 264 回問い合わせ、候補を確定 102・置き換�
 - 名前解決はキューが空になった時点でしか走らないため、全走査の途中で `showDiagram` を開くと AST 由来の関係が古い（LSP の経路も途中では不完全で、同じ扱い）
 - Stage 2 の既知の限界（後から作られたファイルへの相対 import）は残っている（§9）
 
+### Stage 5 の実装結果（0.4.1 / 2026-10-16）
+
+自リポジトリ（70 ファイル）を Stage 4 の検証で AST の経路で調べた DB から、拡張機能と同じ変換（`queryDiagramRelationships()` →
+`convertToCosmosFormat()`）で図のデータを作り、書き出し HTML と同じ構成のページで Webview（`dist/webview/graphView.js`）を動かして確かめた。
+
+| 受け入れ基準 | 結果 |
+| ------------ | ---- |
+| グラフ上で継承と import が区別できる | **達成**。種類ごとに色を分け（継承 マゼンタ `#E040FB`・import 灰 `#9E9E9E` など 10 色。単体テストで全て異なり循環参照の赤と重ならない事を確認）、操作パネルの「関係の種類」で種類ごとに表示を切り替えられる。継承と import だけを表示すると灰色の import の線とマゼンタの継承の線（自リポジトリでは 2 本）に分かれる |
+| 閾値スライダーで幹線のみ表示できる | **達成**。「強さ」スライダーを 90% にすると、ファイル間の線 213 本のうち強さ 56.8 以上（上位 10%）の 22 本だけが残る（データから求めた 90 パーセンタイル 56.8 と一致） |
+
+**図のデータの内訳**（ファイル間の線 213 本を最も強い種類で分類）: 呼び出し 85・生成 41・読み取り 41・型の参照 24・import 19・継承 2・書き込み 1。
+強さの中央値 10.7、最大 428.4。ファイル内の関係はシンボル間の線 3,729 本（既定は非表示。オンにすると、表示中のシンボル間の線が 411 本から 594 本になる）。
+
+**計画から変えた点**
+
+| 計画 | 実装 | 理由 |
+| ---- | ---- | ---- |
+| `view_relationship_strength` を読む | 図に出す関係から集計 | VIEW は fqn の組だが、図はシンボルのある祖先へ揃えた単位で集計する（§8） |
+| 設定 `crd.graph.showIntraFile` | 操作パネルの「ファイル内の関係」 | 図を見ながら切り替える操作のため。既定は非表示 |
+| strength の閾値 | 下位の割合（パーセンタイル） | 強さの値域がリポジトリの規模で変わるため |
+
+**既存の不具合の修正**
+
+1. **線が1本も描かれていなかった**。`setLinkArrows()` に `Uint8Array` を渡していたが、Cosmos.gl 2.6 は `boolean[]` を受け、矢印の頂点バッファが足りずに
+   リンクの描画が失敗していた（WebGL の `GL_INVALID_OPERATION`）。点 3 つ・線 2 本の最小のページで、矢印なし・`boolean[]` なら描ける事を確かめて直した
+2. **書き出した HTML がデータを読み込めなかった**。書き出しは `window.COSMOS_GRAPH_DATA` に書き、Webview は `STANDALONE_GRAPH_DATA` を読んでいた
+
+**Stage 6 への申し送り**
+
+- 確認は書き出し HTML と同じ構成のページで行った。VS Code の Webview での表示は手で確認していない
+- 継承の線は自リポジトリでは 2 本しかない。継承の多いコード（Stage 6 の言語追加の検証対象）で色の見分けやすさを確かめる
+- 確信度は図に渡していない（閾値以上だけを出すため）。閾値を下げる運用をするなら不透明度へ割り当てる（§15）
+
 ### 設定項目（`package.json` の `contributes.configuration`）
 
 | 設定 | 既定 | 用途 |
@@ -929,7 +975,7 @@ LSP による確定は 264 回問い合わせ、候補を確定 102・置き換�
 | `codeRelationshipDiagram.ast.lspVerification` | `true` | §7.4 の LSP による確定 |
 | `codeRelationshipDiagram.ast.confidenceThreshold` | `0.7` | 確定を起動する閾値と、**図に出す AST 由来の関係の確信度の下限**を兼ねる |
 | `crd.ast.maxAmbiguousCandidates` | — | **未実装**。変えると名前解決の結果が変わり、設定ごとに再解決が要るため見送った。段4' は §7.4 の確定でまとめて1回問い合わせるため、上限を変える必要が薄れた |
-| `crd.graph.showIntraFile` | — | Stage 5（描画）で扱う |
+| `crd.graph.showIntraFile` | — | Stage 5 で設定ではなく操作パネルの「ファイル内の関係」にした（既定は非表示） |
 
 ---
 
@@ -949,7 +995,7 @@ LSP による確定は 264 回問い合わせ、候補を確定 102・置き換�
 | 10 | 精度検証ハーネスとレポート | `src/test/astAccuracy.verify.ts`, `src/relationship/accuracy.ts`, `verification/ast-accuracy/`, `.vscode-test.mjs`（`accuracy` ラベル） | 2-3 | 完了（Stage 3 で閾値ごと・段ごとの集計と文脈による参照の除外を追加） |
 | 11 | `computeUpsert()` を Phase A + B 呼び出しへ差し替え、LSP 降格 | `src/relationship/examine.ts`（経路の分岐）, `fileDifference/queue.ts`・`item.ts`（経路の切り替えの調べ直し・確定の起動）, `src/relationship/lspVerification.ts`（§7.4）, `src/relationship/astRelationships.ts`（図への受け渡し）, `src/codeDb.ts`（スキーマ v5・再解決の範囲）, `resolve.ts`（`candidateNamesChanged()`） | 4 | 完了 |
 | 12 | 設定項目の追加とロールバック経路 | `package.json`, `src/extension.ts`、検証: `src/test/astSwitch.verify.ts`, `astNoLsp.verify.ts`, `examineWorkspace.ts`, `verification/ast-switch/`, `.vscode-test.mjs`（`switch` / `nolsp` ラベル） | 4 | 完了 |
-| 13 | kind / strength / intra-file の描画 | `src/relationship/cosmosAdapter.ts`, `src/webview/graphView.ts` | 5 | 未着手 |
+| 13 | kind / strength / intra-file の描画 | `src/webview/linkStyle.ts`（色・太さ・閾値）, `src/relationship/cosmosAdapter.ts`, `astRelationships.ts`, `codeRelationships.ts`, `visualization.ts`, `src/webview/graphView.ts`, `templates/graph-view.html`, `docs/diagram-specs.md` | 5 | 完了 |
 | 14 | 言語追加 | `src/extruct/ast/queries/` | 6 | 未着手 |
 
 ### テスト方針
@@ -1022,5 +1068,5 @@ LSP による確定は 264 回問い合わせ、候補を確定 102・置き換�
 ## 最終更新
 
 - **日付**: 2026-10-16
-- **バージョン**: 0.4.0（Stage 4 完了時点）
+- **バージョン**: 0.4.1（Stage 5 完了時点）
 - **作成者**: Claude Code

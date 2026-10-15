@@ -4,6 +4,11 @@
  * WebView内で動作するグラフ可視化コンポーネント
  */
 
+import {
+    CIRCULAR_LINK_COLOR, KindStrengths, LINK_KIND_STYLES, dominantKindOf, linkColorOf, linkWidthOf, rgbaOf, strengthOf, strengthThresholdOf,
+} from './linkStyle';
+import { RelationshipKind } from '../extruct/ast/relationshipKind';
+
 // @ts-ignore - Cosmos.glはグローバルにロードされる（UMDビルドは "Cosmos" として公開）
 declare const Cosmos: {
     Graph: new (container: HTMLDivElement, config?: any) => any;
@@ -76,6 +81,10 @@ interface CosmosLinkData {
     }>;
     /** リンクレベル: file=ファイル間集約リンク、symbol=シンボル間リンク */
     level?: 'file' | 'symbol';
+    /** 種類ごとの強さ（0.4.1 より前に書き出したデータには無い） */
+    strengths?: KindStrengths;
+    /** 同じファイルの中のシンボル間の関係か */
+    intraFile?: boolean;
 }
 
 /**
@@ -92,6 +101,9 @@ interface GraphData {
 // =============================================================
 // レイアウト定数（調整時はここを変更する）
 // =============================================================
+
+/** リンクの不透明度（通常時） */
+const LINK_ALPHA = 0.7;
 
 /** ファイルリングの間隔（px）: 大きいほどリングが広がる */
 const RING_SPACING = 220;
@@ -392,6 +404,16 @@ class GraphView {
     private showSymbols: boolean = true;
     private nodeBfsDepth: Map<string, number> = new Map();
 
+    // 関係の線の表示（docs/ast-plan.md Stage 5）
+    /** 表示する関係の種類 */
+    private enabledKinds: Set<number> = new Set(LINK_KIND_STYLES.map(style => style.kind));
+    /** 強さの下位この割合（%）の線を隠す */
+    private strengthPercentile: number = 0;
+    /** 同じファイルの中のシンボル間の関係を表示するか */
+    private showIntraFile: boolean = false;
+    /** 循環参照のリンク */
+    private circularLinks: Set<CosmosLinkData> = new Set();
+
     constructor(containerId: string) {
         // VS Code API（スタンドアロンの場合はnull）
         if (typeof acquireVsCodeApi !== 'undefined') {
@@ -518,6 +540,97 @@ class GraphView {
                 this.applyRadialLayout();
             });
         }
+
+        this.setupLinkControls();
+    }
+
+    /**
+     * 関係の線のコントロールを設定（種類ごとの表示・強さの閾値・ファイル内の関係）
+     * 種類のチェックボックスは色見本を兼ねるため、LINK_KIND_STYLES から作る
+     */
+    private setupLinkControls(): void {
+        const kindList = document.getElementById('link-kind-list');
+        if (kindList) {
+            for (const style of LINK_KIND_STYLES) {
+                const row = document.createElement('label');
+                row.className = 'kind-row';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = this.enabledKinds.has(style.kind);
+                checkbox.dataset.kind = String(style.kind);
+                checkbox.setAttribute('aria-label', style.label);
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked) {
+                        this.enabledKinds.add(style.kind);
+                    } else {
+                        this.enabledKinds.delete(style.kind);
+                    }
+                    this.initializeGraph();
+                });
+                const swatch = document.createElement('span');
+                swatch.className = 'kind-swatch';
+                swatch.style.background = `#${style.color.toString(16).padStart(6, '0')}`;
+                const text = document.createElement('span');
+                text.textContent = style.label;
+                row.append(checkbox, swatch, text);
+                kindList.appendChild(row);
+            }
+        }
+
+        const strengthSlider = document.getElementById('strength-slider') as HTMLInputElement;
+        const strengthLabel = document.getElementById('strength-value');
+        if (strengthSlider && strengthLabel) {
+            strengthSlider.addEventListener('input', () => {
+                this.strengthPercentile = parseInt(strengthSlider.value);
+                this.initializeGraph();
+            });
+        }
+
+        const intraFileToggle = document.getElementById('toggle-intra-file') as HTMLInputElement;
+        if (intraFileToggle) {
+            intraFileToggle.addEventListener('change', () => {
+                this.showIntraFile = intraFileToggle.checked;
+                this.initializeGraph();
+            });
+        }
+    }
+
+    /**
+     * リンクの種類ごとの強さ（0.4.1 より前のデータは関係の件数を種類不明の強さとみなす）
+     */
+    private strengthsOf(link: CosmosLinkData): KindStrengths {
+        return link.strengths ?? { [RelationshipKind.unknown]: Math.max(link.details.length, 1) };
+    }
+
+    /**
+     * 表示する種類だけで数えたリンクの強さ
+     */
+    private visibleStrengthOf(link: CosmosLinkData): number {
+        return strengthOf(this.strengthsOf(link), this.enabledKinds);
+    }
+
+    /**
+     * リンクの色（表示する種類のうち最も強い種類の色。循環参照の表示中は赤）
+     */
+    private linkRgbaOf(link: CosmosLinkData, alpha: number): [number, number, number, number] {
+        if (this.showCircularRefs && this.circularLinks.has(link)) {
+            return rgbaOf(CIRCULAR_LINK_COLOR, Math.max(alpha, 0.9));
+        }
+        const kind = link.strengths ? dominantKindOf(link.strengths, this.enabledKinds) : null;
+        return rgbaOf(link.strengths ? linkColorOf(kind) : link.color, alpha);
+    }
+
+    /**
+     * 表示中のリンクの色の配列を作る
+     * @param alphaOf リンクの番号ごとの不透明度
+     */
+    private buildLinkColors(alphaOf: (index: number) => number, override?: (index: number) => [number, number, number, number] | null): Float32Array {
+        const colors = new Float32Array(this.currentVisibleLinks.length * 4);
+        for (let i = 0; i < this.currentVisibleLinks.length; i++) {
+            const rgba = override?.(i) ?? this.linkRgbaOf(this.currentVisibleLinks[i], alphaOf(i));
+            colors.set(rgba, i * 4);
+        }
+        return colors;
     }
 
     /**
@@ -835,37 +948,7 @@ class GraphView {
     private applyCircularRefColors(): void {
         if (!this.graph || !this.data || this.currentVisibleLinks.length === 0) { return; }
 
-        const linkColors = new Float32Array(this.currentVisibleLinks.length * 4);
-        const circularSet = new Set(this.data.circularLinkIndices);
-
-        // 表示中リンクの元インデックスを取得するためのマッピング
-        const visibleNodeOrigIdx = new Map<number, number>();
-        this.currentVisibleNodes.forEach((node, newIdx) => {
-            const origIdx = this.data!.nodes.indexOf(node);
-            visibleNodeOrigIdx.set(newIdx, origIdx);
-        });
-
-        for (let i = 0; i < this.currentVisibleLinks.length; i++) {
-            const link = this.currentVisibleLinks[i];
-            // 元のリンクインデックスを探す
-            const origLinkIdx = this.data.links.findIndex(
-                l => l.source === link.source && l.target === link.target
-            );
-            const isCircular = origLinkIdx !== -1 && circularSet.has(origLinkIdx) && this.showCircularRefs;
-
-            if (isCircular) {
-                linkColors[i * 4] = 1.0;      // R
-                linkColors[i * 4 + 1] = 0.267; // G
-                linkColors[i * 4 + 2] = 0.267; // B
-                linkColors[i * 4 + 3] = 0.9;   // A
-            } else {
-                linkColors[i * 4] = 0.204;
-                linkColors[i * 4 + 1] = 0.596;
-                linkColors[i * 4 + 2] = 0.859;
-                linkColors[i * 4 + 3] = 0.7;
-            }
-        }
-
+        const linkColors = this.buildLinkColors(() => LINK_ALPHA);
         if (this.graph.setLinkColors) {
             this.originalLinkColors = linkColors;
             this.graph.setLinkColors(linkColors);
@@ -1177,6 +1260,7 @@ class GraphView {
         this.updateProgress(81, `Received: ${data.nodes.length.toLocaleString()} nodes, ${data.links.length.toLocaleString()} links`);
 
         this.data = data;
+        this.circularLinks = new Set(data.circularLinkIndices.map(index => data.links[index]).filter(link => link !== undefined));
 
         // ノードIDインデックスを作成（1,000件ごとに 81→83% の進捗更新）
         this.nodeIndexMap.clear();
@@ -1322,11 +1406,13 @@ class GraphView {
             if (sourceNewIndex !== undefined && targetNewIndex !== undefined) {
                 linkArray[i * 2] = sourceNewIndex;
                 linkArray[i * 2 + 1] = targetNewIndex;
-                linkWidths[i] = link.width;
+                // 太さは表示する種類だけの強さで決める（種類を絞ると、残った関係の強さで細くなる）
+                const width = link.strengths ? linkWidthOf(this.visibleStrengthOf(link)) : link.width;
+                linkWidths[i] = width;
                 this.simRemappedLinks.push({
                     source: sourceNewIndex,
                     target: targetNewIndex,
-                    width: link.width,
+                    width: width,
                 });
             }
         }
@@ -1376,33 +1462,14 @@ class GraphView {
                 this.graph.setLinkWidths(linkWidths);
 
                 // 全リンクに矢印を設定（参照元→定義先の方向）
+                // Cosmos.gl 2.6 の setLinkArrows は boolean[] を受ける。Uint8Array を渡すと矢印の頂点バッファが
+                // 足りず（GL_INVALID_OPERATION）、リンクが1本も描かれなかった
                 if (this.graph.setLinkArrows) {
-                    const arrows = new Uint8Array(visibleLinks.length);
-                    arrows.fill(1); // 全リンクに矢印を表示
-                    this.graph.setLinkArrows(arrows);
+                    this.graph.setLinkArrows(new Array<boolean>(visibleLinks.length).fill(true));
                 }
 
-                // リンク色を設定（通常青 / 循環参照赤）
-                const circularLinkSet = new Set(this.data.circularLinkIndices);
-                this.originalLinkColors = new Float32Array(visibleLinks.length * 4);
-                for (let i = 0; i < visibleLinks.length; i++) {
-                    const link = visibleLinks[i];
-                    const origIdx = this.data.links.findIndex(
-                        l => l.source === link.source && l.target === link.target
-                    );
-                    const isCircular = origIdx !== -1 && circularLinkSet.has(origIdx) && this.showCircularRefs;
-                    if (isCircular) {
-                        this.originalLinkColors[i * 4] = 1.0;
-                        this.originalLinkColors[i * 4 + 1] = 0.267;
-                        this.originalLinkColors[i * 4 + 2] = 0.267;
-                        this.originalLinkColors[i * 4 + 3] = 0.9;
-                    } else {
-                        this.originalLinkColors[i * 4] = 0.204;
-                        this.originalLinkColors[i * 4 + 1] = 0.596;
-                        this.originalLinkColors[i * 4 + 2] = 0.859;
-                        this.originalLinkColors[i * 4 + 3] = 0.7;
-                    }
-                }
+                // リンク色を設定（関係の種類の色 / 循環参照赤）
+                this.originalLinkColors = this.buildLinkColors(() => LINK_ALPHA);
 
                 if (this.graph.setLinkColors) {
                     this.graph.setLinkColors(this.originalLinkColors);
@@ -1662,13 +1729,28 @@ class GraphView {
             }
         });
 
-        return this.data.links.filter(link => {
+        const candidates = this.data.links.filter(link => {
             if (!visibleIndices.has(link.source) || !visibleIndices.has(link.target)) {
                 return false;
             }
+            if (link.intraFile && !this.showIntraFile) {
+                return false;
+            }
             const level = link.level ?? (this.showSymbols ? 'symbol' : 'file');
-            return this.showSymbols ? level === 'symbol' : level === 'file';
+            if (!(this.showSymbols ? level === 'symbol' : level === 'file')) {
+                return false;
+            }
+            // 表示する種類の関係を含まないリンクは隠す
+            return this.visibleStrengthOf(link) > 0;
         });
+
+        // 強さの閾値: 表示候補のリンクのうち、下位 strengthPercentile% を隠す（幹線だけを残す）
+        const threshold = strengthThresholdOf(candidates.map(link => this.visibleStrengthOf(link)), this.strengthPercentile);
+        const strengthLabel = document.getElementById('strength-value');
+        if (strengthLabel) {
+            strengthLabel.textContent = this.strengthPercentile > 0 ? `≥ ${threshold.toFixed(1)}` : 'All';
+        }
+        return threshold > 0 ? candidates.filter(link => this.visibleStrengthOf(link) >= threshold) : candidates;
     }
 
     /**
@@ -2046,30 +2128,16 @@ class GraphView {
         const remappedNodeIndex = nodeIndexRemap.get(originalNodeIndex);
         if (remappedNodeIndex === undefined) {return;}
 
-        // ハイライトするリンクを特定
+        // ハイライトするリンクを特定（つながるリンクはオレンジ、他は種類の色を薄く）
         this.highlightedLinks.clear();
-        const linkColors = new Float32Array(this.currentVisibleLinks.length * 4);
-
         for (let i = 0; i < this.currentVisibleLinks.length; i++) {
             const link = this.currentVisibleLinks[i];
-            const sourceRemap = nodeIndexRemap.get(link.source);
-            const targetRemap = nodeIndexRemap.get(link.target);
-
-            if (sourceRemap === remappedNodeIndex || targetRemap === remappedNodeIndex) {
-                // ハイライト色（オレンジ）
+            if (nodeIndexRemap.get(link.source) === remappedNodeIndex || nodeIndexRemap.get(link.target) === remappedNodeIndex) {
                 this.highlightedLinks.add(i);
-                linkColors[i * 4] = 1.0;      // R
-                linkColors[i * 4 + 1] = 0.6;  // G
-                linkColors[i * 4 + 2] = 0.0;  // B
-                linkColors[i * 4 + 3] = 0.9;  // A
-            } else {
-                // 元の色（薄い青 #3498DB）
-                linkColors[i * 4] = 0.204;
-                linkColors[i * 4 + 1] = 0.596;
-                linkColors[i * 4 + 2] = 0.859;
-                linkColors[i * 4 + 3] = 0.2;
             }
         }
+        const linkColors = this.buildLinkColors(() => 0.2,
+            i => this.highlightedLinks.has(i) ? [1.0, 0.6, 0.0, 0.9] : null);
 
         // リンク色を更新
         try {
@@ -2404,6 +2472,8 @@ class GraphView {
                 color: link.color,
                 details: link.details,
                 level: link.level,
+                strengths: link.strengths,
+                intraFile: link.intraFile,
             })),
             directories: this.data.directories,
             entryPoints: this.data.entryPoints,
