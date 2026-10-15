@@ -38,7 +38,7 @@ const pad = (value, width) => String(value).padStart(width);
 
 const main = async () => {
     // 1. AST 資産を dist へ配置し、拡張機能と同じモジュールをバンドルする
-    //    codeDb は bindings/ を `<バンドルの親>/bindings` から読むため、out/ (gitignore 済み) へ出力する
+    //    out/ (gitignore 済み) へ出力する。DuckDB のネイティブバイナリ (@duckdb/node-bindings) は node_modules から読む
     const { copyAstAssets } = await import(path.join(projectRoot, 'scripts', 'ast-assets.mjs'));
     copyAstAssets();
     const esbuild = require(path.join(projectRoot, 'node_modules', 'esbuild'));
@@ -53,7 +53,7 @@ const main = async () => {
             resolveDir: projectRoot, loader: 'ts',
         },
         bundle: true, format: 'cjs', platform: 'node', outfile: bundle,
-        external: ['duckdb'], logLevel: 'warning',
+        external: ['@duckdb/node-bindings'], logLevel: 'warning',
         alias: { vscode: path.join(projectRoot, 'src', 'test', 'mocks', 'vscode.ts') },
     });
     const { AstParser, FactsExtractor, ModuleResolver, resolveAstResources, astLanguageOf, FACTS_VERSION, codeDb, codeFiles } = require(bundle);

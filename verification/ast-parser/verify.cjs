@@ -59,7 +59,7 @@ const main = async () => {
         await esbuild.build({
             entryPoints: [path.join(projectRoot, 'src', 'extruct', 'ast', 'index.ts')],
             bundle: true, format: 'cjs', platform: 'node', outfile: bundle,
-            external: ['vscode', 'duckdb'], minify: minify, logLevel: 'warning',
+            external: ['vscode', '@duckdb/node-bindings'], minify: minify, logLevel: 'warning',
         });
         const label = minify ? 'bundled (esbuild --production)' : 'bundled (esbuild)';
         console.log(`  ${label.padEnd(42)} ${(fs.statSync(bundle).size / 1024).toFixed(0).padStart(6)} KB`);

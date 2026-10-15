@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as assert from 'assert';
 import * as codeFiles from '../extruct/codeFiles';
 import * as SYMBOL from '../extruct/symbol';
-import { RowData } from 'duckdb';
+import type { Row } from '../codeDb';
 import { distribute } from '../distributor';
 
 suite('distributor Test Suite', () => {
@@ -13,12 +13,12 @@ suite('distributor Test Suite', () => {
             {relative_path: 'add', language_id: 'js', updated: new Date('2023-10-02T12:34:56.123Z')},
             {relative_path: 'update', language_id: 'is', updated: new Date('2023-10-03T12:34:56.123Z')},
         ];
-        const db_rows: RowData[] = [
+        const db_rows: Row[] = [
             {relative_path: 'equal', updated_at: new Date('2023-10-01T12:34:56.123Z')},
             {relative_path: 'update', updated_at: new Date('2023-10-02T12:34:56.123Z')},
             {relative_path: 'remove', updated_at: new Date('2023-10-04T12:34:56.123Z')},
         ];
-        const [additions, updates, notchanges, removes] = distribute<RowData, codeFiles.File>(db_rows, extructeds,
+        const [additions, updates, notchanges, removes] = distribute<Row, codeFiles.File>(db_rows, extructeds,
             (oldItem) => oldItem?.relative_path ?? '',
             (newItem) => newItem.relative_path,
             (oldItem, newItem) => newItem.relative_path === oldItem.relative_path,

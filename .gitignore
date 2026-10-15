@@ -9,3 +9,4 @@ extension
 package-lock.json
 yarn.lock
 verification/ast-parser/.build
+vsix/

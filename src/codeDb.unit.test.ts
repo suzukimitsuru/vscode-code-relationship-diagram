@@ -283,5 +283,61 @@ describe('codeDb', () => {
             await db.symbol_update(symbol);
             expect((await db.symbol_quaryAll()).map(found => [found.fqn, found.exportName])).toEqual([['src/a.ts#A', null]]);
         });
+
+        it('ID の配列でシンボルを削除する。空の配列なら何もしない', async () => {
+            const db = open();
+            await db.table_create();
+            const position = new vscode.Position(0, 0);
+            const symbolOf = (name: string) => new SYMBOL.SymbolModel(`src/a.ts/${name}`, name, vscode.SymbolKind.Class, 'src/a.ts',
+                position, position, position, Buffer.alloc(1), 'src/a.ts');
+            await db.symbol_inserts(['A', 'B', 'C'].map(symbolOf));
+            await db.symbol_delete([]);
+            await db.symbol_delete(['src/a.ts/A', 'src/a.ts/C']);
+            expect((await db.symbol_query('src/a.ts')).map(found => found.name)).toEqual(['B']);
+        });
+    });
+
+    describe('DuckDB の接続', () => {
+        it('更新日時を Date で読み戻せる', async () => {
+            const db = open();
+            await db.table_create();
+            const updated = new Date('2026-10-15T01:02:03.456Z');
+            await db.codeFile_upsert(new codeFiles.File('src/a.ts', 'typescript', updated));
+            const [file] = await db.codeFile_query('src/a.ts');
+            expect(file.updated).toBeInstanceOf(Date);
+            expect(file.updated.toISOString()).toBe(updated.toISOString());
+        });
+
+        it('待たずに呼んだ問い合わせも、呼んだ順に実行する', async () => {
+            const db = open();
+            await db.table_create();
+            const position = new vscode.Position(0, 0);
+            const inserts = ['A', 'B', 'C'].map(name => db.symbol_inserts([new SYMBOL.SymbolModel(`src/a.ts/${name}`, name,
+                vscode.SymbolKind.Class, 'src/a.ts', position, position, position, Buffer.alloc(1), 'src/a.ts')]));
+            const count = countOf(db, 'table_symbols');
+            await Promise.all(inserts);
+            expect(await count).toBe(3);
+        });
+
+        it('同じファイルを2つの Db で開き、片方を破棄しても他方は使える', async () => {
+            const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crd-db-'));
+            temporaries.push(directory);
+            const file = path.join(directory, 'crd.duckdb');
+            const first = open(file);
+            await first.table_create();
+            await first.codeFile_upsert(new codeFiles.File('src/a.ts', 'typescript', new Date()));
+
+            const second = new codeDb.Db(file);
+            expect((await second.codeFile_queryAll()).map(found => found.relative_path)).toEqual(['src/a.ts']);
+            second.dispose();
+
+            await first.codeFile_upsert(new codeFiles.File('src/b.ts', 'typescript', new Date()));
+            expect(await countOf(first, 'table_files')).toBe(2);
+        });
+
+        it('開けないファイルは最初の問い合わせで失敗する', async () => {
+            const db = open(path.join(os.tmpdir(), 'crd-db-missing', 'no', 'such', 'crd.duckdb'));
+            await expect(db.table_create()).rejects.toThrow();
+        });
     });
 });

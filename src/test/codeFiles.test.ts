@@ -2,7 +2,6 @@ import * as assert from 'assert';
 import * as codeFiles from '../extruct/codeFiles';
 import * as fs from 'fs';
 import * as path from 'path';
-import { TableData } from 'duckdb';
 
 suite('codeFiles Test Suite', () => {
 

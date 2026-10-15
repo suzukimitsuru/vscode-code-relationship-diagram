@@ -42,7 +42,8 @@ async function main() {
 		sourcesContent: !production,
 		platform: 'node',
 		outfile: 'dist/extension.js',
-		external: ['vscode', 'duckdb'],
+		// @duckdb/node-api は取り込み、ネイティブバイナリを読む @duckdb/node-bindings は node_modules から読む
+		external: ['vscode', '@duckdb/node-bindings'],
 		logLevel: 'silent',
 		plugins: [
 			esbuildProblemMatcherPlugin,
