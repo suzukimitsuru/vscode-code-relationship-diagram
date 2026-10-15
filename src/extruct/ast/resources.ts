@@ -23,7 +23,7 @@ export interface AstResources {
  * 拡張機能のルートから AST 資産の配置を解決する
  * @param extensionRoot 拡張機能のルート(`ExtensionContext.extensionPath`)
  * @returns 資産の在り処
- * @description bindings/ と同じく、バンドルには含めず `dist/` 配下から実行時に読み込む
+ * @description バンドルには含めず `dist/` 配下から実行時に読み込む
  */
 export function resolveAstResources(extensionRoot: string): AstResources {
     const distDirectory = path.join(extensionRoot, 'dist');

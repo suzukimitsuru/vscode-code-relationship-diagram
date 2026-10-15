@@ -13,22 +13,25 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
-### Added
-
-- **Linux arm64 の DuckDB バインディング**: `ubuntu-22.04-arm` で Node.js 22 / 24 / 26 向けにビルドする（Graviton・Ampere などへの Remote SSH、Raspberry Pi など）
+## [0.3.40] - 2026-10-15
 
 ### Changed
 
-- **DuckDB バインディングのビルド環境を見直した**（`.github/workflows/build-duckdb-binaries.yml`）
-  - Node.js: 18 / 20 / 22 / 23 → **22 / 24 / 26**（18・20・23 はサポート終了）。duckdb は N-API なので、Node.js 20 の拡張機能ホストでは `v22` のバイナリを読み込む
-  - OS: `macos-14`（2026-11-02 廃止）→ `macos-15`、`windows-2022` → `windows-2025`。Windows でも Node.js 22 以降をビルドする。Linux は glibc の互換性のため 22.04 のまま
-  - DuckDB: `^1.3.1` → `^1.4.4`（`duckdb` パッケージの最終版）
-  - Python: 3.11 → 3.13（npm 11 に同梱の node-gyp 12 でビルドするため）
-  - actions: `checkout` / `setup-node` / `setup-python` / `upload-artifact` を v7 に上げた（Node.js 20 ランタイムの非推奨警告が出ていた）
+- **DuckDB を 1.5 に上げ、クライアントを `@duckdb/node-api` に替えた**: `duckdb` パッケージは 1.4.4 で更新が止まり、DuckDB 1.4 LTS は 2026-11-17 にサポートが終わるため
+  - 既存の `.vscode/crd.duckdb` はそのまま使える（1.4.4 で作った DB を 1.5.6 で書き込み、1.4.4 で開き直せる事を確認した）
+  - `Db` は問い合わせを呼んだ順に1つずつ実行する（新しいクライアントは同じ接続を並行に呼ぶと実行順が保証されないため）。ファイルの DB はインスタンスキャッシュから開く（調査用と図の表示用で同じファイルを2回開くため）
+- **VSIX をプラットフォーム別にした**（`docs/marketplace-platform-specific.md`）: `win32-x64` / `win32-arm64` / `linux-x64` / `linux-arm64` / `alpine-x64` / `alpine-arm64` / `darwin-x64` / `darwin-arm64` の 8 種類。各 VSIX は対象プラットフォームの DuckDB のバイナリだけを含み 15〜37MB（これまでの VSIX は全プラットフォームの自前ビルドのバイナリ 約 520MB を含んでいた）
+  - Windows arm64・macOS Intel・Alpine Linux（musl）でも使えるようになった
+  - VSIX から開発用のファイル（`docs/`・`claude.md`・`vitest.config.mts` など）を除いた
 
-### Fixed
+### Added
 
-- **DuckDB バインディングのビルドが Node.js 22 / 23 で失敗していた**: npm 10.x が vitest@4 の optional peer の連鎖（vite → `@vitejs/devtools` → vitest@5）を解決する途中で `Cannot read properties of null (reading 'edgesOut')` を出して落ちていた。ワークフローで npm 11 に上げる
+- **`scripts/package-vsix.mjs`**: ターゲットごとに DuckDB のバイナリを npm から取得して入れ替え、`vsce package --target` で VSIX を作る。全ターゲットを1台で作れる
+- **`.github/workflows/package-vsix.yml`**: 全ターゲットの VSIX を作って成果物にする。手動実行で `publish` を選ぶと Visual Studio Marketplace に公開する（Microsoft Entra ID か PAT）
+
+### Removed
+
+- **自前ビルドの DuckDB バインディング**: `bindings/`（約 520MB）、ビルド用のワークフロー（`build-duckdb-binaries.yml`）、macOS の自動署名（`bindingsAutoSign.ts`）。DuckDB が npm で配布する署名済みのバイナリを使う
 
 ## [0.3.39] - 2026-10-08
 

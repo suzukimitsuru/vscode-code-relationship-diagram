@@ -27,7 +27,7 @@ node verification/ast-facts/verify.cjs
 | 6 | `exsample-workspace/.vscode/crd.duckdb`（拡張機能が作った実際の v1 DB）を**複製して**移行し、行数が保たれ最新の版数になる |
 
 拡張機能と同じモジュール（`src/extruct/ast` / `src/codeDb` / `src/extruct/codeFiles`）を esbuild でバンドルして使う。
-`codeDb` は `bindings/` を「バンドルの親ディレクトリ」から探すため、バンドルは `out/`（gitignore 済み）へ出力する。
+バンドルは `out/`（gitignore 済み）へ出力し、DuckDB のネイティブバイナリ（`@duckdb/node-bindings`）は `node_modules` から読む。
 `vscode` モジュールは単体テスト用のスタブ（`src/test/mocks/vscode.ts`）に置き換える。
 
 DuckDB は一時ディレクトリに作り、検証後に削除する。リポジトリ内の DB には書き込まない。

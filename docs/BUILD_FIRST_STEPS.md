@@ -15,6 +15,8 @@
 
 ## 2.VSCode の拡張機能を公開する
 
+> v0.3.40 からはプラットフォーム別の VSIX を作って公開する。現在の手順は [marketplace-platform-specific.md](marketplace-platform-specific.md) を参照。以下は最初に公開した時の記録。
+
 ### 2-1.VSCode Extention Marketplace コマンドのインストール
 
 - `sudo npm install -g vsce`

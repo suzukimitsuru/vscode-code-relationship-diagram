@@ -1,6 +1,6 @@
 /** @file DB操作 with DuckDB */
 import * as vscode from 'vscode';
-import * as path from 'path';
+import { DuckDBConnection, DuckDBInstance, DuckDBValue } from '@duckdb/node-api';
 import * as codeFiles from './extruct/codeFiles';
 import * as SYMBOL from './extruct/symbol';
 import * as codeRelationships from './relationship/codeRelationships';
@@ -164,93 +164,74 @@ const definitionOf = (row: Record<string, any>): AstDefinition => ({
     } : null,
 });
 
-import * as duckdb from 'duckdb';
-import * as fs from 'fs';
-import { autoSignBinary } from './bindingsAutoSign';
 
-// DuckDB の Node.js バインディングを読み込む
-const loadDuckDBBinding = (bindingsDir: string): string => {
-    const platform = process.platform;          // プラットフォーム: 'win32', 'darwin', 'linux', etc.
-    const arch = process.arch;                  // アーキテクチャ: 'x64', 'arm64', etc. 
-    const node_major = process.versions.node.split('.')[0]; // Node.jsのメジャーバージョン: '18', '20', '22', '23', etc.
+/** @description 問い合わせ結果の1行 (列名 → 値。BIGINT は bigint、TIMESTAMP は Date) */
+export type Row = Record<string, any>;
 
-    // バインディングのディレクトリが在ったら
-    let loading_major = node_major;
-    if (fs.existsSync(bindingsDir)) {
-
-        // 利用可能なバインディングをリスト
-        const files = fs.readdirSync(bindingsDir);
-        const available_majors = files.filter(file => file.startsWith(`duckdb-${platform}-${arch}-v`) && file.endsWith('.node'))
-            .map(file => {
-                const match = file.match(/v(\d+)\.node$/);
-                return match ? match[1] : '';
-            }).filter(Boolean).sort();
-        if (available_majors.length > 0) {
-
-            // 利用可能な中で最も近いメジャーバージョンを選択
-            loading_major = available_majors[0];
-            for (const availableMajor of available_majors) {
-                loading_major = availableMajor;
-                if (node_major.localeCompare(availableMajor) <= 0) {
-                    break;
-                }
-            }
-        }
-    }
-
-    // バインディングのパスを構築
-    const specific_path = path.join(bindingsDir, `duckdb-${platform}-${arch}-v${loading_major}.node`);
-
-    // macOSでは自動署名を試みる
-    if (platform === 'darwin') {
-        autoSignBinary(specific_path);
-    }
-
-    // DuckDB の Node.js バインディングを返す
-    return specific_path;
-};
-
-//const dynDuckdb = require(path.join(__dirname, '..', 'bindings', `duckdb-${process.platform}-${process.arch}.node`)) as typeof duckdb;
-let dynDuckdb: typeof duckdb;
-const duckdb_path = loadDuckDBBinding(path.join(__dirname, '..', 'bindings'));
-try {
-    dynDuckdb = require(duckdb_path) as typeof duckdb;
-    console.log(`✓ DuckDB binding loaded ${path.basename(duckdb_path)} successfully`);
-} catch (error) {
-    console.error(`✗ CRITICAL: Failed to initialize DuckDB binding ${path.basename(duckdb_path)}`, error);
-    throw error;
-}
+/** @description プレースホルダの値を DuckDB の値にする (undefined は NULL) */
+const valueOf = (value: unknown): DuckDBValue => (value === undefined ? null : value) as DuckDBValue;
 
 /** @description データベース操作 */
 export class Db extends vscode.Disposable {
 
-    /** @description データベース */
-    private _db: duckdb.Database;
-    /** @description 接続 */
-    protected _conn: duckdb.Connection;
-    
+    /** @description 接続 (開き終わるまでは開く処理) */
+    private readonly _connecting: Promise<{ instance: DuckDBInstance, connection: DuckDBConnection, owned: boolean }>;
+    /** @description 直前の問い合わせ (問い合わせを呼んだ順に1つずつ実行する) */
+    private _last: Promise<unknown> = Promise.resolve();
+    /** @description 破棄済み */
+    private _disposed = false;
+
     /**
      * @description コンストラクタ
-     * @param dbFile データベースファイルのパス
+     * @param dbFile データベースファイルのパス (':memory:' ならメモリ上)
+     * @description 開く処理は非同期に進め、最初の問い合わせで完了を待つ。開けなかった場合は最初の問い合わせが失敗する
      */
     public constructor(dbFile: string) {
-        super(() => {
-            this._conn?.close(() => {});
-            this._conn = null as any;
-            this._db = null as any;
-        });
-        this._db = new dynDuckdb.Database(dbFile);
-        this._conn = this._db.connect();
+        super(() => this._close());
+        this._connecting = (async () => {
+            // 同じプロセスで同じファイルを複数のインスタンスから開かないよう、ファイルはインスタンスキャッシュから開く
+            // (拡張機能は調査用と図の表示用で同じファイルを2回開く)。キャッシュのインスタンスは他と共有するため閉じない
+            const owned = dbFile === ':memory:';
+            const instance = owned ? await DuckDBInstance.create(dbFile) : await DuckDBInstance.fromCache(dbFile);
+            return { instance, connection: await instance.connect(), owned };
+        })();
+        this._connecting.catch(() => {});
     }
 
     /**
      * @description データベースを破棄する
      */
     public dispose() {
-        this._conn?.close(() => {});
-        this._conn = null as any;
-        this._db = null as any;
-        super.dispose();    
+        this._close();
+        super.dispose();
+    }
+
+    /**
+     * @description 接続を閉じる (2回目以降は何もしない)
+     */
+    private _close(): void {
+        if (this._disposed) {
+            return;
+        }
+        this._disposed = true;
+        void this._last.catch(() => {}).then(() => this._connecting).then(({ instance, connection, owned }) => {
+            connection.closeSync();
+            if (owned) {
+                instance.closeSync();
+            }
+        }).catch(() => {});
+    }
+
+    /**
+     * @description 問い合わせを、それまでに呼ばれた問い合わせの後に実行する
+     * @param query 問い合わせ
+     * @returns 問い合わせの結果
+     * @description DuckDB の接続は並行に呼ぶと実行順が保証されないため、呼んだ順に1つずつ実行する
+     */
+    private _enqueue<T>(query: (connection: DuckDBConnection) => Promise<T>): Promise<T> {
+        const result = this._last.catch(() => {}).then(async () => query((await this._connecting).connection));
+        this._last = result;
+        return result;
     }
 
     /**
@@ -259,10 +240,8 @@ export class Db extends vscode.Disposable {
      * @param params プレースホルダの値
      * @returns 完了
      */
-    private _run(sql: string, ...params: unknown[]): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            this._conn.prepare(sql).run(...params, (err: Error | null) => err ? reject(err) : resolve());
-        });
+    private async _run(sql: string, ...params: unknown[]): Promise<void> {
+        await this._enqueue(connection => connection.run(sql, params.length > 0 ? params.map(valueOf) : undefined));
     }
 
     /**
@@ -271,9 +250,10 @@ export class Db extends vscode.Disposable {
      * @param params プレースホルダの値
      * @returns 行の配列
      */
-    private _all(sql: string, ...params: unknown[]): Promise<duckdb.TableData> {
-        return new Promise<duckdb.TableData>((resolve, reject) => {
-            this._conn.prepare(sql).all(...params, (err: Error | null, rows: duckdb.TableData) => err ? reject(err) : resolve(rows));
+    private _all(sql: string, ...params: unknown[]): Promise<Row[]> {
+        return this._enqueue(async connection => {
+            const reader = await connection.runAndReadAll(sql, params.length > 0 ? params.map(valueOf) : undefined);
+            return reader.getRowObjectsJS() as Row[];
         });
     }
 
@@ -376,20 +356,9 @@ export class Db extends vscode.Disposable {
      * @param path 相対パス
      * @returns ファイル配列
      */
-    public codeFile_queryAll(): Promise<codeFiles.File[]> {
-        return new Promise<codeFiles.File[]>((resolve, reject) => {
-            this._conn.prepare('SELECT * FROM table_files').all(
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        const files: codeFiles.File[] = rows.map(row =>
-                            new codeFiles.File(row.relative_path, row.language_id, row.updated_at));
-                        resolve(files);
-                    }
-                }
-            );
-        });
+    public async codeFile_queryAll(): Promise<codeFiles.File[]> {
+        const rows = await this._all('SELECT * FROM table_files');
+        return rows.map(row => new codeFiles.File(row.relative_path, row.language_id, row.updated_at));
     }
 
     /**
@@ -397,21 +366,9 @@ export class Db extends vscode.Disposable {
      * @param path  パス
      * @returns ファイル配列
      */
-    public codeFile_query(path: string): Promise<codeFiles.File[]> {
-        return new Promise<codeFiles.File[]>((resolve, reject) => {
-            this._conn.prepare('SELECT * FROM table_files WHERE relative_path = ?;').all(
-                path,
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        const files: codeFiles.File[] = rows.map(row =>
-                            new codeFiles.File(row.relative_path, row.language_id, row.updated_at));
-                        resolve(files);
-                    }
-                }
-            );
-        });
+    public async codeFile_query(path: string): Promise<codeFiles.File[]> {
+        const rows = await this._all('SELECT * FROM table_files WHERE relative_path = ?;', path);
+        return rows.map(row => new codeFiles.File(row.relative_path, row.language_id, row.updated_at));
     }
 
     /**
@@ -430,36 +387,17 @@ export class Db extends vscode.Disposable {
      * @param factsVersion 事実抽出の版数 (抽出していなければ null)
      * @returns 完了
      */
-    public codeFile_upsert(file : codeFiles.File, factsVersion: number | null = null): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
+    public async codeFile_upsert(file : codeFiles.File, factsVersion: number | null = null): Promise<void> {
 
-            // コードファイルの存在確認
-            this._conn.prepare('SELECT COUNT(*) AS count FROM table_files WHERE relative_path = ?;').all(
-                file.relative_path,
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
+        // コードファイルの存在確認
+        const rows = await this._all('SELECT COUNT(*) AS count FROM table_files WHERE relative_path = ?;', file.relative_path);
 
-                        // 更新または挿入
-                        this._conn.prepare(
-                            (rows.length > 0) && (rows[0].count > 0)
-                                ? 'UPDATE table_files SET language_id = ?, updated_at = ?, facts_version = ? WHERE relative_path = ?;'
-                                : 'INSERT INTO table_files (language_id, updated_at, facts_version, relative_path) VALUES (?, ?, ?, ?);'
-                        ).run(
-                            file.language_id, file.updated.toISOString(), factsVersion, file.relative_path,
-                            (err: Error | null) => {
-                                if (err) {
-                                    reject(err);
-                                } else {
-                                    resolve();
-                                }
-                            }
-                        );
-                    }
-                }
-            );
-        });
+        // 更新または挿入
+        await this._run(
+            (rows.length > 0) && (Number(rows[0].count) > 0)
+                ? 'UPDATE table_files SET language_id = ?, updated_at = ?, facts_version = ? WHERE relative_path = ?;'
+                : 'INSERT INTO table_files (language_id, updated_at, facts_version, relative_path) VALUES (?, ?, ?, ?);',
+            file.language_id, file.updated.toISOString(), factsVersion, file.relative_path);
     }
 
     /**
@@ -467,19 +405,8 @@ export class Db extends vscode.Disposable {
      * @param path  パス
      * @returns 完了
      */
-    public codeFile_delete(path: string): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            this._conn.prepare('DELETE FROM table_files WHERE relative_path = ?;').run(
-                path,
-                (err: Error | null) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve();
-                    }
-                }
-            );
-        });
+    public async codeFile_delete(path: string): Promise<void> {
+        await this._run('DELETE FROM table_files WHERE relative_path = ?;', path);
     }
 
     /**
@@ -487,40 +414,28 @@ export class Db extends vscode.Disposable {
      * @param symbols シンボル配列
      * @returns 完了
      */
-    public symbol_inserts(symbols: SYMBOL.SymbolModel[]): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            if (symbols.length > 0) {
-                const placeholders: string[] = [];
-                const values: any[] = [];
-                for (const symbol of symbols) {
-                    placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-                    values.push(
-                        symbol.id, symbol.parentId,
-                        symbol.name, symbol.kind, symbol.path,
-                        symbol.define.line, symbol.define.character,
-                        symbol.start.line,  symbol.start.character,
-                        symbol.end.line,    symbol.end.character,
-                        symbol.hash.toString('hex'),
-                        symbol.fqn, symbol.exportName
-                    );
-                }
-                this._conn.prepare(
-                    'INSERT INTO table_symbols ' +
-                    '(id, parent_id, name, kind, path, define_line, define_character, start_line, start_character, end_line, end_character, hash, fqn, export_name) ' +
-                    `VALUES ${placeholders.join(', ')};`).run(
-                    ...values,
-                    (err: Error | null) => {
-                        if (err) {
-                            reject(err);
-                        } else {
-                            resolve();
-                        }
-                    }
+    public async symbol_inserts(symbols: SYMBOL.SymbolModel[]): Promise<void> {
+        if (symbols.length > 0) {
+            const placeholders: string[] = [];
+            const values: any[] = [];
+            for (const symbol of symbols) {
+                placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                values.push(
+                    symbol.id, symbol.parentId,
+                    symbol.name, symbol.kind, symbol.path,
+                    symbol.define.line, symbol.define.character,
+                    symbol.start.line,  symbol.start.character,
+                    symbol.end.line,    symbol.end.character,
+                    symbol.hash.toString('hex'),
+                    symbol.fqn, symbol.exportName
                 );
-            } else {
-                resolve();
             }
-        });
+            await this._run(
+                'INSERT INTO table_symbols ' +
+                '(id, parent_id, name, kind, path, define_line, define_character, start_line, start_character, end_line, end_character, hash, fqn, export_name) ' +
+                `VALUES ${placeholders.join(', ')};`,
+                ...values);
+        }
     }
 
     /**
@@ -528,32 +443,40 @@ export class Db extends vscode.Disposable {
      * @param symbol シンボル
      * @returns 完了
      */
-    public symbol_update(symbol: SYMBOL.SymbolModel): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            this._conn.prepare(
-                'UPDATE table_symbols SET ' +
-                'parent_id = ?, name = ?, kind = ?, path = ?, ' +
-                'define_line = ?, define_character = ?, ' +
-                'start_line = ?, start_character = ?, ' +
-                'end_line = ?, end_character = ?, ' +
-                'hash = ?, fqn = ?, export_name = ? ' +
-                'WHERE id = ?;'
-            ).run(
-                symbol.parentId, symbol.name, symbol.kind, symbol.path,
-                symbol.define.line, symbol.define.character,
-                symbol.start.line, symbol.start.character,
-                symbol.end.line, symbol.end.character,
-                symbol.hash.toString('hex'), symbol.fqn, symbol.exportName,
-                symbol.id,
-                (err: Error | null) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve();
-                    }
-                }
-            );
-        });
+    public async symbol_update(symbol: SYMBOL.SymbolModel): Promise<void> {
+        await this._run(
+            'UPDATE table_symbols SET ' +
+            'parent_id = ?, name = ?, kind = ?, path = ?, ' +
+            'define_line = ?, define_character = ?, ' +
+            'start_line = ?, start_character = ?, ' +
+            'end_line = ?, end_character = ?, ' +
+            'hash = ?, fqn = ?, export_name = ? ' +
+            'WHERE id = ?;',
+            symbol.parentId, symbol.name, symbol.kind, symbol.path,
+            symbol.define.line, symbol.define.character,
+            symbol.start.line, symbol.start.character,
+            symbol.end.line, symbol.end.character,
+            symbol.hash.toString('hex'), symbol.fqn, symbol.exportName,
+            symbol.id);
+    }
+
+    /**
+     * @description 行をシンボルにする
+     * @param row table_symbols の行
+     * @returns シンボル
+     */
+    private _symbolOf(row: Row): SYMBOL.SymbolModel {
+        const hash = Buffer.from(row.hash, 'hex');
+        const symbol = new SYMBOL.SymbolModel(
+            row.id, row.name, row.kind, row.path,
+            new vscode.Position(row.define_line, row.define_character),
+            new vscode.Position(row.start_line, row.start_character),
+            new vscode.Position(row.end_line, row.end_character),
+            hash, row.parent_id,
+        );
+        symbol.fqn = row.fqn ?? null;
+        symbol.exportName = row.export_name ?? null;
+        return symbol;
     }
 
     /**
@@ -561,33 +484,9 @@ export class Db extends vscode.Disposable {
      * @param path  パス
      * @returns シンボルのルート要素の配列
      */
-    public symbol_query(path: string): Promise<SYMBOL.SymbolModel[]> {
-        return new Promise<SYMBOL.SymbolModel[]>((resolve, reject) => {
-            this._conn.prepare('SELECT * FROM table_symbols WHERE path = ? ORDER BY path, start_line ASC;').all(
-                path,
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        const symbols: SYMBOL.SymbolModel[] = [];
-                        for (const row of rows) {
-                            const hash = Buffer.from(row.hash, 'hex');
-                            const symbol = new SYMBOL.SymbolModel(
-                                row.id, row.name, row.kind, row.path,
-                                new vscode.Position(row.define_line, row.define_character),
-                                new vscode.Position(row.start_line, row.start_character),
-                                new vscode.Position(row.end_line, row.end_character),
-                                hash, row.parent_id,
-                            );
-                            symbol.fqn = row.fqn ?? null;
-                            symbol.exportName = row.export_name ?? null;
-                            symbols.push(symbol);
-                        }
-                        resolve(symbols);
-                    }
-                }
-            );
-        });
+    public async symbol_query(path: string): Promise<SYMBOL.SymbolModel[]> {
+        const rows = await this._all('SELECT * FROM table_symbols WHERE path = ? ORDER BY path, start_line ASC;', path);
+        return rows.map(row => this._symbolOf(row));
     }
 
     /**
@@ -595,20 +494,11 @@ export class Db extends vscode.Disposable {
      * @param ids シンボルID配列
      * @returns 完了
      */
-    public symbol_delete(ids: string[]): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            // 既存のシンボルを削除（path一致のものを全削除）
-            this._conn.prepare('DELETE FROM table_symbols WHERE id IN ?;').run(
-                ids,
-                (err: Error | null) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve();
-                    }
-                }
-            );
-        });
+    public async symbol_delete(ids: string[]): Promise<void> {
+        if (ids.length > 0) {
+            const placeholders = ids.map(() => '?').join(', ');
+            await this._run(`DELETE FROM table_symbols WHERE id IN (${placeholders});`, ...ids);
+        }
     }
 
     /**
@@ -616,67 +506,32 @@ export class Db extends vscode.Disposable {
      * @param path  パス
      * @returns 完了
      */
-    public symbol_deleteFile(path: string): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            // 既存のシンボルを削除（path一致のものを全削除）
-            this._conn.prepare('DELETE FROM table_symbols WHERE path = ?;').run(
-                path,
-                (err: Error | null) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve();
-                    }
-                }
-            );
-        });
+    public async symbol_deleteFile(path: string): Promise<void> {
+        // 既存のシンボルを削除（path一致のものを全削除）
+        await this._run('DELETE FROM table_symbols WHERE path = ?;', path);
     }
 
     /**
      * @description 全てのシンボルを読み込み
      * @returns シンボルの配列
      */
-    public symbol_quaryAll(): Promise<SYMBOL.SymbolModel[]> {
-        return new Promise<SYMBOL.SymbolModel[]>((resolve, reject) => {
-            this._conn.prepare('SELECT * FROM table_symbols ORDER BY path, start_line ASC;').all(
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        const symbols: SYMBOL.SymbolModel[] = [];
-                        const symbolMap = new Map<string, SYMBOL.SymbolModel>();
+    public async symbol_quaryAll(): Promise<SYMBOL.SymbolModel[]> {
+        const rows = await this._all('SELECT * FROM table_symbols ORDER BY path, start_line ASC;');
 
-                        // 全シンボルを作成してMapに登録
-                        for (const row of rows) {
-                            const hash = Buffer.from(row.hash, 'hex');
-                            const symbol = new SYMBOL.SymbolModel(
-                                row.id, row.name, row.kind, row.path,
-                                new vscode.Position(row.define_line, row.define_character),
-                                new vscode.Position(row.start_line, row.start_character),
-                                new vscode.Position(row.end_line, row.end_character),
-                                hash, row.parent_id,
-                            );
-                            symbol.fqn = row.fqn ?? null;
-                            symbol.exportName = row.export_name ?? null;
-                            symbols.push(symbol);
-                            symbolMap.set(symbol.id, symbol);
-                        }
+        // 全シンボルを作成してMapに登録
+        const symbols = rows.map(row => this._symbolOf(row));
+        const symbolMap = new Map<string, SYMBOL.SymbolModel>(symbols.map(symbol => [symbol.id, symbol]));
 
-                        // 親子関係を構築（parent_idを使ってchildren配列を構築）
-                        for (const symbol of symbols) {
-                            if (symbol.parentId) {
-                                const parent = symbolMap.get(symbol.parentId);
-                                if (parent) {
-                                    parent.addChild(symbol);
-                                }
-                            }
-                        }
-
-                        resolve(symbols);
-                    }
+        // 親子関係を構築（parent_idを使ってchildren配列を構築）
+        for (const symbol of symbols) {
+            if (symbol.parentId) {
+                const parent = symbolMap.get(symbol.parentId);
+                if (parent) {
+                    parent.addChild(symbol);
                 }
-            );
-        });
+            }
+        }
+        return symbols;
     }
 
     /**
@@ -684,32 +539,19 @@ export class Db extends vscode.Disposable {
      * @param rels 関係配列
      * @returns 完了
      */
-    public relationship_inserts(rels: codeRelationships.Relationship[]): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            if (rels.length > 0) {
-                const placeholders: string[] = [];
-                const values: any[] = [];
-                for (const rel of rels) {
-                    placeholders.push('(?, ?)');
-                    values.push(
-                        rel.reference.id,
-                        rel.define.id
-                    );
-                }
-                this._conn.prepare(`INSERT INTO table_relationships (reference_id, define_id) VALUES ${placeholders.join(', ')};`).run(
-                    ...values,
-                    (err: Error | null) => {
-                        if (err) {
-                            reject(err);
-                        } else {
-                            resolve();
-                        }
-                    }
+    public async relationship_inserts(rels: codeRelationships.Relationship[]): Promise<void> {
+        if (rels.length > 0) {
+            const placeholders: string[] = [];
+            const values: any[] = [];
+            for (const rel of rels) {
+                placeholders.push('(?, ?)');
+                values.push(
+                    rel.reference.id,
+                    rel.define.id
                 );
-            } else {
-                resolve();
             }
-        });
+            await this._run(`INSERT INTO table_relationships (reference_id, define_id) VALUES ${placeholders.join(', ')};`, ...values);
+        }
     }
 
     /**
@@ -717,24 +559,13 @@ export class Db extends vscode.Disposable {
      * @param path  パス
      * @returns 完了
      */
-    public relationship_deleteFile(path: string): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            // 既存のシンボルの関係を先に削除（path一致のものを全削除）
-            this._conn.prepare(
-                'DELETE FROM table_relationships ' +
-                'WHERE reference_id IN (SELECT id FROM table_symbols WHERE path = ?) ' +
-                'OR    define_id    IN (SELECT id FROM table_symbols WHERE path = ?);'
-            ).run(
-                path, path,
-                (err: Error | null) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve();
-                    }
-                }
-            );
-        });
+    public async relationship_deleteFile(path: string): Promise<void> {
+        // 既存のシンボルの関係を先に削除（path一致のものを全削除）
+        await this._run(
+            'DELETE FROM table_relationships ' +
+            'WHERE reference_id IN (SELECT id FROM table_symbols WHERE path = ?) ' +
+            'OR    define_id    IN (SELECT id FROM table_symbols WHERE path = ?);',
+            path, path);
     }
 
     /**
@@ -742,24 +573,13 @@ export class Db extends vscode.Disposable {
      * @param symbolIds シンボルID配列
      * @returns 完了
      */
-    public relationship_deleteSymbols(symbolIds: string[]): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            const placeholders = symbolIds.map(() => "?").join(", ");
-            this._conn.prepare(
-                'DELETE FROM table_relationships ' +
-                `WHERE reference_id IN (${placeholders}) ` +
-                `OR    define_id    IN (${placeholders});`
-            ).run(
-                ...symbolIds, ...symbolIds,
-                (err: Error | null) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve();
-                    }
-                }
-            );
-        });
+    public async relationship_deleteSymbols(symbolIds: string[]): Promise<void> {
+        const placeholders = symbolIds.map(() => "?").join(", ");
+        await this._run(
+            'DELETE FROM table_relationships ' +
+            `WHERE reference_id IN (${placeholders}) ` +
+            `OR    define_id    IN (${placeholders});`,
+            ...symbolIds, ...symbolIds);
     }
 
     /**
@@ -767,61 +587,46 @@ export class Db extends vscode.Disposable {
      * @param rels 関係配列
      * @returns 完了
      */
-    public relationship_delete(rels: codeRelationships.Relationship[]): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            if (rels.length > 0) {
-                // (reference_id = ? AND define_id = ?) OR ... の条件を構築
-                const conditions = rels.map(() => "(reference_id = ? AND define_id = ?)").join(" OR ");
-                const values: string[] = [];
-                for (const rel of rels) {
-                    values.push(rel.reference.id, rel.define.id);
-                }
-
-                this._conn.prepare(
-                    `DELETE FROM table_relationships WHERE ${conditions};`
-                ).run(
-                    ...values,
-                    (err: Error | null) => {
-                        if (err) {
-                            reject(err);
-                        } else {
-                            resolve();
-                        }
-                    }
-                );
-            } else {
-                resolve();
+    public async relationship_delete(rels: codeRelationships.Relationship[]): Promise<void> {
+        if (rels.length > 0) {
+            // (reference_id = ? AND define_id = ?) OR ... の条件を構築
+            const conditions = rels.map(() => "(reference_id = ? AND define_id = ?)").join(" OR ");
+            const values: string[] = [];
+            for (const rel of rels) {
+                values.push(rel.reference.id, rel.define.id);
             }
-        });
+            await this._run(`DELETE FROM table_relationships WHERE ${conditions};`, ...values);
+        }
+    }
+
+    /** @description 関係と両端のファイル・行を読む SELECT (WHERE 句は呼び出し側で付ける) */
+    private static readonly RELATIONSHIP_SELECT =
+        'SELECT ' +
+            'r.reference_id, s_ref.path AS reference_path, s_ref.start_line AS reference_line, ' +
+            'r.define_id,    s_def.path AS define_path,    s_def.start_line AS define_line ' +
+        'FROM table_relationships r ' +
+        'INNER JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
+        'INNER JOIN table_symbols s_def ON r.define_id = s_def.id';
+
+    /**
+     * @description 行を関係にする
+     * @param rows RELATIONSHIP_SELECT の行
+     * @returns 関係の配列
+     */
+    private static _relationshipsOf(rows: Row[]): codeRelationships.Relationship[] {
+        return rows.map(row =>
+            new codeRelationships.Relationship(
+                new codeRelationships.SymbolLocation(row.reference_id, row.reference_path, row.reference_line),
+                new codeRelationships.SymbolLocation(row.define_id, row.define_path, row.define_line)
+        ));
     }
 
     /**
      * @description 全ての関係を読み込む
      * @returns 関係の配列
      */
-    public relationship_quaryAll(): Promise<codeRelationships.Relationship[]> {
-        return new Promise<codeRelationships.Relationship[]>((resolve, reject) => {
-            this._conn.prepare(
-                'SELECT ' +
-                    'r.reference_id, s_ref.path AS reference_path, s_ref.start_line AS reference_line, ' +
-                    'r.define_id,    s_def.path AS define_path,    s_def.start_line AS define_line ' +
-                'FROM table_relationships r ' +
-                'INNER JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
-                'INNER JOIN table_symbols s_def ON r.define_id = s_def.id;').all(
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        const relationships: codeRelationships.Relationship[] = rows.map(row =>
-                            new codeRelationships.Relationship(
-                                new codeRelationships.SymbolLocation(row.reference_id, row.reference_path, row.reference_line),
-                                new codeRelationships.SymbolLocation(row.define_id, row.define_path, row.define_line)
-                        ));
-                        resolve(relationships);
-                    }
-                }
-            );
-        });
+    public async relationship_quaryAll(): Promise<codeRelationships.Relationship[]> {
+        return Db._relationshipsOf(await this._all(`${Db.RELATIONSHIP_SELECT};`));
     }
 
     /**
@@ -829,31 +634,8 @@ export class Db extends vscode.Disposable {
      * @param definePath 定義ファイルパス
      * @returns 定義の配列
      */
-    public relationship_queryDefinePath(definePath: string): Promise<codeRelationships.Relationship[]> {
-        return new Promise<codeRelationships.Relationship[]>((resolve, reject) => {
-            this._conn.prepare(
-                'SELECT ' +
-                    'r.reference_id, s_ref.path AS reference_path, s_ref.start_line AS reference_line, ' +
-                    'r.define_id,    s_def.path AS define_path,    s_def.start_line AS define_line ' +
-                'FROM table_relationships r ' +
-                'INNER JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
-                'INNER JOIN table_symbols s_def ON r.define_id = s_def.id ' +
-                'WHERE s_def.path = ?;').all(
-                definePath,
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        const relationships: codeRelationships.Relationship[] = rows.map(row =>
-                            new codeRelationships.Relationship(
-                                new codeRelationships.SymbolLocation(row.reference_id, row.reference_path, row.reference_line),
-                                new codeRelationships.SymbolLocation(row.define_id, row.define_path, row.define_line)
-                        ));
-                        resolve(relationships);
-                    }
-                }
-            );
-        });
+    public async relationship_queryDefinePath(definePath: string): Promise<codeRelationships.Relationship[]> {
+        return Db._relationshipsOf(await this._all(`${Db.RELATIONSHIP_SELECT} WHERE s_def.path = ?;`, definePath));
     }
 
     /**
@@ -861,33 +643,9 @@ export class Db extends vscode.Disposable {
      * @param symbolIds シンボルID配列
      * @returns 定義の配列
      */
-    public relationship_queryReferencedSymbols(symbolIds: string[]): Promise<codeRelationships.Relationship[]> {
-        return new Promise<codeRelationships.Relationship[]>((resolve, reject) => {
-            const placeholders = symbolIds.map(() => "?").join(", ");
-            this._conn.prepare(
-                'SELECT ' +
-                    'r.reference_id, s_ref.path AS reference_path, s_ref.start_line AS reference_line, ' +
-                    'r.define_id,    s_def.path AS define_path,    s_def.start_line AS define_line ' +
-                'FROM table_relationships r ' +
-                'INNER JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
-                'INNER JOIN table_symbols s_def ON r.define_id = s_def.id ' +
-                `WHERE r.reference_id IN (${placeholders});`
-            ).all(
-                ...symbolIds,
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        const relationships: codeRelationships.Relationship[] = rows.map(row =>
-                            new codeRelationships.Relationship(
-                                new codeRelationships.SymbolLocation(row.reference_id, row.reference_path, row.reference_line),
-                                new codeRelationships.SymbolLocation(row.define_id, row.define_path, row.define_line)
-                        ));
-                        resolve(relationships);
-                    }
-                }
-            );
-        });
+    public async relationship_queryReferencedSymbols(symbolIds: string[]): Promise<codeRelationships.Relationship[]> {
+        const placeholders = symbolIds.map(() => "?").join(", ");
+        return Db._relationshipsOf(await this._all(`${Db.RELATIONSHIP_SELECT} WHERE r.reference_id IN (${placeholders});`, ...symbolIds));
     }
 
     /**
@@ -895,34 +653,10 @@ export class Db extends vscode.Disposable {
      * @param symbolIds 定義側シンボルID配列
      * @returns 参照の配列（reference側が参照元、define側が指定したシンボル）
      */
-    public relationship_queryReferencesTo(symbolIds: string[]): Promise<codeRelationships.Relationship[]> {
-        return new Promise<codeRelationships.Relationship[]>((resolve, reject) => {
-            if (symbolIds.length === 0) { resolve([]); return; }
-            const placeholders = symbolIds.map(() => "?").join(", ");
-            this._conn.prepare(
-                'SELECT ' +
-                    'r.reference_id, s_ref.path AS reference_path, s_ref.start_line AS reference_line, ' +
-                    'r.define_id,    s_def.path AS define_path,    s_def.start_line AS define_line ' +
-                'FROM table_relationships r ' +
-                'INNER JOIN table_symbols s_ref ON r.reference_id = s_ref.id ' +
-                'INNER JOIN table_symbols s_def ON r.define_id = s_def.id ' +
-                `WHERE r.define_id IN (${placeholders});`
-            ).all(
-                ...symbolIds,
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        const relationships: codeRelationships.Relationship[] = rows.map(row =>
-                            new codeRelationships.Relationship(
-                                new codeRelationships.SymbolLocation(row.reference_id, row.reference_path, row.reference_line),
-                                new codeRelationships.SymbolLocation(row.define_id, row.define_path, row.define_line)
-                        ));
-                        resolve(relationships);
-                    }
-                }
-            );
-        });
+    public async relationship_queryReferencesTo(symbolIds: string[]): Promise<codeRelationships.Relationship[]> {
+        if (symbolIds.length === 0) { return []; }
+        const placeholders = symbolIds.map(() => "?").join(", ");
+        return Db._relationshipsOf(await this._all(`${Db.RELATIONSHIP_SELECT} WHERE r.define_id IN (${placeholders});`, ...symbolIds));
     }
 
     /**
@@ -1121,17 +855,7 @@ export class Db extends vscode.Disposable {
      * @param query SQLクエリ文字列
      * @returns クエリ結果の配列
      */
-    public executeQuery<T = any>(query: string): Promise<T[]> {
-        return new Promise<T[]>((resolve, reject) => {
-            this._conn.prepare(query).all(
-                (err: Error | null, rows: duckdb.TableData) => {
-                    if (err) {
-                        reject(err);
-                    } else {
-                        resolve(rows as T[]);
-                    }
-                }
-            );
-        });
+    public async executeQuery<T = any>(query: string): Promise<T[]> {
+        return await this._all(query) as T[];
     }
 }

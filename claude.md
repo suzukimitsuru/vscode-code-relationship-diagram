@@ -32,7 +32,7 @@
 - **言語**: TypeScript 5.x
 - **ランタイム**: Node.js 20〜24 (VSCode組み込み。VS Code 1.97 は 20、現行は 24)
 - **フレームワーク**: VSCode Extension API 1.96.x
-- **データベース**: DuckDB (埋め込み型SQL)
+- **データベース**: DuckDB 1.5 (埋め込み型SQL。クライアントは `@duckdb/node-api`)
 - **可視化**: Cosmos.gl (GPU加速WebGLレンダラー、`enableSimulation: false` で純粋レンダラーとして使用)
 - **レイアウト計算**: BFS同心円配置（事前計算）+ カスタム力学シミュレーション（Barnes-Hut四分木）
 - **初期レイアウト補助**: 階層的レイアウト計算 (`hierarchicalLayout.ts`)
@@ -60,7 +60,6 @@
 src/
 ├── extension.ts              # エントリーポイント、コマンド登録
 ├── codeDb.ts                 # DuckDB操作（CRUD、スキーマ管理）
-├── bindingsAutoSign.ts       # macOSバイナリ自動署名
 ├── logs.ts                   # ログユーティリティ
 ├── locale.ts                 # ロケール（多言語）サポート
 ├── distributor.ts            # ファイル変更分類アルゴリズム
@@ -93,8 +92,8 @@ templates/
 ├── loading.html              # ローディング画面
 └── graph-view.html           # メインビューテンプレート
 
-bindings/
-└── duckdb-*.node             # プラットフォーム別ネイティブバインディング
+scripts/
+└── package-vsix.mjs          # プラットフォーム別 VSIX の作成（docs/marketplace-platform-specific.md）
 
 dist/                         # ビルド成果物（.vsixに同梱されるのはここだけ）
 ├── extension.js              # バンドル済み拡張機能
@@ -221,17 +220,18 @@ docs/
 
 **理由**: 内蔵シミュレーションでは径方向スプリング等の独自力モデルが実現できないため
 
-### 6. DuckDBバインディング動的ロード
+### 6. DuckDB のネイティブバイナリとプラットフォーム別 VSIX（v0.3.40～）
 
-**課題**: プラットフォーム × Node.jsバージョンごとに異なるネイティブバインディング
+**課題**: DuckDB はプラットフォームごとに異なるネイティブバイナリが要る
 
 **解決策**:
 
-- `/bindings`ディレクトリに事前コンパイル済み`.node`ファイル
-- 実行時に最適なバージョンを選択
-- macOSでは自動コード署名
+- クライアントは `@duckdb/node-api`（DuckDB 1.5）。JS 部分は `dist/extension.js` に取り込み、バイナリを読む `@duckdb/node-bindings` だけ `node_modules` から読む（`esbuild.js` の external）
+- バイナリは DuckDB が npm で配布するビルド済みのもの（`@duckdb/node-bindings-<platform>`。N-API なので Node.js のバージョンに依存しない）
+- VSIX はプラットフォーム別に作り、各 VSIX には対象プラットフォームのバイナリだけを入れる（`scripts/package-vsix.mjs`）
+- `Db` は問い合わせを呼んだ順に1つずつ実行する（Neo の接続は並行に呼ぶと順序が保証されない）。ファイルの DB はインスタンスキャッシュから開く（同じファイルを2つの `Db` で開くため）
 
-**実装**: `src/codeDb.ts:13-52`
+**実装**: `src/codeDb.ts` の `Db`、手順は `docs/marketplace-platform-specific.md`
 
 ### 7. AST解析基盤（tree-sitter / v0.3.36～）
 
@@ -334,11 +334,10 @@ docs/
 3. **データベース検証**: `.vscode/crd.duckdb`をSQLiteツールで直接確認
 4. **ブレークポイント**: `.vscode/launch.json`でデバッグ設定済み
 
-### バインディング更新
+### DuckDB の更新
 
-1. GitHub Actionsワークフローを実行
-2. 生成された`.node`ファイルを`/bindings`にコミット
-3. macOS署名が必要な場合は`bindingsAutoSign.ts`を確認
+1. `package.json` の `@duckdb/node-api` の版を上げる（`-r.N` 付きのプレリリース表記なので版を固定する）
+2. `yarn install` → `yarn test:unit` → `node scripts/package-vsix.mjs` で全ターゲットの VSIX を作れる事を確認する
 
 ---
 
@@ -361,7 +360,7 @@ npm run compile
 
 | コマンド | 内容 | 所要時間 |
 | -------- | ---- | -------- |
-| `yarn test:unit` | 単体テスト（vitest、`src/**/*.unit.test.ts`）。DB のテストは実 DuckDB（`bindings/`）を使う | 数秒 |
+| `yarn test:unit` | 単体テスト（vitest、`src/**/*.unit.test.ts`）。DB のテストは実 DuckDB（`@duckdb/node-api`）を使う | 数秒 |
 | `yarn test` | 統合テスト（VS Code の拡張機能ホスト、`src/test/*.test.ts`。`.vscode-test.mjs` の `integration` ラベル） | 1分弱 |
 | `yarn verify:ast` | AST 資産が配布物と同じ配置からロードされパースできるか（`verification/ast-parser/`） | 数秒 |
 | `yarn verify:facts` | 事実抽出の受け入れ基準（全ファイルの保存・fqn の一意性・処理時間・v1 DB の移行。`verification/ast-facts/`） | 数秒 |
@@ -372,12 +371,14 @@ npm run compile
 ### パッケージング
 
 ```bash
-# .vsixファイル生成
-npx vsce package
+# プラットフォーム別の .vsix を vsix/ に生成（全ターゲット。一部だけなら引数にターゲットを並べる）
+node scripts/package-vsix.mjs
 
-# インストール
-code --install-extension code-relationship-diagram-0.1.31.vsix
+# インストール（自分の環境のターゲットを選ぶ）
+code --install-extension vsix/vscode-code-relationship-diagram-<version>-linux-x64.vsix
 ```
+
+Marketplace への登録は `docs/marketplace-platform-specific.md` を参照。
 
 ### デバッグ設定
 
@@ -404,16 +405,16 @@ code --install-extension code-relationship-diagram-0.1.31.vsix
 
 ### DuckDBバインディングエラー
 
-**原因**: プラットフォーム/Node.jsバージョンに対応するバインディングがない
+**原因**: 実行中のプラットフォームの DuckDB バイナリが無い（別のターゲットの VSIX を入れた、`node_modules` の入れ替えが途中で止まった等）
 
 **確認**:
 
 ```bash
-ls bindings/
-# duckdb-{platform}-{arch}-v{version}.node が存在するか確認
+ls node_modules/@duckdb/
+# node-bindings-<platform>-<arch> が実行中のプラットフォームの分か確認
 ```
 
-**解決**: GitHub Actionsでバインディングを再ビルド、またはローカルでビルド
+**解決**: 開発環境なら `yarn install --force`、利用者の環境なら自分のプラットフォームの VSIX を入れ直す
 
 ### パフォーマンス低下
 
@@ -456,8 +457,8 @@ ls bindings/
 ### 互換性
 
 - VSCode: 1.96.0以上
-- Node.js: 22/24/26 (DuckDBバインディングは N-API のため、拡張機能ホストの Node.js 20 でも動く)
-- プラットフォーム: macOS (arm64/x64), Windows (x64), Linux (x64/arm64)
+- Node.js: 拡張機能ホストの Node.js（DuckDB のバイナリは N-API のため版に依存しない）
+- プラットフォーム: macOS (arm64/x64), Windows (x64/arm64), Linux (x64/arm64、glibc と musl)
 
 ---
 

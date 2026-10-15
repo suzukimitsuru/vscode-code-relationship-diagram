@@ -15,18 +15,20 @@ vsc-extension-quickstart.md
 exsample-workspace/**
 scripts/**
 verification/**
+vsix/**
+docs/**
+claude.md
+.claude/**
+vitest.config.mts
 
 # AST assets (web-tree-sitter runtime / grammar wasm / queries)
 !dist/wasm/**
 !dist/queries/**
 
 # bundle modules
-!node_modules/duckdb/*
-!node_modules/duckdb/lib/**
-!node_modules/duckdb/node_modules/**
-!node_modules/@mapbox/node-pre-gyp/**
-!node_modules/consola/**
-!node_modules/semver/**
+# DuckDB のネイティブバイナリ (プラットフォーム別 VSIX には対象プラットフォームの分だけを入れる。docs/marketplace-platform-specific.md)
+!node_modules/@duckdb/node-bindings/**
+!node_modules/@duckdb/node-bindings-*/**
 !node_modules/detect-libc/**
 !node_modules/font-awesome/css/font-awesome.min.css
 !node_modules/font-awesome/fonts/**

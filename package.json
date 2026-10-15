@@ -3,7 +3,7 @@
   "displayName": "CRD: Code Relationship Diagram",
   "shortName": "CRD",
   "description": "コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています",
-  "version": "0.3.39",
+  "version": "0.3.40",
   "preview": true,
   "publisher": "suzukimitsuru",
   "keywords": [
@@ -105,7 +105,7 @@
   "dependencies": {
     "@cosmos.gl/graph": "^2.6.4",
     "d3-hierarchy": "^3.1.2",
-    "duckdb": "^1.4.4",
+    "@duckdb/node-api": "1.5.6-r.1",
     "font-awesome": "^4.7.0",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",
