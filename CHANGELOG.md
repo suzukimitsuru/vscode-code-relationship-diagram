@@ -13,6 +13,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Fixed
+
+- **VSIX の作成に必要な Node.js の版の記載が誤っていた**: `@vscode/vsce` 4 は Node.js 22.12.0 以上が必要（22.11 以前では `ERR_REQUIRE_ESM` で失敗する）。`docs/marketplace-platform-specific.md` を直し、macOS で Node.js を更新する方法を書き足した。`scripts/package-vsix.mjs` は最初に版を確かめ、足りなければ止まる
+
 ## [0.3.40] - 2026-10-15
 
 ### Changed
