@@ -53,6 +53,8 @@ export class UpsertPlan {
         public readonly lineCount: number,
         /** AST の事実（未対応言語・抽出失敗なら null。null でも古い事実は削除する） */
         public readonly facts: FileFacts | null = null,
+        /** 関係の調査経路（ast なら LSP の参照検索を行わず、このファイルを定義側とする LSP 由来の関係を消す） */
+        public readonly relationship_mode: codeDb.RelationshipMode = 'lsp',
     ) {}
 }
 
@@ -74,10 +76,13 @@ export class FactsPlan {
  * @param db            データベース
  * @param log           ログ関数
  * @param progress      進捗コールバック（列挙1ファイルごと）
+ * @param modeOf        language id ごとの関係の調査経路（省略時は調べない）。内容が同じでも、記録した経路と
+ *                      異なるファイルは調べ直す（設定 ast.enabled の切り替え・ロールバック）
  * @returns 分配結果
  */
 export async function scanDifference(wsFolder: string, associations: object, db: codeDb.Db,
-    log: (message: string) => void, progress: () => void): Promise<Difference>
+    log: (message: string) => void, progress: () => void,
+    modeOf?: (languageId: string) => codeDb.RelationshipMode): Promise<Difference>
 {
     // ファイルを列挙する
     const lists: codeFiles.File[] = [];
@@ -105,7 +110,11 @@ export async function scanDifference(wsFolder: string, associations: object, db:
     const facts_versions = await db.codeFile_queryFactsVersions();
     const facts_stale = notchanges.filter(file =>
         (astLanguageOf(file.language_id) !== null) && (facts_versions.get(file.relative_path) !== FACTS_VERSION));
-    return new Difference(lists, additions, updates, notchanges, removes, facts_stale);
+
+    // 内容は変わっていないが、関係の調査経路が今の設定と異なるファイル（記録が無ければ LSP の経路で調べたもの）
+    const modes = modeOf ? await db.codeFile_queryRelationshipModes() : new Map<string, codeDb.RelationshipMode | null>();
+    const mode_stale = modeOf ? notchanges.filter(file => (modes.get(file.relative_path) ?? 'lsp') !== modeOf(file.language_id)) : [];
+    return new Difference(lists, additions, updates, notchanges, removes, facts_stale, mode_stale);
 }
 
 /** @description 1ファイルの関係調査タスク */
@@ -115,19 +124,32 @@ export class ExamineTask {
     private readonly _symbols: SymbolCache;
     private readonly _log: (message: string) => void;
     private readonly _facts: FactsExtractor | null;
+    private readonly _ast_enabled: () => boolean;
 
+    /**
+     * @param astEnabled 関係を AST の経路で調べるか（設定 ast.enabled。false なら全ファイルを LSP の経路で調べる）
+     */
     public constructor(wsFolder: string, db: codeDb.Db, symbols: SymbolCache, log: (message: string) => void,
-        facts: FactsExtractor | null = null) {
+        facts: FactsExtractor | null = null, astEnabled: () => boolean = () => true) {
         this._ws_folder = wsFolder;
         this._db = db;
         this._symbols = symbols;
         this._log = log;
         this._facts = facts;
+        this._ast_enabled = astEnabled;
     }
 
     /** @description AST の事実を抽出できるか（パーサが使えない環境では LSP の経路だけで動く） */
     public get hasFacts(): boolean {
         return this._facts !== null;
+    }
+
+    /**
+     * @description その言語のファイルの関係の調査経路
+     * AST の経路は、設定で有効かつ文法のある言語に限る（文法の無い言語は LSP の参照検索にフォールバックする）
+     */
+    public relationshipModeOf(languageId: string): codeDb.RelationshipMode {
+        return (this._ast_enabled() && (this._facts?.isSupported(languageId) ?? false)) ? 'ast' : 'lsp';
     }
 
     /**
@@ -213,6 +235,21 @@ export class ExamineTask {
             return oldSymbol !== undefined && (newSymbol.isPositionChanged(oldSymbol) || newSymbol.isKeyChanged(oldSymbol));
         });
 
+        // 行数を集計する（統計用）
+        const sum_line = news.reduce((sum, symbol) => sum + symbol.lineCount, 0);
+        const file_line = news.reduce((sum, symbol) => sum + ((symbol.kind === vscode.SymbolKind.File) ? symbol.lineCount : 0), 0);
+        const line_count = file_line > 0 ? file_line : sum_line;
+
+        // AST の経路: 関係は事実から名前解決で作る（キューが空になった時点）。LSP の参照検索と fan-out は行わない
+        // （このファイルを import しているファイルは、事実の置き換えで未解決に戻る）。事実を抽出できなければ LSP の経路で調べる
+        const relationship_mode = facts ? this.relationshipModeOf(file.language_id) : 'lsp';
+        if (relationship_mode === 'ast') {
+            this._log(`symbols ${relative_path}: (added ${symbol_additions.length}, updated ${symbol_updates.length}, ` +
+                `no changed ${symbol_notchanges.length}, removed ${symbol_removes.length}, updated in place ${in_place_updates.length}) by AST`);
+            return new UpsertPlan(file, [...symbol_additions, ...symbol_updates], in_place_updates, symbol_removes,
+                [], [], line_count, facts, relationship_mode);
+        }
+
         // 関係を調査する定義側シンボル（fan-out 再調査なら全シンボル）
         const define_symbols = reexamine ? news : [...symbol_additions, ...symbol_updates];
 
@@ -252,11 +289,6 @@ export class ExamineTask {
         }
         token.check();
 
-        // 行数を集計する（統計用）
-        const sum_line = news.reduce((sum, symbol) => sum + symbol.lineCount, 0);
-        const file_line = news.reduce((sum, symbol) => sum + ((symbol.kind === vscode.SymbolKind.File) ? symbol.lineCount : 0), 0);
-        const line_count = file_line > 0 ? file_line : sum_line;
-
         this._log(`symbols ${relative_path}: (added ${symbol_additions.length}, updated ${symbol_updates.length}, ` +
             `no changed ${symbol_notchanges.length}, removed ${symbol_removes.length}, updated in place ${in_place_updates.length})`);
 
@@ -282,6 +314,11 @@ export class ExamineTask {
             await this._db.symbol_update(symbol);
         }
 
+        // AST の経路へ切り替えたファイルを定義側とする、LSP 由来の関係を削除する
+        if (plan.relationship_mode === 'ast') {
+            await this._db.relationship_deleteDefinePath(relative_path);
+        }
+
         // 追加する関係を予め削除してから追加する（存在しない場合もある）
         await this._db.relationship_delete(plan.relationships).catch(() => {});
         if (plan.relationships.length > 0) {
@@ -298,7 +335,7 @@ export class ExamineTask {
         await this._db.facts_replace(relative_path, plan.facts);
 
         // ファイルを更新または挿入する（タスク完全成功の印として最後に書く）
-        await this._db.codeFile_upsert(plan.file, plan.facts ? FACTS_VERSION : null);
+        await this._db.codeFile_upsert(plan.file, plan.facts ? FACTS_VERSION : null, plan.relationship_mode);
         this._log(`Upserted file: ${relative_path}`);
     }
 

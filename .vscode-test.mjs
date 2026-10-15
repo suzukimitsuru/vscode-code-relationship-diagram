@@ -21,8 +21,22 @@ export default defineConfig([
 	{
 		// 名前解決の精度検証 (yarn verify:accuracy)。自リポジトリ全体を LSP と AST の両方で調査するため時間が掛かる
 		label: 'accuracy',
-		files: 'out/test/**/*.verify.js',
+		files: 'out/test/astAccuracy.verify.js',
 		launchArgs: [`--user-data-dir=${userDataDir}`],
+		mocha: { timeout: 60 * 60 * 1000 },
+	},
+	{
+		// 主経路の切替の検証 (yarn verify:switch)。自リポジトリを AST の経路と LSP の経路で調べて時間を比べ、ロールバックを確かめる
+		label: 'switch',
+		files: 'out/test/astSwitch.verify.js',
+		launchArgs: [`--user-data-dir=${userDataDir}`],
+		mocha: { timeout: 60 * 60 * 1000 },
+	},
+	{
+		// 言語サーバ未導入の状態の検証 (yarn verify:switch)。TypeScript の言語機能 (tsserver) を無効にして起動する
+		label: 'nolsp',
+		files: 'out/test/astNoLsp.verify.js',
+		launchArgs: [`--user-data-dir=${userDataDir}`, '--disable-extension=vscode.typescript-language-features'],
 		mocha: { timeout: 60 * 60 * 1000 },
 	},
 ]);

@@ -11,11 +11,26 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - [Fixed] for any bug fixes.
 - [Security] in case of vulnerabilities.
 
-## [Unreleased]
+## [0.4.0] - 2026-10-16
 
 ### Changed
 
+- **TS/JS の関係を AST の経路で調べ、図に出すようにした**（`docs/ast-plan.md` Stage 4）: 言語サーバの参照検索（シンボルごとの往復と再試行の待ち）をやめ、構文木の事実から名前解決した関係を表示する
+  - 自リポジトリ（70 ファイル）の全走査が **310.9 秒 → 12.1 秒（3.9%）** になった
+  - **言語サーバが無くても TS/JS の関係が出る**（TypeScript の言語機能を無効にした VS Code で、ファイル間の線 212 本）。言語サーバのシンボルが無い場合はファイル同士の線になる
+  - 図には確信度が設定 `codeRelationshipDiagram.ast.confidenceThreshold`（既定 0.7）以上のファイル間の関係を出す。言語サーバが記録していた「構造的な参照」（インターフェースを満たすオブジェクトリテラルへの参照など、依存ではないもの）は出ないため、自リポジトリでは図の線が 356 本から 213 本に減る（構造的な参照を除いた線の 93.6% は残る）
+  - 文法の無い言語（C など）は、これまで通り言語サーバの参照検索で調べる
+  - 既存の DB は起動時にスキーマ v5 へ移行し、次の全走査で TS/JS のファイルを調べ直す
+- **差分更新の再解決の範囲を広げた**: 事実が変わったファイルを推移的に import しているファイルと、同名の定義（段4 の候補）が増減した名前を引いているファイルも解決し直す
+- 精度検証（`yarn verify:accuracy`）は、言語サーバの起動を待ってから始め、正解を作るため旧経路で調べる。LSP による確定の前と後の値を出す（確定の後で、確信度 0.7 以上の再現率 92.5%・適合率 99.2%）
 - **Marketplace への公開手順を、実際に通った手順に書き換えた**（`docs/marketplace-platform-specific.md`）: Microsoft Entra ID はマネージド ID（Azure のサブスクリプションが必要）ではなくアプリの登録で認証する。フェデレーション資格情報の入力値（ID 入りのサブジェクト）、GitHub の OIDC のオプトイン（`use_immutable_subject`）、Azure CLI でアプリのプロファイル ID を調べる方法、Web から手動で公開する方法を書いた
+
+### Added
+
+- **設定 `codeRelationshipDiagram.ast.enabled`**（既定 `true`）: `false` にすると全ファイルを言語サーバの参照検索で調べ直す（ロールバック）。ファイルごとに調べた経路を記録し、切り替えると経路の異なるファイルだけを調べ直す
+- **低確信度の関係の LSP による確定**（設定 `codeRelationshipDiagram.ast.lspVerification`、既定 `true`）: 確信度が閾値未満の関係（同名の定義への推測）だけ、言語サーバに定義の位置を問い合わせ、返った定義へ置き換える（確信度 0.99）。答えが無ければそのまま残す
+- **`yarn verify:switch`**（`verification/ast-switch/`）: AST の経路と LSP の経路の時間の比較、ロールバック、言語サーバ未導入の状態を自リポジトリで検証する
+- 設定の説明を日本語でも表示する（`package.nls.ja.json`）
 
 ### Fixed
 

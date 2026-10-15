@@ -5,7 +5,7 @@ import {
     AstDefinition, AstImport, AstOccurrence, AstParser, FactsExtractor, ModuleResolution, ModuleResolver,
     RelationshipKind, resolveAstResources,
 } from '../extruct/ast';
-import { CONFIDENCE, RelationshipV2, ResolutionLookup, ResolutionStats, resolveFile } from './resolve';
+import { CONFIDENCE, RelationshipV2, ResolutionLookup, ResolutionStats, candidateNamesChanged, isGlobalScopeFile, resolveFile } from './resolve';
 
 const WORKSPACE = path.resolve('/workspace');
 
@@ -210,5 +210,41 @@ describe('resolveFile', () => {
             referencePath: native('src/main.ts'), definePath: native('src/base.ts'),
             weight: 10, confidence: CONFIDENCE.import, referenceLine: 8, isIntraFile: false,
         });
+    });
+});
+
+describe('candidateNamesChanged (差分更新の再解決の範囲)', () => {
+    const definition = (fqn: string, kind: string, parentFqn: string) =>
+        ({ name: fqn.slice(fqn.lastIndexOf('#') + 1).split('.').pop()!, fqn: fqn, kind: kind, parentFqn: parentFqn });
+    const CLASS = definition('a.ts#A', 'class', 'a.ts#');
+    const RUN = definition('a.ts#A.run', 'method', 'a.ts#A');
+    const HELPER = definition('a.ts#helper', 'function', 'a.ts#');
+    const LOCAL = definition('a.ts#helper.tmp', 'variable', 'a.ts#helper');
+
+    it('メンバの定義の増減は、その名前を返す', () => {
+        expect(candidateNamesChanged('a.ts', { definitions: [CLASS], globalScope: false }, { definitions: [CLASS, RUN], globalScope: false })).toEqual(['run']);
+        expect(candidateNamesChanged('a.ts', { definitions: [CLASS, RUN], globalScope: false }, null)).toEqual(['run']);
+    });
+
+    it('モジュールのトップレベル・ローカルな定義は段4 の候補にならない', () => {
+        expect(candidateNamesChanged('a.ts', null, { definitions: [CLASS, HELPER, LOCAL], globalScope: false })).toEqual([]);
+    });
+
+    it('スクリプトのトップレベルの定義はグローバルなので候補になる。スクリプトでなくなれば全て消える', () => {
+        expect(candidateNamesChanged('a.ts', null, { definitions: [CLASS, HELPER, LOCAL], globalScope: true })).toEqual(['A', 'helper']);
+        expect(candidateNamesChanged('a.ts', { definitions: [HELPER], globalScope: true }, { definitions: [HELPER], globalScope: false })).toEqual(['helper']);
+    });
+
+    it('同じ名前でも完全修飾名・種別が変われば増減として扱う。同じなら空', () => {
+        const moved = definition('a.ts#B.run', 'method', 'a.ts#B');
+        expect(candidateNamesChanged('a.ts', { definitions: [RUN], globalScope: false }, { definitions: [moved], globalScope: false })).toEqual(['run']);
+        expect(candidateNamesChanged('a.ts', { definitions: [RUN], globalScope: false }, { definitions: [RUN], globalScope: false })).toEqual([]);
+    });
+
+    it('宣言ファイルは import / export があってもグローバル', () => {
+        expect(isGlobalScopeFile('types/index.d.ts', 3, true)).toBe(true);
+        expect(isGlobalScopeFile('script.js', 0, false)).toBe(true);
+        expect(isGlobalScopeFile('module.ts', 0, true)).toBe(false);
+        expect(isGlobalScopeFile('module.ts', 1, false)).toBe(false);
     });
 });

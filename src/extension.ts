@@ -106,6 +106,11 @@ export async function activate(context: vscode.ExtensionContext) {
 			logs.debug(`AST parser is unavailable: ${error instanceof Error ? error.message : String(error)}`);
 		}
 
+		// 関係の調査経路の設定 (docs/ast-plan.md Stage 4)。変更はキューの次の処理から反映する
+		const settings = () => vscode.workspace.getConfiguration('codeRelationshipDiagram');
+		const astEnabled = (): boolean => settings().get<boolean>('ast.enabled', true);
+		const confidenceThreshold = (): number => settings().get<number>('ast.confidenceThreshold', 0.7);
+
 		// データベースの事前生成とキュープロセッサの生成
 		let db: codeDb.Db | undefined;
 		let queueProcessor: Relationship.FileDifference.QueueProcessor | undefined;
@@ -120,6 +125,9 @@ export async function activate(context: vscode.ExtensionContext) {
 				workspaceFolder: workspace_folder,
 				db,
 				facts: facts_extractor,
+				astEnabled: astEnabled,
+				lspVerification: () => settings().get<boolean>('ast.lspVerification', true),
+				confidenceThreshold: confidenceThreshold,
 				log: (message) => logs.log(message),
 				error: (message, error) => logs.error(message, error),
 				progress: (processed, total, message) => updateProgress(status_bar, progress_start, processed, total, message),
@@ -145,10 +153,11 @@ export async function activate(context: vscode.ExtensionContext) {
 					progress_start = performance.now();
 				}
 				let scanned = 0;
+				const processor = queueProcessor;
 				const difference = await Relationship.scanDifference(workspace_folder, associations, db,
 					message => logs.log(message), () => {
 						updateProgress(status_bar, progress_start, 0, ++scanned, 'Scanning files...');
-					});
+					}, languageId => processor.relationshipModeOf(languageId));
 				queueProcessor.enqueueDifference(difference);
 			} catch (error) {
 				logs.error('enqueueFullScan: ', error);
@@ -236,6 +245,13 @@ export async function activate(context: vscode.ExtensionContext) {
 			void enqueueFullScan();
 		}, 300)));
 
+		// 関係の調査経路の切り替え (ロールバック) を検知し、経路の異なるファイルを調べ直す
+		context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(debounce((e: vscode.ConfigurationChangeEvent) => {
+			if (!workspace_folder || !e.affectsConfiguration('codeRelationshipDiagram.ast.enabled')) { return; }
+			logs.log(`codeRelationshipDiagram.ast.enabled changed to ${astEnabled()}, re-examining files...`);
+			void enqueueFullScan();
+		}, 300)));
+
 		// コード関係調査コマンドの登録
 		context.subscriptions.push(vscode.commands.registerCommand('vscode-code-relationship-diagram.examineRelationships', async () => {
 
@@ -275,9 +291,10 @@ export async function activate(context: vscode.ExtensionContext) {
 						const all_symbols = await db.symbol_quaryAll();
 						logs.log(`Loaded symbol: ${all_symbols.length} counts`);
 
-						// シンボル関係を読み込み
-						const all_rels = await db.relationship_quaryAll();
-						logs.log(`Loaded relationships: ${all_rels.length} counts`);
+						// シンボル関係を読み込み (ファイルごとの調査経路で、LSP 由来と AST 由来の関係を選ぶ)
+						const loaded = await Relationship.queryDiagramRelationships(db, all_symbols, confidenceThreshold());
+						const all_rels = [...loaded.lsp, ...loaded.ast];
+						logs.log(`Loaded relationships: ${all_rels.length} counts (LSP ${loaded.lsp.length}, AST ${loaded.ast.length})`);
 
 						// グラフを表示
 						const graphViz = new Relationship.Visualization(context, workspace_folder, workspace_basename + '.crd.html', logs);

@@ -3,7 +3,7 @@
   "displayName": "CRD: Code Relationship Diagram",
   "shortName": "CRD",
   "description": "コードの関係図でソフトウェア全体を俯瞰しながら育てる事を目指しています",
-  "version": "0.3.40",
+  "version": "0.4.0",
   "preview": true,
   "publisher": "suzukimitsuru",
   "keywords": [
@@ -64,6 +64,23 @@
           "type": "boolean",
           "default": true,
           "description": "Use hierarchical community layout for better visualization of code structure."
+        },
+        "codeRelationshipDiagram.ast.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "%ast-enabled-description%"
+        },
+        "codeRelationshipDiagram.ast.lspVerification": {
+          "type": "boolean",
+          "default": true,
+          "description": "%ast-lsp-verification-description%"
+        },
+        "codeRelationshipDiagram.ast.confidenceThreshold": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "%ast-confidence-threshold-description%"
         }
       }
     }
@@ -84,7 +101,8 @@
     "test:unit": "vitest run",
     "verify:ast": "node esbuild.js && node verification/ast-parser/verify.cjs",
     "verify:facts": "node verification/ast-facts/verify.cjs",
-    "verify:accuracy": "yarn run compile-tests && node esbuild.js && vscode-test --label accuracy"
+    "verify:accuracy": "yarn run compile-tests && node esbuild.js && vscode-test --label accuracy",
+    "verify:switch": "yarn run compile-tests && node esbuild.js && vscode-test --label switch && vscode-test --label nolsp"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
