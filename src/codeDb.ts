@@ -12,9 +12,10 @@ import { CandidateFacts, RelationshipV2, candidateNamesChanged, isGlobalScopeFil
  * @description 1 = 初版 (files / symbols / relationships)、
  *              2 = AST の事実 (docs/ast-plan.md §5.2)、
  *              3 = 定義表と名前解決 (Stage 2)、4 = 型の手掛かり (Stage 3)、
- *              5 = 関係の調査経路と、関係 (v2) の参照出現の桁 (Stage 4)
+ *              5 = 関係の調査経路と、関係 (v2) の参照出現の桁 (Stage 4)、
+ *              6 = 副索引の作り直し (DuckDB の不具合で壊れた索引の修復)
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /**
  * ファイルの関係の調査経路 (table_files.relationship_mode)
@@ -191,8 +192,47 @@ const MIGRATION_V5: readonly string[] = [
     'UPDATE table_files SET resolved_version = NULL;',
 ];
 
-/** 版数ごとの移行 (古い順) */
-const MIGRATIONS: readonly [number, readonly string[]][] = [[2, MIGRATION_V2], [3, MIGRATION_V3], [4, MIGRATION_V4], [5, MIGRATION_V5]];
+/** 副索引 (CREATE INDEX の索引。主キーの索引は含まない) の [索引名, 表, 列] */
+const SECONDARY_INDEXES: readonly (readonly [string, string, string])[] = [
+    ['idx_files_updated_at', 'table_files', 'updated_at'],
+    ['idx_symbols_parent_id', 'table_symbols', 'parent_id'],
+    ['idx_symbols_path', 'table_symbols', 'path'],
+    ['idx_symbols_fqn', 'table_symbols', 'fqn'],
+    ['idx_symbols_name', 'table_symbols', 'name'],
+    ['idx_relationships_reference_id', 'table_relationships', 'reference_id'],
+    ['idx_relationships_define_id', 'table_relationships', 'define_id'],
+    ['idx_imports_path', 'table_imports', 'path'],
+    ['idx_imports_resolved', 'table_imports', 'resolved_path'],
+    ['idx_occ_path', 'table_occurrences', 'path'],
+    ['idx_occ_name', 'table_occurrences', 'root_name'],
+    ['idx_definitions_path', 'table_definitions', 'path'],
+    ['idx_definitions_fqn', 'table_definitions', 'fqn'],
+    ['idx_definitions_name', 'table_definitions', 'name'],
+    ['idx_relationships_v2_reference', 'table_relationships_v2', 'reference_fqn'],
+    ['idx_relationships_v2_define', 'table_relationships_v2', 'define_fqn'],
+    ['idx_relationships_v2_reference_path', 'table_relationships_v2', 'reference_path'],
+    ['idx_relationships_v2_define_path', 'table_relationships_v2', 'define_path'],
+];
+
+/**
+ * v5 → v6 の移行 (DuckDB の副索引の不具合で壊れた DB の修復)
+ * @description DuckDB 1.4〜1.5.6 は、WAL を再生した後の最初のチェックポイントが自動か終了時だと、再生した行の無い副索引を書き出す
+ *              (duckdb/duckdb#26828・#26106)。索引を通る `WHERE path = ?` が 0 件になり、表を走査する削除は
+ *              「Failed to delete all rows from index」の FATAL で DB を使えなくする。以後は開いた直後のチェックポイント (Db) で防ぐが、
+ *              既に壊れた DB を直すため、全ての副索引を作り直す。
+ *              同じ名前の索引の DROP と CREATE を1つのトランザクションで行うと、開き直したファイルの DB では COMMIT で
+ *              プロセスが異常終了する (duckdb/duckdb#23929。1.5.6 でも起きる) ため、トランザクションで囲まない。
+ *              途中で止まっても版数は上がらず、次の起動でもう一度作り直す
+ */
+const MIGRATION_V6: readonly string[] = SECONDARY_INDEXES.flatMap(([name, table, column]) => [
+    `DROP INDEX IF EXISTS ${name};`,
+    `CREATE INDEX ${name} ON ${table}(${column});`,
+]);
+
+/** 版数ごとの移行 (古い順)。[版数, SQL, トランザクションで囲むか] */
+const MIGRATIONS: readonly [number, readonly string[], boolean][] = [
+    [2, MIGRATION_V2, true], [3, MIGRATION_V3, true], [4, MIGRATION_V4, true], [5, MIGRATION_V5, true], [6, MIGRATION_V6, false],
+];
 
 /** 一括挿入1文あたりの行数 (プレースホルダの数を抑える) */
 const INSERT_CHUNK_ROWS = 500;
@@ -236,7 +276,14 @@ export class Db extends vscode.Disposable {
             // (拡張機能は調査用と図の表示用で同じファイルを2回開く)。キャッシュのインスタンスは他と共有するため閉じない
             const owned = dbFile === ':memory:';
             const instance = owned ? await DuckDBInstance.create(dbFile) : await DuckDBInstance.fromCache(dbFile);
-            return { instance, connection: await instance.connect(), owned };
+            const connection = await instance.connect();
+            if (!owned) {
+                // WAL を再生した直後に自分でチェックポイントする。DuckDB 1.4〜1.5.6 は、再生の後の最初のチェックポイントが
+                // 自動 (WAL の肥大) か終了時だと、再生した行の無い副索引を書き出す (duckdb/duckdb#26828・#26106)。
+                // 拡張機能はキャッシュのインスタンスを閉じないため、VS Code の終了ごとに WAL が残り、次の起動で再生される
+                await connection.run('CHECKPOINT;');
+            }
+            return { instance, connection, owned };
         })();
         this._connecting.catch(() => {});
     }
@@ -328,15 +375,26 @@ export class Db extends vscode.Disposable {
         }
         await this._run('CREATE TABLE IF NOT EXISTS table_schema_version (version INTEGER);');
         const version = await this.schema_version();
-        for (const [target, sqls] of MIGRATIONS) {
+        for (const [target, sqls, transactional] of MIGRATIONS) {
             if (version < target) {
-                await this._transaction(async () => {
+                const migrate = async () => {
                     for (const sql of sqls) {
                         await this._run(sql);
                     }
+                };
+                const record = async () => {
                     await this._run('DELETE FROM table_schema_version;');
                     await this._run('INSERT INTO table_schema_version (version) VALUES (?);', target);
-                });
+                };
+                if (transactional) {
+                    await this._transaction(async () => {
+                        await migrate();
+                        await record();
+                    });
+                } else {
+                    await migrate();
+                    await this._transaction(record);
+                }
             }
         }
         await this._run('ANALYZE;');

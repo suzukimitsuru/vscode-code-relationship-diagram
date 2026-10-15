@@ -221,6 +221,7 @@ GROUP BY reference_fqn, define_fqn, kind;
 | `table_files.relationship_mode` | ファイルの関係の調査経路（`ast` / `lsp`。NULL は Stage 3 までに調べたファイルで `lsp` と同じ扱い）を追加 | 設定 `ast.enabled` の切り替え（ロールバック）で、内容が同じでも経路の異なるファイルを調べ直すため。図はファイルごとの経路で、LSP 由来の関係（定義側が `lsp`）と AST 由来の関係（参照元が `ast`）を選ぶ |
 | `table_relationships_v2.reference_character` | 参照出現（import 文なら import 束縛）の開始桁を追加。表を作り直し、全ファイルを未解決に戻す（`RESOLVE_VERSION` も 3 に上げた） | §7.4 の LSP による確定で、言語サーバに問い合わせる位置を引くため |
 | 旧 `table_relationships` | **DROP しない**（計画では Stage 4 で DROP） | 文法の無い言語（C など）のフォールバックと、`ast.enabled = false` へのロールバックが LSP の参照検索の結果を置く場所として使うため。AST の経路へ切り替えたファイルを定義側とする行は、切り替えた時に消す |
+| 副索引（スキーマ v6。`MIGRATION_V6`） | 全ての副索引を作り直す（列・表は変えない） | DuckDB の不具合で WAL の再生の後に副索引が壊れた DB を直すため（Stage 4 の「計測で分かった事」3） |
 
 ### 5.3 関係の種類と基本重み
 
@@ -883,9 +884,23 @@ LSP による確定は 264 回問い合わせ、候補を確定 102・置き換�
    検証の前に起動を待つようにした（`warmUpLanguageServer()`）。拡張機能の LSP の経路も同じ影響を受けうる（従来からの限界。AST の経路は受けない）
 2. **vscode-test の実行中にリポジトリ内のファイルを編集・作成すると、VS Code が結果を出さずに終了する**（TS/JS 以外の Markdown でも）。
    検証の実行中はリポジトリに触れない事
-3. **DuckDB 1.5.6 で、`WHERE path = '…'` が 0 件を返す DB が1度できた**（精度検証の DB。チェックポイント済み）。最適化の
-   `filter_pushdown` を切ると正しい件数が返り、`table_files` のような一意な列では起きない。再実行では再現せず、単純な構成でも再現できていない。
-   ファイル単位の読み込み（シンボル・事実・関係）が全て空になるため、Stage 4 とは別に調べる（0.3.40 の DuckDB 1.5 への更新から入りうる）
+3. **DuckDB 1.5.6 で、`WHERE path = '…'` が 0 件を返す DB が1度できた**（精度検証の DB）。原因は DuckDB の既知の不具合
+   （[duckdb/duckdb#26828](https://github.com/duckdb/duckdb/issues/26828)・[#26106](https://github.com/duckdb/duckdb/issues/26106)。1.4.0 以降）で、
+   **WAL を再生した後の最初のチェックポイントが自動（WAL の肥大）か終了時だと、再生した行の無い副索引（`CREATE INDEX`）を書き出す**。
+   - 壊れるのは副索引のある列だけ（`table_symbols` の `path`・`parent_id`・`name`・`fqn` など全 18 索引。主キーの索引と索引の無い列は正しい）。
+     実行計画は `SEQ_SCAN` と出るが、実行時に索引で引く（`EXPLAIN ANALYZE` で `Type: Index Scan`）。`filter_pushdown` を切ると表の走査になるため正しく見えた
+   - 索引に無い行を表の走査で消すと「Failed to delete all rows from index」の **FATAL で DB を使えなくなる**（`DELETE … WHERE path || '' = …` で確認）
+   - 拡張機能はキャッシュのインスタンスを閉じないため、VS Code の終了ごとに WAL が残り、次の起動で再生される。精度検証も同じで、
+     壊れた DB は「途中で自動チェックポイント → 以降の行は WAL だけ → VS Code が終了 → 調べるために別のプロセスで開いて閉じた」でできたと見られる。
+     再実行で再現しなかったのは、WAL が自動チェックポイントの閾値（16MB）に届かず、表と索引の作成から全てが WAL の中にあったため
+     （再生で索引を作り直すので壊れない）
+   - `@duckdb/node-api` 1.5.6-r.1 で再現した（表と索引をチェックポイント → 挿入を WAL にだけ残して終了 → 別のプロセスで開いて閉じる → 索引で 0 件）。
+     **開いた直後に `CHECKPOINT` を実行すると壊れない**
+   - **回避策**: `Db` はファイルを開いた直後に `CHECKPOINT` を実行する。既に壊れた DB はスキーマ v6 への移行で副索引を全て作り直す
+     （同じ名前の索引の DROP と CREATE を1つのトランザクションで行うと、開き直したファイルの DB では COMMIT でプロセスが異常終了する
+     [duckdb/duckdb#23929](https://github.com/duckdb/duckdb/issues/23929) が 1.5.6 でも起きるため、トランザクションで囲まない）。
+     壊れた精度検証の DB の複製を移行すると、`codeDb.ts` のシンボル 247 件を索引で引け、削除もできた。
+     再現テストは `src/codeDb.unit.test.ts` の「WAL の再生で副索引が壊れる DuckDB の不具合」。DuckDB を更新して不具合の再現が失敗したら、回避策を外せるか検討する
 
 **Stage 5 への申し送り**
 
