@@ -11,6 +11,15 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - [Fixed] for any bug fixes.
 - [Security] in case of vulnerabilities.
 
+## [Unreleased]
+
+### Fixed
+
+- **ファイル単位の読み込み（`WHERE path = ?`）が 0 件を返し、削除で DB が使えなくなる事があった**: DuckDB 1.4 以降の不具合（[duckdb/duckdb#26828](https://github.com/duckdb/duckdb/issues/26828)・[#26106](https://github.com/duckdb/duckdb/issues/26106)）で、WAL を再生した後の最初のチェックポイントが自動か終了時だと、再生した行の無い副索引が書き出される。拡張機能は VS Code の終了ごとに WAL を残すため、次の起動の後で起こりえた（0.3.40 の DuckDB 1.5 への更新から）。索引で引くシンボル・事実・関係が空になり、表を走査する削除は「Failed to delete all rows from index」の FATAL になる
+  - DB を開いた直後に `CHECKPOINT` を実行し、再生した行を索引ごと書き出すようにした
+  - 既に壊れた DB は、起動時のスキーマ v6 への移行で全ての副索引を作り直して直す（同じ名前の索引の作り直しを1トランザクションで行うと DuckDB が異常終了する [#23929](https://github.com/duckdb/duckdb/issues/23929) を避け、トランザクションで囲まない）
+  - 調査の経緯と再現手順は `docs/ast-plan.md` の Stage 4「計測で分かった事」3
+
 ## [0.4.0] - 2026-10-16
 
 ### Changed

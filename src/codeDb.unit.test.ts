@@ -1,4 +1,6 @@
 /** @file DuckDB 操作の単体テスト (スキーマ移行・事実の保存) */
+import { DuckDBInstance } from '@duckdb/node-api';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -30,6 +32,57 @@ const columnsOf = async (db: codeDb.Db, table: string): Promise<string[]> =>
         .map(row => row.column_name);
 const countOf = async (db: codeDb.Db, table: string): Promise<number> =>
     Number((await db.executeQuery<{ count: bigint }>(`SELECT COUNT(*) AS count FROM ${table}`))[0].count);
+
+/**
+ * @description DuckDB を別のプロセスで操作する (WAL の再生は、閉じずに終わったプロセスの後に別のプロセスで開いた時に起きる)
+ * @param file DB のファイル
+ * @param script 処理 (`DuckDBInstance` と、ファイルのパス `file`・引数 `args` を使える)
+ * @param args 引数 (JSON にして渡す)
+ */
+const duckdbProcess = (file: string, script: string, args: unknown = null): void => {
+    execFileSync(process.execPath, ['--input-type=module', '-e',
+        `import { DuckDBInstance } from '@duckdb/node-api';\nconst [file, args] = [process.argv[1], JSON.parse(process.argv[2])];\n${script}`,
+        file, JSON.stringify(args)]);
+};
+
+/**
+ * @description 初版のスキーマを作ってチェックポイントし、シンボルを 100 行挿入して閉じずに終わる (挿入は WAL にだけ残る)
+ * @param file DB のファイル
+ * @description VS Code の終了と同じ状態。拡張機能はキャッシュのインスタンスを閉じない
+ */
+const leaveWal = (file: string): void => duckdbProcess(file, `
+    const connection = await (await DuckDBInstance.create(file)).connect();
+    for (const sql of args) { await connection.run(sql); }
+    await connection.run('CHECKPOINT');
+    await connection.run("INSERT INTO table_symbols SELECT 'src/a.ts/' || i, NULL, 'S' || i, 5, 'src/a.ts', 0, 0, 0, 0, 0, 0, '00' FROM range(100) r(i)");
+    process.exit(0);`, V1_SCHEMA);
+
+/**
+ * @description 別のプロセスで開いて WAL を再生し、閉じる (閉じる時にチェックポイントする)
+ * @param file DB のファイル
+ * @param checkpoint 開いた直後に CHECKPOINT を実行する
+ */
+const replayWal = (file: string, checkpoint: boolean): void => duckdbProcess(file, `
+    const instance = await DuckDBInstance.create(file);
+    const connection = await instance.connect();
+    if (args) { await connection.run('CHECKPOINT'); }
+    connection.closeSync();
+    instance.closeSync();`, checkpoint);
+
+/**
+ * @description 開き直して、パスで引いたシンボルの件数を、索引を通る問い合わせと表の走査で数える
+ * @param file DB のファイル
+ * @returns [索引を通る件数, 走査の件数]
+ */
+const countSymbolsByPath = async (file: string): Promise<[number, number]> => {
+    const instance = await DuckDBInstance.create(file);
+    const connection = await instance.connect();
+    const count = async (where: string) => Number((await connection.runAndReadAll(`SELECT count(*) FROM table_symbols WHERE ${where}`)).getRows()[0][0]);
+    const result: [number, number] = [await count("path = 'src/a.ts'"), await count("path || '' = 'src/a.ts'")];
+    connection.closeSync();
+    instance.closeSync();
+    return result;
+};
 
 const FACTS: FileFacts = {
     relativePath: 'src/a.ts',
@@ -138,6 +191,10 @@ describe('codeDb', () => {
             await db.executeQuery('CREATE TABLE table_schema_version (version INTEGER)');
             await db.executeQuery('INSERT INTO table_schema_version VALUES (2)');
             await db.executeQuery('ALTER TABLE table_files ADD COLUMN facts_version INTEGER');
+            await db.executeQuery('ALTER TABLE table_symbols ADD COLUMN fqn TEXT');
+            await db.executeQuery('ALTER TABLE table_symbols ADD COLUMN export_name TEXT');
+            await db.executeQuery(`CREATE TABLE table_imports (path TEXT, local_name TEXT, imported_name TEXT, export_name TEXT,
+                module_spec TEXT, resolved_path TEXT, is_external BOOLEAN, line INTEGER, character INTEGER)`);
             await db.executeQuery(`CREATE TABLE table_occurrences (path TEXT, line INTEGER, character INTEGER, root_name TEXT,
                 member_path TEXT, kind INTEGER, enclosing_fqn TEXT, scope_id INTEGER)`);
             await db.executeQuery(`CREATE TABLE table_relationships_v2 (reference_fqn TEXT, define_fqn TEXT, kind INTEGER DEFAULT 0,
@@ -491,6 +548,53 @@ describe('codeDb', () => {
         it('開けないファイルは最初の問い合わせで失敗する', async () => {
             const db = open(path.join(os.tmpdir(), 'crd-db-missing', 'no', 'such', 'crd.duckdb'));
             await expect(db.table_create()).rejects.toThrow();
+        });
+    });
+
+    // DuckDB 1.4〜1.5.6 は、WAL を再生した後の最初のチェックポイントが自動か終了時だと、再生した行の無い副索引を書き出す
+    // (duckdb/duckdb#26828・#26106)。索引を通る `WHERE path = ?` が 0 件になり、ファイル単位の読み込みが空になる
+    describe('WAL の再生で副索引が壊れる DuckDB の不具合', () => {
+        const temporaryFile = (): string => {
+            const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'crd-db-'));
+            temporaries.push(directory);
+            return path.join(directory, 'crd.duckdb');
+        };
+
+        it('再生の後に閉じる時のチェックポイントで索引が壊れ、開いた直後の CHECKPOINT なら壊れない', async () => {
+            // DuckDB を更新してこのテストが失敗したら、不具合が直っている。Db の CHECKPOINT と MIGRATION_V6 を外せるか検討する
+            const broken = temporaryFile();
+            leaveWal(broken);
+            replayWal(broken, false);
+            expect(await countSymbolsByPath(broken)).toEqual([0, 100]);
+
+            const checkpointed = temporaryFile();
+            leaveWal(checkpointed);
+            replayWal(checkpointed, true);
+            expect(await countSymbolsByPath(checkpointed)).toEqual([100, 100]);
+        });
+
+        it('Db は開いた直後にチェックポイントし、残っていた WAL を再生した行を索引ごと書き出す', async () => {
+            const file = temporaryFile();
+            leaveWal(file);
+            expect(fs.existsSync(`${file}.wal`)).toBe(true);
+
+            const db = open(file);
+            expect(await countOf(db, 'table_symbols')).toBe(100);
+            expect(fs.existsSync(`${file}.wal`)).toBe(false);
+        });
+
+        it('壊れた DB は v6 への移行で副索引を作り直し、パスで引けて削除できるようになる', async () => {
+            const file = temporaryFile();
+            leaveWal(file);
+            replayWal(file, false);
+
+            const db = open(file);
+            await db.table_create();
+            expect(await db.schema_version()).toBe(codeDb.SCHEMA_VERSION);
+            expect(await db.symbol_query('src/a.ts')).toHaveLength(100);
+            // 壊れた索引のままだと、表を走査する削除は FATAL (Failed to delete all rows from index) で DB を使えなくする
+            await db.executeQuery("DELETE FROM table_symbols WHERE path || '' = 'src/a.ts'");
+            expect(await countOf(db, 'table_symbols')).toBe(0);
         });
     });
 });
