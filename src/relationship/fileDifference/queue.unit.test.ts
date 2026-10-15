@@ -128,6 +128,34 @@ describe('QueueProcessor (facts 項目)', () => {
         expect(await db.relationships_v2_query(path.join('src', 'a.ts'))).toHaveLength(2);
     });
 
+    it('関係の調査経路は、設定で有効かつ文法のある言語だけ AST になる', () => {
+        let enabled = true;
+        processor = new QueueProcessor({
+            workspaceFolder: workspace, db, facts: new FactsExtractor(parser, new ModuleResolver(workspace)), astEnabled: () => enabled,
+            log: () => {}, error: (_message, error) => errors.push(error), progress: () => {},
+        });
+        expect([processor.relationshipModeOf('typescript'), processor.relationshipModeOf('c')]).toEqual(['ast', 'lsp']);
+        enabled = false;
+        expect(processor.relationshipModeOf('typescript')).toBe('lsp');
+    });
+
+    it('全走査で、記録した調査経路と異なる不変ファイルを全シンボルの調べ直しにする', async () => {
+        await registerAsV1();
+        // 記録が無いファイル (Stage 3 まで) は LSP の経路で調べたもの
+        const modeOf = (languageId: string) => languageId === 'typescript' ? 'ast' as const : 'lsp' as const;
+        const difference = await scanDifference(workspace, ASSOCIATIONS, db, () => {}, () => {}, modeOf);
+        expect(difference.modeStale.map(file => file.relative_path).sort()).toEqual([path.join('src', 'a.ts'), path.join('src', 'b.ts')]);
+        expect(difference.toItems().map(item => [item.op, item.relative_path, item.reexamine]).sort()).toEqual([
+            ['upsert', path.join('src', 'a.ts'), true], ['upsert', path.join('src', 'b.ts'), true]]);
+
+        // 記録した経路と同じなら調べ直さない。経路を指定しなければ比べない
+        await db.codeFile_upsert(difference.modeStale[0], null, 'ast');
+        await db.codeFile_upsert(difference.modeStale[1], null, 'ast');
+        expect((await scanDifference(workspace, ASSOCIATIONS, db, () => {}, () => {}, modeOf)).modeStale).toEqual([]);
+        expect((await scanDifference(workspace, ASSOCIATIONS, db, () => {}, () => {}, () => 'lsp')).modeStale).toHaveLength(2);
+        expect((await scanDifference(workspace, ASSOCIATIONS, db, () => {}, () => {})).modeStale).toEqual([]);
+    });
+
     it('事実抽出器が無ければ facts 項目を処理しない (パーサが使えない環境)', async () => {
         await registerAsV1();
         processor = new QueueProcessor({

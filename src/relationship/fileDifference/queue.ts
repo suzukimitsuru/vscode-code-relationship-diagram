@@ -9,6 +9,7 @@ import { SymbolCache } from './symbolCache';
 import { ExamineTask, CancelToken, Cancelled } from '../examine';
 import { FactsExtractor } from '../../extruct/ast';
 import { Resolver, ResolutionStats, addResolutionStats, emptyResolutionStats } from '../resolve';
+import { DefinitionProvider, LspVerifier, VerificationStats, emptyVerificationStats, vscodeDefinitionProvider, workspaceSourceReader } from '../lspVerification';
 
 /** 名前解決を1回のコミット区間で行うファイル数 (区間の間に他のタスクのコミットを挟めるよう分割する) */
 const RESOLVE_CHUNK_FILES = 50;
@@ -36,6 +37,14 @@ export interface QueueProcessorOptions {
     concurrency?: number;
     /** AST の事実抽出器（パーサが使えない環境では null。LSP の経路だけで動く） */
     facts?: FactsExtractor | null;
+    /** 関係を AST の経路で調べるか（設定 ast.enabled。既定: true）。false なら全ファイルを LSP の参照検索で調べる */
+    astEnabled?: () => boolean;
+    /** 確信度が閾値未満の関係を LSP で確定するか（設定 ast.lspVerification。既定: true） */
+    lspVerification?: () => boolean;
+    /** LSP で確定する確信度の閾値（設定 ast.confidenceThreshold。既定: 0.7） */
+    confidenceThreshold?: () => number;
+    /** 定義の位置の問い合わせ（既定: VS Code の言語サーバ。テストで差し替える） */
+    definitionProvider?: DefinitionProvider;
     log: (message: string, ...args: any[]) => void;
     error: (message: string, error: unknown) => void;
     progress: (processed: number, total: number, message?: string) => void;
@@ -56,6 +65,7 @@ export class QueueProcessor {
     private readonly _symbols: SymbolCache;
     private readonly _task: ExamineTask;
     private readonly _resolver: Resolver | null;
+    private readonly _verifier: LspVerifier;
     private _commit_chain: Promise<void> = Promise.resolve();
     /** 実行中の名前解決 (キューが空になる度に1回行う) */
     private _resolving: Promise<void> | null = null;
@@ -90,8 +100,15 @@ export class QueueProcessor {
             (relativePath) => this._queue.has(relativePath) || this._running.has(relativePath),
         );
         this._task = new ExamineTask(options.workspaceFolder, options.db, this._symbols,
-            (message) => this._options.log(message), options.facts ?? null);
+            (message) => this._options.log(message), options.facts ?? null, options.astEnabled ?? (() => true));
         this._resolver = options.facts ? new Resolver(options.db) : null;
+        this._verifier = new LspVerifier(options.db, options.definitionProvider ?? vscodeDefinitionProvider(options.workspaceFolder),
+            workspaceSourceReader(options.workspaceFolder));
+    }
+
+    /** @description その言語のファイルの関係の調査経路（全走査で、記録した経路と異なるファイルを調べ直すために使う） */
+    public relationshipModeOf(languageId: string): codeDb.RelationshipMode {
+        return this._task.relationshipModeOf(languageId);
     }
 
     /**
@@ -364,6 +381,37 @@ export class QueueProcessor {
         }
         this._resolution_summary = `, resolved ${pending.length.toLocaleString()} files into ${relationships.toLocaleString()} AST relationships`;
         this._options.log(`Resolved relationships: ${pending.length} files, ${relationships} relationships ` +
+            `in ${this._secondsToTime(performance.now() - started)} ${JSON.stringify(stats)}`);
+
+        // 確信度が閾値未満の関係を LSP で確定する（AST の経路で調べている時だけ。問い合わせはコミットの直列区間の外で行う）
+        if ((this._options.astEnabled?.() ?? true) && (this._options.lspVerification?.() ?? true)) {
+            await this._runVerification(pending);
+        }
+    }
+
+    /**
+     * @description 名前解決したファイルの低確信度の関係を LSP で確定する（docs/ast-plan.md §7.4）
+     * 言語サーバへの問い合わせは並列タスクと同じく直列区間の外で行い、置き換えだけをコミットの直列区間で書く
+     */
+    private async _runVerification(paths: string[]): Promise<void> {
+        const started = performance.now();
+        const threshold = this._options.confidenceThreshold?.() ?? 0.7;
+        const stats: VerificationStats = emptyVerificationStats();
+        let removed = 0;
+        let inserted = 0;
+        for (let offset = 0; offset < paths.length && !this._disposed; offset += RESOLVE_CHUNK_FILES) {
+            this._report(undefined, `Verifying relationships ${offset.toLocaleString()}/${paths.length.toLocaleString()}...`);
+            const result = await this._verifier.verify(paths.slice(offset, offset + RESOLVE_CHUNK_FILES), threshold);
+            if (result.removes.length > 0 || result.inserts.length > 0) {
+                await this._commit(() => this._options.db.relationships_v2_confirm(result.removes, result.inserts));
+            }
+            removed += result.removes.length;
+            inserted += result.inserts.length;
+            for (const key of Object.keys(stats) as (keyof VerificationStats)[]) {
+                stats[key] += result.stats[key];
+            }
+        }
+        this._options.log(`Verified relationships: ${paths.length} files, removed ${removed}, inserted ${inserted} ` +
             `in ${this._secondsToTime(performance.now() - started)} ${JSON.stringify(stats)}`);
     }
 

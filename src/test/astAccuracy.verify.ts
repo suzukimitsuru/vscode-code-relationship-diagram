@@ -2,7 +2,8 @@
  * @file 名前解決の精度検証 (docs/ast-plan.md §11 / Stage 2 の受け入れ基準)
  * @description
  * 自リポジトリを、拡張機能と同じ差分キュー (LSP による従来の関係調査 + AST の事実抽出 + 名前解決) で調べ、
- * LSP 由来の関係を正解として AST 由来の関係の再現率・適合率を測る。結果は
+ * LSP 由来の関係を正解として AST 由来の関係の再現率・適合率を測る。正解を作るため、関係は旧経路 (設定 ast.enabled = false
+ * 相当) で調べる。その後、低確信度の関係を LSP で確定した (Stage 4 の既定の動作) 後の値も測る。結果は
  * verification/ast-accuracy/report.md に書き出す (yarn verify:accuracy で再生成できる)。
  */
 import * as assert from 'assert';
@@ -15,6 +16,8 @@ import { scanDifference } from '../relationship/examine';
 import { Completed, QueueProcessor } from '../relationship/fileDifference/queue';
 import { AccuracyMetric, AccuracyReport, compareRelationships } from '../relationship/accuracy';
 import { RelationshipV2 } from '../relationship/resolve';
+import { LspVerifier, VerificationStats, vscodeDefinitionProvider, workspaceSourceReader } from '../relationship/lspVerification';
+import { warmUpLanguageServer } from './examineWorkspace';
 
 /** 拡張機能の files.associations 相当 (自リポジトリの TS/JS。verification/ast-facts と同じ) */
 const ASSOCIATIONS = {
@@ -57,10 +60,14 @@ suite('AST Accuracy', function () {
 			await db.table_create();
 
 			// 1. 拡張機能と同じ差分キューで自リポジトリ全体を調べる (LSP + AST + 名前解決)
+			// 言語サーバの起動を待ってから始める (起動の直後は参照検索が空を返し、正解の関係が抜けるため)
+			await warmUpLanguageServer(root);
 			const started = performance.now();
 			processor = new QueueProcessor({
 				workspaceFolder: root, db: db,
 				facts: new Ast.FactsExtractor(parser, new Ast.ModuleResolver(root)),
+				// 正解 (LSP の参照検索による関係) を作るため、TS/JS も旧経路で調べる。名前解決は同じく行う
+				astEnabled: () => false,
 				log: (message) => logs.push(message),
 				error: (message, error) => errors.push(`${message}${error instanceof Error ? error.message : String(error)}`),
 				progress: () => {},
@@ -77,16 +84,24 @@ suite('AST Accuracy', function () {
 				.map(row => ({ id: row.id as string, parentId: row.parent_id as string | null, path: row.path as string, fqn: row.fqn as string | null }));
 			const lsp = (await db.executeQuery('SELECT reference_id, define_id FROM table_relationships'))
 				.map(row => ({ referenceId: row.reference_id as string, defineId: row.define_id as string }));
-			const ast = await db.relationships_v2_query();
+			const unverified = await db.relationships_v2_query();
 			const occurrences = (await db.executeQuery('SELECT enclosing_fqn, kind, root_name, member_path FROM table_occurrences'))
 				.map(row => ({ enclosingFqn: row.enclosing_fqn as string, kind: row.kind as Ast.RelationshipKind, rootName: row.root_name as string, memberPath: row.member_path as string | null }));
+			const before = compareRelationships(symbols, lsp, unverified, occurrences);
+
+			// 3. 低確信度の関係を LSP で確定する (docs/ast-plan.md §7.4。拡張機能は AST の経路の時に名前解決の後で行う)
+			const verifier = new LspVerifier(db, vscodeDefinitionProvider(root), workspaceSourceReader(root));
+			const verification = await verifier.verify(difference.lists.map(file => file.relative_path), STAGE3_THRESHOLD);
+			await db.relationships_v2_confirm(verification.removes, verification.inserts);
+			const ast = await db.relationships_v2_query();
 			const report = compareRelationships(symbols, lsp, ast, occurrences);
 
-			// 3. レポートを書き出す
+			// 4. レポートを書き出す
 			const resolved = logs.find(message => message.startsWith('Resolved relationships:')) ?? '';
 			const stats = resolved.includes('{') ? JSON.parse(resolved.slice(resolved.indexOf('{'))) as Record<string, number> : {};
 			const markdown = formatReport({
-				report, ast, stats, files: difference.lists.length, processed: result.processed,
+				report, before, verification: { ...verification.stats, removed: verification.removes.length, inserted: verification.inserts.length },
+				ast, stats, files: difference.lists.length, processed: result.processed,
 				symbols: symbols.length, attached: symbols.filter(symbol => symbol.fqn !== null).length,
 				lsp: lsp.length, elapsed,
 			});
@@ -95,12 +110,14 @@ suite('AST Accuracy', function () {
 			fs.writeFileSync(reportFile, markdown);
 			console.log(`[AST accuracy] import-derived recall ${percent(report.importDerived)}, file recall ${percent(report.fileRecall)} -> ${path.relative(root, reportFile)}`);
 
-			const stage3 = report.byThreshold.find(entry => entry.threshold === STAGE3_THRESHOLD);
-			console.log(`[AST accuracy] confidence >= ${STAGE3_THRESHOLD}: recall ${stage3 ? percent(stage3.recall) : '-'}, precision ${stage3 ? percent(stage3.precision) : '-'}`);
-			assert.ok(report.importDerived.ratio >= IMPORT_DERIVED_RECALL,
-				`import-derived recall ${percent(report.importDerived)} should be >= ${IMPORT_DERIVED_RECALL * 100}%`);
-			assert.ok(stage3 && stage3.recall.ratio >= STAGE3_RECALL && stage3.precision.ratio >= STAGE3_PRECISION,
-				`at confidence >= ${STAGE3_THRESHOLD}, recall and precision should be >= 90%`);
+			for (const [label, entry] of [['before LSP verification', before], ['after LSP verification', report]] as const) {
+				const stage3 = entry.byThreshold.find(threshold => threshold.threshold === STAGE3_THRESHOLD);
+				console.log(`[AST accuracy] ${label}, confidence >= ${STAGE3_THRESHOLD}: recall ${stage3 ? percent(stage3.recall) : '-'}, precision ${stage3 ? percent(stage3.precision) : '-'}`);
+				assert.ok(entry.importDerived.ratio >= IMPORT_DERIVED_RECALL,
+					`${label}: import-derived recall ${percent(entry.importDerived)} should be >= ${IMPORT_DERIVED_RECALL * 100}%`);
+				assert.ok(stage3 && stage3.recall.ratio >= STAGE3_RECALL && stage3.precision.ratio >= STAGE3_PRECISION,
+					`${label}: at confidence >= ${STAGE3_THRESHOLD}, recall and precision should be >= 90%`);
+			}
 		} finally {
 			await processor?.dispose();
 			db.dispose();
@@ -111,10 +128,11 @@ suite('AST Accuracy', function () {
 
 /** レポート (Markdown) を組み立てる */
 function formatReport(input: {
-	report: AccuracyReport, ast: RelationshipV2[], stats: Record<string, number>,
+	report: AccuracyReport, before: AccuracyReport, verification: VerificationStats & { removed: number, inserted: number },
+	ast: RelationshipV2[], stats: Record<string, number>,
 	files: number, processed: number, symbols: number, attached: number, lsp: number, elapsed: number,
 }): string {
-	const { report, ast, stats } = input;
+	const { report, before, verification, ast, stats } = input;
 	const byKind = new Map<string, number>();
 	for (const relationship of ast) {
 		const kind = Ast.RelationshipKind[relationship.kind];
@@ -126,11 +144,12 @@ function formatReport(input: {
 		'',
 		'`yarn verify:accuracy` が生成する（手で編集しない）。自リポジトリを拡張機能と同じ差分キューで調べ、',
 		'LSP 由来の関係（`table_relationships`）を正解として AST 由来の関係（`table_relationships_v2`）を突き合わせた結果。',
+		'値は、確信度が閾値（0.7）未満の関係を LSP の定義の問い合わせで確定した後のもの（Stage 4 の既定の動作）。確定する前の値は「LSP による確定」の節に出す。',
 		'比較の方法は `verification/ast-accuracy/README.md` を参照。',
 		'',
 		`- 生成日時: ${new Date().toISOString()}`,
 		`- VS Code: ${vscode.version}`,
-		`- 名前解決: 段1 ファイル内の定義・段2 import・段3 型推論・段4 一意名・段4' 曖昧候補`,
+		`- 名前解決: 段1 ファイル内の定義・段2 import・段3 型推論・段4 一意名・段4' 曖昧候補、確信度 ${STAGE3_THRESHOLD} 未満は LSP で確定`,
 		`- 対象: ${input.files.toLocaleString()} ファイル（処理 ${input.processed.toLocaleString()}）、シンボル ${input.symbols.toLocaleString()}（解決キー付き ${input.attached.toLocaleString()}）`,
 		`- 所要時間: ${(input.elapsed / 1000).toFixed(0)} 秒（LSP の参照検索を含む）`,
 		'',
@@ -158,6 +177,24 @@ function formatReport(input: {
 		'| -- | ------ |',
 		// 段1 はファイル内の関係だけを出すため、ファイル間の比較には現れない
 		...report.byBand.map(band => `| ${band.label} | ${band.precision.total > 0 ? percent(band.precision) : '－（ファイル間の関係なし）'} |`),
+		'',
+		'### LSP による確定（docs/ast-plan.md §7.4）',
+		'',
+		`確信度 ${STAGE3_THRESHOLD} 未満の関係を、参照出現の位置 × 定義の名前ごとに言語サーバへ問い合わせ（${verification.queried.toLocaleString()} 回）、` +
+			`${verification.removed.toLocaleString()} 件を消して ${verification.inserted.toLocaleString()} 件を確信度 0.99 で加えた。`,
+		'',
+		'| 結果 | 件数 | 意味 |',
+		'| ---- | ---- | ---- |',
+		`| 候補を確定 | ${verification.confirmed.toLocaleString()} | 返った定義が候補のどれか |`,
+		`| 置き換え | ${verification.replaced.toLocaleString()} | 返った定義が候補に無い |`,
+		`| 消した | ${verification.dropped.toLocaleString()} | 定義がプロジェクトの外（組込み・パッケージ） |`,
+		`| 答え無し | ${verification.unanswered.toLocaleString()} | 言語サーバが定義を返さなかった（関係はそのまま） |`,
+		`| 位置が見つからない | ${verification.unlocated.toLocaleString()} | ソース中に名前が見つからず問い合わせなかった |`,
+		'',
+		'| 確信度 | 再現率（確定前） | 適合率（確定前） | 再現率（確定後） | 適合率（確定後） |',
+		'| ------ | ---------------- | ---------------- | ---------------- | ---------------- |',
+		...report.byThreshold.map((entry, index) =>
+			`| ≥ ${entry.threshold} | ${percent(before.byThreshold[index].recall)} | ${percent(before.byThreshold[index].precision)} | ${percent(entry.recall)} | ${percent(entry.precision)} |`),
 		'',
 		`LSP 由来の関係 ${input.lsp.toLocaleString()} 件のうち、比較から除いたもの:`,
 		'',

@@ -12,7 +12,7 @@ import {
  * 名前解決の版数
  * @description 解決規則を変えたら上げる。DB の resolved_version がこれと異なるファイルは、事実が同じでも解決し直す
  */
-export const RESOLVE_VERSION = 2;
+export const RESOLVE_VERSION = 3;
 
 /** 解決段階ごとの確信度 (docs/ast-plan.md §7.1) */
 export const CONFIDENCE = {
@@ -28,6 +28,8 @@ export const CONFIDENCE = {
     ambiguous: 0.5,
     /** 段2: import 先のファイルまでは分かるが、export 名の定義が見つからない (export default の無名関数など) */
     module: 0.5,
+    /** 閾値未満の関係を LSP の定義の問い合わせで確定した (§7.4。段1 の 1.0 と見分けるため 1.0 未満にする) */
+    confirmed: 0.99,
 } as const;
 
 /** 段4' で関係にする候補の数の上限 (これを超える名前は破棄して数える) */
@@ -79,6 +81,8 @@ export interface RelationshipV2 {
     readonly weight: number;
     readonly confidence: number;
     readonly referenceLine: number;
+    /** 参照出現 (import 文なら import 束縛) の開始桁。LSP による確定で位置を引く */
+    readonly referenceCharacter: number;
     readonly isIntraFile: boolean;
 }
 
@@ -201,6 +205,56 @@ const TYPE_KINDS: ReadonlySet<string> = new Set(['class', 'interface', 'type', '
 
 /** メンバの定義の種別 (段4 のメンバ名の候補) */
 const MEMBER_KINDS: ReadonlySet<string> = new Set(['method', 'property', 'enum_member']);
+
+/** 段4 の候補になる定義の要約 (定義表の変化を比べる) */
+export interface CandidateFacts {
+    /** 定義 (名前・完全修飾名・種別・親) */
+    readonly definitions: readonly Pick<AstDefinition, 'name' | 'fqn' | 'kind' | 'parentFqn'>[];
+    /** トップレベルの定義がグローバルになるファイル (スクリプト・宣言ファイル) か */
+    readonly globalScope: boolean;
+}
+
+/**
+ * スクリプト (import / export の無いファイル) か宣言ファイルか (トップレベルの定義がグローバルになる)
+ * @param path ファイル
+ * @param importCount import 束縛 (再エクスポート・副作用 import を含む) の数
+ * @param hasExport export された定義があるか
+ */
+export function isGlobalScopeFile(path: string, importCount: number, hasExport: boolean): boolean {
+    return path.endsWith('.d.ts') || (importCount === 0 && !hasExport);
+}
+
+/**
+ * 1ファイルの事実が変わった時に、段4 / 4' の候補が増減した名前
+ * @param path ファイル
+ * @param before 変わる前 (事実が無ければ null)
+ * @param after 変わった後 (ファイルを削除した・事実を抽出できなかったなら null)
+ * @returns 名前 (名前順)。これらの名前を段4 で引いた他のファイルは解決し直す必要がある
+ * @description 段4 の候補は、メンバの定義 (メンバ名で引く) と、グローバルになるファイルのトップレベルの定義
+ *              (束縛の無い名前で引く)。完全修飾名・種別が変わった定義も、増減として扱う
+ */
+export function candidateNamesChanged(path: string, before: CandidateFacts | null, after: CandidateFacts | null): string[] {
+    const top = fileFqn(path);
+    const candidates = (facts: CandidateFacts | null): Map<string, string> => {
+        const found = new Map<string, string>();
+        for (const definition of facts?.definitions ?? []) {
+            if (MEMBER_KINDS.has(definition.kind) || (facts!.globalScope && definition.parentFqn === top)) {
+                found.set(JSON.stringify([definition.name, definition.fqn, definition.kind]), definition.name);
+            }
+        }
+        return found;
+    };
+    const old = candidates(before);
+    const now = candidates(after);
+    const names = new Set<string>();
+    for (const [key, name] of old) {
+        if (!now.has(key)) { names.add(name); }
+    }
+    for (const [key, name] of now) {
+        if (!old.has(key)) { names.add(name); }
+    }
+    return [...names].sort();
+}
 
 /**
  * 1回の解決の間の文脈 (他ファイルの事実と、推論した型の覚え書き)
@@ -508,9 +562,8 @@ class ResolutionContext {
     public isGlobalScope(path: string): Promise<boolean> {
         let found = this._scripts.get(path);
         if (!found) {
-            found = (async () => path.endsWith('.d.ts') || (
-                (await this._lookup.imports(path)).length === 0 &&
-                !(await this._lookup.definitions(path)).some(definition => definition.exportName !== null)))();
+            found = (async () => isGlobalScopeFile(path, (await this._lookup.imports(path)).length,
+                (await this._lookup.definitions(path)).some(definition => definition.exportName !== null)))();
             this._scripts.set(path, found);
         }
         return found;
@@ -544,12 +597,13 @@ export async function resolveFile(input: ResolutionInput, lookup: ResolutionLook
     const context = found;
     const stats = emptyResolutionStats();
     const relationships: RelationshipV2[] = [];
-    const push = (referenceFqn: string, target: Target, kind: RelationshipKind, confidence: number, line: number): void => {
+    const push = (referenceFqn: string, target: Target, kind: RelationshipKind, confidence: number,
+        position: { line: number, character: number }): void => {
         relationships.push({
             referencePath: input.path, referenceFqn: referenceFqn,
             definePath: target.path, defineFqn: fqnOf(target),
             kind: kind, weight: RELATIONSHIP_WEIGHTS[kind], confidence: confidence,
-            referenceLine: line, isIntraFile: target.path === input.path,
+            referenceLine: position.line, referenceCharacter: position.character, isIntraFile: target.path === input.path,
         });
     };
     const membersNamed = async (member: string): Promise<{ path: string, definition: AstDefinition }[]> =>
@@ -588,15 +642,15 @@ export async function resolveFile(input: ResolutionInput, lookup: ResolutionLook
             if (!target || isSelf(target)) {
                 return false;
             }
-            push(occurrence.enclosingFqn, target, occurrence.kind, confidence, occurrence.line);
+            push(occurrence.enclosingFqn, target, occurrence.kind, confidence, occurrence);
             for (const through of walked.passed.filter(candidate => !isSelf(candidate))) {
-                push(occurrence.enclosingFqn, through, RelationshipKind.read, confidence, occurrence.line);
+                push(occurrence.enclosingFqn, through, RelationshipKind.read, confidence, occurrence);
             }
             // new X() は X のコンストラクタも参照する
             if (occurrence.kind === RelationshipKind.instantiation && target.kind === 'definition') {
                 const constructor = `${target.fqn}.constructor`;
                 if ((await context.definitionMap(target.path)).has(constructor)) {
-                    push(occurrence.enclosingFqn, { kind: 'definition', path: target.path, fqn: constructor }, occurrence.kind, confidence, occurrence.line);
+                    push(occurrence.enclosingFqn, { kind: 'definition', path: target.path, fqn: constructor }, occurrence.kind, confidence, occurrence);
                 }
             }
             return true;
@@ -683,7 +737,7 @@ export async function resolveFile(input: ResolutionInput, lookup: ResolutionLook
             stats.unresolvedImport++;
         } else {
             const { target, fallback } = await context.importTargetOf(entry);
-            push(fileFqn(input.path), target, RelationshipKind.import, fallback ? CONFIDENCE.module : CONFIDENCE.import, entry.line);
+            push(fileFqn(input.path), target, RelationshipKind.import, fallback ? CONFIDENCE.module : CONFIDENCE.import, entry);
             stats.importEdges++;
         }
     }

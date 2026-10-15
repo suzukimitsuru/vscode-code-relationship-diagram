@@ -5,15 +5,23 @@ import * as codeFiles from './extruct/codeFiles';
 import * as SYMBOL from './extruct/symbol';
 import * as codeRelationships from './relationship/codeRelationships';
 import type { AstDefinition, AstImport, AstOccurrence, FileFacts, ModuleResolution } from './extruct/ast';
-import type { RelationshipV2 } from './relationship/resolve';
+import { CandidateFacts, RelationshipV2, candidateNamesChanged, isGlobalScopeFile } from './relationship/resolve';
 
 /**
  * スキーマの版数
  * @description 1 = 初版 (files / symbols / relationships)、
  *              2 = AST の事実 (docs/ast-plan.md §5.2)、
- *              3 = 定義表と名前解決 (Stage 2)
+ *              3 = 定義表と名前解決 (Stage 2)、4 = 型の手掛かり (Stage 3)、
+ *              5 = 関係の調査経路と、関係 (v2) の参照出現の桁 (Stage 4)
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
+
+/**
+ * ファイルの関係の調査経路 (table_files.relationship_mode)
+ * @description ast = AST の事実と名前解決 (table_relationships_v2)、lsp = 言語サーバの参照検索 (table_relationships)。
+ *              NULL は Stage 3 までに調べたファイルで、lsp と同じ扱い
+ */
+export type RelationshipMode = 'ast' | 'lsp';
 
 /**
  * v1 → v2 の移行 (docs/ast-plan.md §5.4)
@@ -148,8 +156,43 @@ const MIGRATION_V4: readonly string[] = [
     'CREATE INDEX IF NOT EXISTS idx_definitions_name ON table_definitions(name);',
 ];
 
+/**
+ * v4 → v5 の移行 (Stage 4: 主経路の切替)
+ * @description ファイルごとの関係の調査経路を持たせる。関係 (v2) は参照出現の桁 (LSP による確定で使う) を加えて作り直し、
+ *              全ファイルを未解決に戻す (名前解決の版数も上がるため、作り直しても次の名前解決で埋まる)。
+ *              旧 table_relationships は、AST の文法の無い言語と旧経路へのロールバックで使うため残す (docs/ast-plan.md §12)
+ */
+const MIGRATION_V5: readonly string[] = [
+    'ALTER TABLE table_files ADD COLUMN IF NOT EXISTS relationship_mode TEXT;',
+    'DROP VIEW IF EXISTS view_relationship_strength;',
+    'DROP TABLE IF EXISTS table_relationships_v2;',
+    `CREATE TABLE table_relationships_v2 (
+        reference_path TEXT,
+        reference_fqn TEXT,
+        define_path TEXT,
+        define_fqn TEXT,
+        kind INTEGER DEFAULT 0,
+        weight DOUBLE DEFAULT 1.0,
+        confidence DOUBLE DEFAULT 1.0,
+        reference_line INTEGER,
+        reference_character INTEGER,
+        is_intra_file BOOLEAN DEFAULT FALSE
+    );`,
+    'CREATE INDEX IF NOT EXISTS idx_relationships_v2_reference ON table_relationships_v2(reference_fqn);',
+    'CREATE INDEX IF NOT EXISTS idx_relationships_v2_define ON table_relationships_v2(define_fqn);',
+    'CREATE INDEX IF NOT EXISTS idx_relationships_v2_reference_path ON table_relationships_v2(reference_path);',
+    'CREATE INDEX IF NOT EXISTS idx_relationships_v2_define_path ON table_relationships_v2(define_path);',
+    `CREATE OR REPLACE VIEW view_relationship_strength AS
+        SELECT reference_fqn, define_fqn, kind,
+               COUNT(*) AS occurrence_count,
+               SUM(weight * confidence) AS strength
+        FROM table_relationships_v2
+        GROUP BY reference_fqn, define_fqn, kind;`,
+    'UPDATE table_files SET resolved_version = NULL;',
+];
+
 /** 版数ごとの移行 (古い順) */
-const MIGRATIONS: readonly [number, readonly string[]][] = [[2, MIGRATION_V2], [3, MIGRATION_V3], [4, MIGRATION_V4]];
+const MIGRATIONS: readonly [number, readonly string[]][] = [[2, MIGRATION_V2], [3, MIGRATION_V3], [4, MIGRATION_V4], [5, MIGRATION_V5]];
 
 /** 一括挿入1文あたりの行数 (プレースホルダの数を抑える) */
 const INSERT_CHUNK_ROWS = 500;
@@ -382,12 +425,22 @@ export class Db extends vscode.Disposable {
     }
 
     /**
+     * @description 関係の調査経路を全ファイル分読み込む
+     * @returns 相対パス → 調査経路 (Stage 3 までに調べたファイルは null)
+     */
+    public async codeFile_queryRelationshipModes(): Promise<Map<string, RelationshipMode | null>> {
+        const rows = await this._all('SELECT relative_path, relationship_mode FROM table_files;');
+        return new Map(rows.map(row => [row.relative_path as string, (row.relationship_mode ?? null) as RelationshipMode | null]));
+    }
+
+    /**
      * @description コードファイルを更新または挿入
      * @param file  ファイル
      * @param factsVersion 事実抽出の版数 (抽出していなければ null)
+     * @param relationshipMode 関係の調査経路
      * @returns 完了
      */
-    public async codeFile_upsert(file : codeFiles.File, factsVersion: number | null = null): Promise<void> {
+    public async codeFile_upsert(file : codeFiles.File, factsVersion: number | null = null, relationshipMode: RelationshipMode = 'lsp'): Promise<void> {
 
         // コードファイルの存在確認
         const rows = await this._all('SELECT COUNT(*) AS count FROM table_files WHERE relative_path = ?;', file.relative_path);
@@ -395,9 +448,9 @@ export class Db extends vscode.Disposable {
         // 更新または挿入
         await this._run(
             (rows.length > 0) && (Number(rows[0].count) > 0)
-                ? 'UPDATE table_files SET language_id = ?, updated_at = ?, facts_version = ? WHERE relative_path = ?;'
-                : 'INSERT INTO table_files (language_id, updated_at, facts_version, relative_path) VALUES (?, ?, ?, ?);',
-            file.language_id, file.updated.toISOString(), factsVersion, file.relative_path);
+                ? 'UPDATE table_files SET language_id = ?, updated_at = ?, facts_version = ?, relationship_mode = ? WHERE relative_path = ?;'
+                : 'INSERT INTO table_files (language_id, updated_at, facts_version, relationship_mode, relative_path) VALUES (?, ?, ?, ?, ?);',
+            file.language_id, file.updated.toISOString(), factsVersion, relationshipMode, file.relative_path);
     }
 
     /**
@@ -569,6 +622,15 @@ export class Db extends vscode.Disposable {
     }
 
     /**
+     * @description 定義側のファイル単位で関係を削除 (関係の調査経路を AST へ切り替えたファイルの、LSP 由来の関係を消す)
+     * @param path  定義側のファイル
+     * @returns 完了
+     */
+    public async relationship_deleteDefinePath(path: string): Promise<void> {
+        await this._run('DELETE FROM table_relationships WHERE define_id IN (SELECT id FROM table_symbols WHERE path = ?);', path);
+    }
+
+    /**
      * @description シンボル単位で定義と参照の両方の関係を削除
      * @param symbolIds シンボルID配列
      * @returns 完了
@@ -630,6 +692,18 @@ export class Db extends vscode.Disposable {
     }
 
     /**
+     * @description 図に表示する LSP 由来の関係 (定義側のファイルを LSP の経路で調べたもの)
+     * @returns 関係の配列
+     * @description 定義側を AST の経路へ切り替えたファイルの関係は、関係 (v2) から作るため除く
+     *              (ロールバック・切り替えの途中で古い行が残っていても二重に数えない)
+     */
+    public async relationship_queryLspMode(): Promise<codeRelationships.Relationship[]> {
+        return Db._relationshipsOf(await this._all(
+            `${Db.RELATIONSHIP_SELECT} LEFT JOIN table_files f ON f.relative_path = s_def.path ` +
+            "WHERE f.relationship_mode IS DISTINCT FROM 'ast';"));
+    }
+
+    /**
      * @description 定義ファイルパスから関係を読み込む
      * @param definePath 定義ファイルパス
      * @returns 定義の配列
@@ -670,7 +744,7 @@ export class Db extends vscode.Disposable {
      */
     public facts_replace(relativePath: string, facts: FileFacts | null, factsVersion?: number | null): Promise<void> {
         return this._transaction(async () => {
-            await this._markUnresolved(relativePath);
+            await this._markUnresolved(relativePath, facts);
             await this._run('DELETE FROM table_definitions WHERE path = ?;', relativePath);
             await this._run('DELETE FROM table_imports WHERE path = ?;', relativePath);
             await this._run('DELETE FROM table_occurrences WHERE path = ?;', relativePath);
@@ -716,7 +790,7 @@ export class Db extends vscode.Disposable {
      */
     public async facts_deleteFile(relativePath: string): Promise<void> {
         await this._transaction(async () => {
-            await this._markUnresolved(relativePath);
+            await this._markUnresolved(relativePath, null);
             await this._run('DELETE FROM table_definitions WHERE path = ?;', relativePath);
             await this._run('DELETE FROM table_imports WHERE path = ?;', relativePath);
             await this._run('DELETE FROM table_occurrences WHERE path = ?;', relativePath);
@@ -725,14 +799,45 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description ファイルと、そのファイルを import しているファイルの名前解決を未解決に戻す
+     * @description 事実が変わるファイルの影響を受けるファイルの名前解決を未解決に戻す (事実を書き換える前に呼ぶ事)
      * @param relativePath 相対パス
+     * @param facts 新しい事実 (削除・抽出できなかった場合は null)
+     * @description docs/ast-plan.md §9。次のファイルを未解決に戻す
+     * - そのファイルと、そのファイルを推移的に import しているファイル (段2 の再エクスポート・段3 の戻り値や継承元の型は
+     *   import を辿った先の事実に依存する)
+     * - 段4 / 4' の候補 (メンバの定義・グローバルなトップレベルの定義) が増減した名前を引いているファイル
      */
-    private async _markUnresolved(relativePath: string): Promise<void> {
+    private async _markUnresolved(relativePath: string, facts: FileFacts | null): Promise<void> {
         await this._run(
-            'UPDATE table_files SET resolved_version = NULL WHERE relative_path = ? ' +
-            'OR relative_path IN (SELECT DISTINCT path FROM table_imports WHERE resolved_path = ?);',
-            relativePath, relativePath);
+            'UPDATE table_files SET resolved_version = NULL WHERE relative_path IN (' +
+                'WITH RECURSIVE dependents(path) AS (' +
+                    'SELECT ?::VARCHAR UNION SELECT i.path FROM table_imports i JOIN dependents d ON i.resolved_path = d.path' +
+                ') SELECT path FROM dependents);',
+            relativePath);
+
+        // 段4 の候補が増減した名前 (根の名前はファイル内に束縛の無いもの、メンバはどの位置でも引かれうる)
+        const definitions = await this._all('SELECT name, fqn, kind, parent_fqn FROM table_definitions WHERE path = ?;', relativePath);
+        const imports = await this._all('SELECT COUNT(*) AS count FROM table_imports WHERE path = ?;', relativePath);
+        const before: CandidateFacts | null = definitions.length === 0 ? null : {
+            definitions: definitions.map(row => ({ name: row.name, fqn: row.fqn, kind: row.kind, parentFqn: row.parent_fqn })),
+            globalScope: isGlobalScopeFile(relativePath, Number(imports[0].count), (await this._all(
+                'SELECT COUNT(*) AS count FROM table_definitions WHERE path = ? AND export_name IS NOT NULL;', relativePath))[0].count > 0),
+        };
+        const after: CandidateFacts | null = facts === null ? null : {
+            definitions: facts.definitions,
+            globalScope: isGlobalScopeFile(relativePath, facts.imports.length, facts.definitions.some(definition => definition.exportName !== null)),
+        };
+        const names = candidateNamesChanged(relativePath, before, after);
+        for (let offset = 0; offset < names.length; offset += INSERT_CHUNK_ROWS) {
+            const chunk = names.slice(offset, offset + INSERT_CHUNK_ROWS);
+            const placeholders = chunk.map(() => '?').join(', ');
+            await this._run(
+                'UPDATE table_files SET resolved_version = NULL WHERE relative_path IN (' +
+                    'SELECT DISTINCT path FROM table_occurrences ' +
+                    `WHERE (scope_id IS NULL AND root_name IN (${placeholders})) ` +
+                    `OR list_has_any(string_split(member_path, '.'), [${placeholders}]));`,
+                ...chunk, ...chunk);
+        }
     }
 
     /**
@@ -827,10 +932,11 @@ export class Db extends vscode.Disposable {
             for (let offset = 0; offset < relationships.length; offset += INSERT_CHUNK_ROWS) {
                 const chunk = relationships.slice(offset, offset + INSERT_CHUNK_ROWS);
                 await this._run(
-                    'INSERT INTO table_relationships_v2 (reference_path, reference_fqn, define_path, define_fqn, kind, weight, confidence, reference_line, is_intra_file) ' +
-                    `VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')};`,
+                    'INSERT INTO table_relationships_v2 (reference_path, reference_fqn, define_path, define_fqn, kind, weight, confidence, ' +
+                    'reference_line, reference_character, is_intra_file) ' +
+                    `VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')};`,
                     ...chunk.flatMap(entry => [entry.referencePath, entry.referenceFqn, entry.definePath, entry.defineFqn,
-                        entry.kind, entry.weight, entry.confidence, entry.referenceLine, entry.isIntraFile]));
+                        entry.kind, entry.weight, entry.confidence, entry.referenceLine, entry.referenceCharacter, entry.isIntraFile]));
             }
         });
     }
@@ -842,12 +948,90 @@ export class Db extends vscode.Disposable {
      */
     public async relationships_v2_query(referencePath?: string): Promise<RelationshipV2[]> {
         const rows = referencePath === undefined
-            ? await this._all('SELECT * FROM table_relationships_v2 ORDER BY reference_path, reference_line, define_fqn;')
-            : await this._all('SELECT * FROM table_relationships_v2 WHERE reference_path = ? ORDER BY reference_line, define_fqn;', referencePath);
-        return rows.map(row => ({
+            ? await this._all('SELECT * FROM table_relationships_v2 ORDER BY reference_path, reference_line, reference_character, define_fqn;')
+            : await this._all('SELECT * FROM table_relationships_v2 WHERE reference_path = ? ORDER BY reference_line, reference_character, define_fqn;', referencePath);
+        return rows.map(Db._relationshipV2Of);
+    }
+
+    /**
+     * @description 図に表示する関係 (v2)。参照元のファイルを AST の経路で調べた、ファイル間の関係
+     * @param threshold 確信度の下限 (含む)
+     * @returns 関係 (参照元ファイル・行の順)
+     */
+    public async relationships_v2_queryAstMode(threshold: number): Promise<RelationshipV2[]> {
+        const rows = await this._all(
+            'SELECT r.* FROM table_relationships_v2 r JOIN table_files f ON f.relative_path = r.reference_path ' +
+            "WHERE f.relationship_mode = 'ast' AND NOT r.is_intra_file AND r.confidence >= ? " +
+            'ORDER BY r.reference_path, r.reference_line, r.reference_character, r.define_fqn;', threshold);
+        return rows.map(Db._relationshipV2Of);
+    }
+
+    /**
+     * @description 確信度が閾値未満の関係 (v2) を読む (LSP による確定の対象。ファイル間・ファイル内とも)
+     * @param referencePaths 参照元ファイル
+     * @param threshold 確信度の上限 (含まない)
+     * @returns 関係 (参照元ファイル・位置の順)
+     */
+    public async relationships_v2_queryUncertain(referencePaths: string[], threshold: number): Promise<RelationshipV2[]> {
+        const relationships: RelationshipV2[] = [];
+        for (let offset = 0; offset < referencePaths.length; offset += INSERT_CHUNK_ROWS) {
+            const chunk = referencePaths.slice(offset, offset + INSERT_CHUNK_ROWS);
+            const rows = await this._all(
+                `SELECT * FROM table_relationships_v2 WHERE reference_path IN (${chunk.map(() => '?').join(', ')}) AND confidence < ? ` +
+                'ORDER BY reference_path, reference_line, reference_character, define_fqn;', ...chunk, threshold);
+            relationships.push(...rows.map(Db._relationshipV2Of));
+        }
+        return relationships;
+    }
+
+    /**
+     * @description LSP で確定した結果で、関係 (v2) を置き換える
+     * @param removes 消す関係 (読んだ時と全ての列が同じ行を消す。その後で名前解決し直された行は消さない)
+     * @param inserts 加える関係
+     * @returns 完了
+     */
+    public relationships_v2_confirm(removes: RelationshipV2[], inserts: RelationshipV2[]): Promise<void> {
+        return this._transaction(async () => {
+            for (const entry of removes) {
+                await this._run(
+                    'DELETE FROM table_relationships_v2 WHERE reference_path = ? AND reference_fqn = ? AND define_path = ? AND define_fqn = ? ' +
+                    'AND kind = ? AND confidence = ? AND reference_line = ? AND reference_character = ?;',
+                    entry.referencePath, entry.referenceFqn, entry.definePath, entry.defineFqn,
+                    entry.kind, entry.confidence, entry.referenceLine, entry.referenceCharacter);
+            }
+            for (let offset = 0; offset < inserts.length; offset += INSERT_CHUNK_ROWS) {
+                const chunk = inserts.slice(offset, offset + INSERT_CHUNK_ROWS);
+                await this._run(
+                    'INSERT INTO table_relationships_v2 (reference_path, reference_fqn, define_path, define_fqn, kind, weight, confidence, ' +
+                    'reference_line, reference_character, is_intra_file) ' +
+                    `VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')};`,
+                    ...chunk.flatMap(entry => [entry.referencePath, entry.referenceFqn, entry.definePath, entry.defineFqn,
+                        entry.kind, entry.weight, entry.confidence, entry.referenceLine, entry.referenceCharacter, entry.isIntraFile]));
+            }
+        });
+    }
+
+    /**
+     * @description 名前の位置にある定義を引く (LSP が返した定義の位置を完全修飾名にする)
+     * @param relativePath 相対パス
+     * @param line 名前の開始行
+     * @param character 名前の開始桁 (UTF-16)
+     * @returns 完全修飾名 (無ければ null)
+     */
+    public async definitions_queryAt(relativePath: string, line: number, character: number): Promise<string | null> {
+        const rows = await this._all(
+            "SELECT fqn FROM table_definitions WHERE path = ? AND name_line = ? AND name_character = ? AND kind <> 'parameter' LIMIT 1;",
+            relativePath, line, character);
+        return rows.length > 0 ? rows[0].fqn as string : null;
+    }
+
+    /** @description table_relationships_v2 の1行を関係にする */
+    private static _relationshipV2Of(row: Row): RelationshipV2 {
+        return {
             referencePath: row.reference_path, referenceFqn: row.reference_fqn, definePath: row.define_path, defineFqn: row.define_fqn,
-            kind: row.kind, weight: row.weight, confidence: row.confidence, referenceLine: row.reference_line, isIntraFile: row.is_intra_file,
-        }));
+            kind: row.kind, weight: row.weight, confidence: row.confidence,
+            referenceLine: row.reference_line, referenceCharacter: row.reference_character, isIntraFile: row.is_intra_file,
+        };
     }
 
     /**

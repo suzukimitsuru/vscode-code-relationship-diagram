@@ -606,9 +606,9 @@ a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); ou
    status: "done" 完了 / "active" 着手中 / "plan" 未着手
    =================================================================== */
 const PLAN_STATE = {
-  updated: "2026-10-08",
-  version: "0.3.39",
-  nextAction: "Stage 4: 主経路の切替（examine() を AST 主体へ）。先に差分更新の再解決の範囲（段3 の import の推移閉包・段4 の同名の定義）を広げる",
+  updated: "2026-10-16",
+  version: "0.4.0",
+  nextAction: "Stage 5: 描画への反映（kind の色分け・strength の線幅・確信度）。図へ RelationshipV2 の種類と重みを渡す",
   stages: [
     {
       id: "計画策定", version: "—", status: "done",
@@ -656,13 +656,14 @@ const PLAN_STATE = {
       ]
     },
     {
-      id: "STAGE 4", version: "0.4.0", status: "plan",
+      id: "STAGE 4", version: "0.4.0", status: "done",
       title: "主経路の切替",
-      body: "examine() を AST 主体へ。LSP は低 confidence 検証と未対応言語フォールバックに降格。旧テーブルを DROP。",
+      body: "TS/JS の関係は AST の経路（事実 → 名前解決）で調べて図に出し、LSP は確信度 0.7 未満の関係の定義の問い合わせ（0.99 で確定）と文法の無い言語のフォールバックに降格した。ファイルごとに調査経路を記録し、設定 codeRelationshipDiagram.ast.enabled = false で全ファイルを LSP の経路へ戻せる。差分更新の再解決を import の推移閉包と段4 の候補の増減まで広げた。旧テーブルはフォールバックとロールバックに使うため DROP しない。",
       criteria: [
-        "examineRelationships 実行時間が現行比 ≤ 50%",
-        "言語サーバ未導入でも TS/JS の関係が出る",
-        "crd.ast.enabled = false でロールバックできる"
+        "達成 — 3.9%（AST 12.1 秒 / LSP 310.9 秒、yarn verify:switch）",
+        "達成 — TypeScript の言語機能を無効にした VS Code で、AST の経路は図にファイル間の線 212 本（LSP の経路は 0 件）",
+        "達成 — ast.enabled = false で全 70 ファイルを調べ直し、図の線が LSP の経路と 99.7% 一致。true へ戻すと 100% 一致",
+        "精度 — 確信度 ≥ 0.7 で再現率 92.5%・適合率 99.2%（LSP による確定の後）"
       ]
     },
     {
@@ -702,7 +703,9 @@ const PLAN_STATE = {
     { date: "2026-10-08", text: "Stage 2 完了 — 名前解決 段1〜2 と精度検証ハーネス（yarn verify:accuracy）。v0.3.38" },
     { date: "2026-10-08", text: "シンボル ID の衝突で 64 ファイル中 27 ファイルの保存が失敗していた既存の不具合を修正" },
     { date: "2026-10-08", text: "Stage 3 着手 — 段3 の最初の実装で再現率 31% → 70.3%。オブジェクトリテラルのキー（文脈による参照）を比較から除くと決定" },
-    { date: "2026-10-08", text: "Stage 3 完了 — 名前解決 段3〜4'・確信度ごとの精度検証。確信度 ≥ 0.7 で再現率 92.3%・適合率 98.8%。v0.3.39" }
+    { date: "2026-10-08", text: "Stage 3 完了 — 名前解決 段3〜4'・確信度ごとの精度検証。確信度 ≥ 0.7 で再現率 92.3%・適合率 98.8%。v0.3.39" },
+    { date: "2026-10-16", text: "Stage 4 完了 — 主経路を AST へ切り替え、低確信度の関係を LSP で確定。examineRelationships の時間は LSP の経路の 3.9%。ロールバックと言語サーバ未導入での動作を yarn verify:switch で検証。v0.4.0" },
+    { date: "2026-10-16", text: "精度検証が言語サーバの起動を待たずに始まり、正解の関係が抜けていたのを修正（段2 の適合率 91.9% → 98.3%）" }
   ]
 };
 

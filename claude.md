@@ -79,6 +79,8 @@ src/
 ├── relationship/
 │   ├── examine.ts            # 関係抽出メインロジック
 │   ├── resolve.ts            # Phase B: 名前解決（AST の事実 → table_relationships_v2）
+│   ├── lspVerification.ts    # 低確信度の関係を LSP の定義の問い合わせで確定する
+│   ├── astRelationships.ts   # AST 由来の関係（fqn の組）→ 図のシンボルの関係
 │   ├── accuracy.ts           # 名前解決の精度検証（LSP と AST の関係の突き合わせ）
 │   ├── codeRelationships.ts  # Relationshipモデル
 │   ├── cosmosAdapter.ts      # Cosmos.gl形式変換・保守性スコア計算
@@ -116,13 +118,14 @@ docs/
    ↓
 2. ファイル列挙 → 変更分類 (additions/updates/no-changes/removes)
    ↓
-3. シンボル抽出 (VSCode DocumentSymbolProvider)
+3. シンボル抽出 (VSCode DocumentSymbolProvider) + AST の事実抽出 (tree-sitter)
    ↓
-4. 関係抽出 (VSCode DefinitionProvider)
+4. 関係抽出: TS/JS は AST の経路（キューが空になった時点で名前解決 → 低確信度だけ DefinitionProvider で確定）。
+   文法の無い言語と ast.enabled = false は LSP の経路（ReferenceProvider）
    ↓
-5. DuckDBへ保存
+5. DuckDBへ保存（AST の経路は table_relationships_v2、LSP の経路は table_relationships）
    ↓
-6. showDiagramコマンド → データベースから読み込み
+6. showDiagramコマンド → データベースから読み込み（ファイルごとの調査経路で両方の表から選ぶ）
    ↓
 7. cosmosAdapter.convertToCosmosFormat() でCosmos.gl形式に変換
    （保守性スコア・Dead code・エントリポイント判定を含む）
@@ -257,7 +260,7 @@ docs/
 - **FACTS_VERSION**（`localFacts.ts`）: クエリや抽出規則を変えたら上げる。`table_files.facts_version` が異なるファイルは、内容が同じでも次の全走査で LSP を使わずに事実だけを抽出し直す（キュー項目 `facts`）
 - **ソースに生の制御文字・BOM・ゼロ幅文字を書かない事**: tree-sitter は構文エラーにし、自リポジトリの事実が落ちる。必要なら `\uFEFF` のようなエスケープで書く
 
-**名前解決（Stage 2〜3 / v0.3.38～）**: キューが空になった時点で、事実から `table_relationships_v2` を作る（`src/relationship/resolve.ts`。まだ表示には使わない）
+**名前解決（Stage 2〜3 / v0.3.38～）**: キューが空になった時点で、事実から `table_relationships_v2` を作る（`src/relationship/resolve.ts`）
 
 - **段1**: `binding_fqn`（根の名前を束縛しているファイル内の定義）から引く（確信度 1.0）。**段2**: import 束縛から import 先の export を引く（再エクスポートは3段まで。0.95）
 - **段3**（v0.3.39～。0.8）: 値の型を推論して型のメンバを継承元まで引く。型の手掛かり（`AstDefinition.type`・スキーマ v4 の `type_*` 列）は、定義ごとに型名・式を参照出現と同じ形（根の名前・メンバの経路・束縛）で Phase A に持ち、段3 で同じ `walk()` で辿る。添字の要素はメンバの経路で `[]`（`ELEMENT_MEMBER`）
@@ -266,8 +269,16 @@ docs/
 - 結合先は AST の定義（`table_definitions`）。言語サーバのシンボルには依存しない
 - **RESOLVE_VERSION**（`resolve.ts`）: 解決規則を変えたら上げる。`table_files.resolved_version` が異なるファイルを解決し直す。事実が変わると、そのファイルと import しているファイルが未解決に戻る
 - 解決は SQL ではなく TypeScript で行う（モジュールと定義の解決が交互に現れる連鎖を SQL で表しにくいため。`docs/ast-plan.md` §7.3）
-- 精度検証: `yarn verify:accuracy`（LSP 由来の関係を正解とし、`verification/ast-accuracy/report.md` を書き出す）。**実行中にリポジトリのファイルを編集しない事**（差分キューが再調査し、計測が壊れる）
-- 差分更新の再解決は「変わったファイルと import しているファイル」だけで、段3 の推移的な型・段4 の同名の定義の増減は追わない（Stage 4 で対応。`docs/ast-plan.md` §9）
+- 精度検証: `yarn verify:accuracy`（LSP 由来の関係を正解とし、`verification/ast-accuracy/report.md` を書き出す）。**実行中にリポジトリのファイルを編集・作成しない事**（TS/JS は差分キューが再調査して計測が壊れ、Markdown などでも検証用の VS Code が結果を出さずに終了する）
+- 差分更新の再解決（v0.4.0～）: 事実が変わると、そのファイルと**推移的に** import しているファイル、段4 の候補が増減した名前を引いているファイルが未解決に戻る（`Db._markUnresolved()`・`candidateNamesChanged()`。`docs/ast-plan.md` §9）
+
+**主経路の切替（Stage 4 / v0.4.0～）**: TS/JS の関係は AST の経路で調べ、図に出す（`docs/ast-plan.md` Stage 4）
+
+- **調査経路**: ファイルごとに `table_files.relationship_mode`（`ast` / `lsp`）を記録する。`ast` は LSP の参照検索と fan-out を行わない。設定 `codeRelationshipDiagram.ast.enabled = false` で全ファイルを LSP の経路へ戻せる（全走査で経路の異なるファイルを調べ直す）。文法の無い言語・事実を抽出できなかったファイルは常に `lsp`
+- **図**: `queryDiagramRelationships()` が、定義側が `lsp` の LSP 由来の関係と、参照元が `ast` で確信度が `ast.confidenceThreshold`（0.7）以上のファイル間の AST 由来の関係を読む。AST の `fqn` はシンボルのある最も近い祖先へ揃える（言語サーバのシンボルが無ければファイル）
+- **LSP による確定**（§7.4。`lspVerification.ts`）: 名前解決の後、閾値未満の関係を参照出現の位置 × 名前ごとに `executeDefinitionProvider` で問い合わせ、返った定義（確信度 0.99）へ置き換える。答えが無ければそのまま残す
+- 旧 `table_relationships` は DROP しない（フォールバックとロールバックで使う）
+- 検証: `yarn verify:switch`（時間・ロールバック・言語サーバ未導入。`verification/ast-switch/`）
 
 ---
 
@@ -365,6 +376,7 @@ npm run compile
 | `yarn verify:ast` | AST 資産が配布物と同じ配置からロードされパースできるか（`verification/ast-parser/`） | 数秒 |
 | `yarn verify:facts` | 事実抽出の受け入れ基準（全ファイルの保存・fqn の一意性・処理時間・v1 DB の移行。`verification/ast-facts/`） | 数秒 |
 | `yarn verify:accuracy` | 名前解決の精度（LSP と AST の関係の突き合わせ。`accuracy` ラベル）。`verification/ast-accuracy/report.md` を書き出し、調査に使った DB を `out/verify-accuracy/` に残す | 約5分 |
+| `yarn verify:switch` | 主経路の切替（AST と LSP の経路の時間・ロールバック・言語サーバ未導入。`switch` / `nolsp` ラベル）。`verification/ast-switch/` にレポートを書き出す | 約10分 |
 
 単体テストのファイルを `src/test/` に置かない事（`out/test/**/*.test.js` は統合テストとして VS Code 上で実行される）。
 
@@ -497,8 +509,8 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 
 ## 最終更新
 
-- **日付**: 2026-10-08
-- **バージョン**: 0.3.39
+- **日付**: 2026-10-16
+- **バージョン**: 0.4.0
 - **作成者**: Claude Code
 
 このファイルはプロジェクトの進化に伴い定期的に更新してください。

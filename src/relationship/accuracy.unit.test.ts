@@ -19,7 +19,7 @@ const SYMBOLS: AccuracySymbol[] = [
 const ast = (referenceFqn: string, defineFqn: string, kind: RelationshipKind = RelationshipKind.call): RelationshipV2 => ({
     referencePath: referenceFqn.slice(0, referenceFqn.indexOf('#')), referenceFqn: referenceFqn,
     definePath: defineFqn.slice(0, defineFqn.indexOf('#')), defineFqn: defineFqn,
-    kind: kind, weight: 1, confidence: 1, referenceLine: 0, isIntraFile: false,
+    kind: kind, weight: 1, confidence: 1, referenceLine: 0, referenceCharacter: 0, isIntraFile: false,
 });
 
 describe('normalizeFqn', () => {
@@ -77,7 +77,8 @@ describe('compareRelationships', () => {
         expect(at(0)).toMatchObject({ recall: { matched: 2, total: 2 }, precision: { matched: 2, total: 3 } });
         expect(at(0.7)).toMatchObject({ recall: { matched: 2, total: 2 }, precision: { matched: 2, total: 2 } });
         expect(at(0.9)).toMatchObject({ recall: { matched: 1, total: 2 }, precision: { matched: 1, total: 1 } });
-        expect(report.byBand.map(band => [band.precision.matched, band.precision.total])).toEqual([[0, 0], [1, 1], [1, 1], [0, 1], [0, 0]]);
+        // 段1・LSP で確定・段2・段3・段4・段4' の順
+        expect(report.byBand.map(band => [band.precision.matched, band.precision.total])).toEqual([[0, 0], [0, 0], [1, 1], [1, 1], [0, 1], [0, 0]]);
     });
 
     it('片方だけが見つけたファイルの組を返す (AST 側は関係の種類も)', () => {

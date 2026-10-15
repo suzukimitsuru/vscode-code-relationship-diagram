@@ -79,7 +79,34 @@ describe('codeDb', () => {
                 ['path', 'fqn', 'name', 'kind', 'parent_fqn', 'export_name', 'name_line', 'name_character', 'start_line', 'end_line',
                     'type_mode', 'type_root', 'type_member', 'type_scope_id', 'type_binding_fqn', 'type_array']);
             expect(await columnsOf(db, 'table_files')).toContain('resolved_version');
+            expect(await columnsOf(db, 'table_files')).toContain('relationship_mode');
+            expect(await columnsOf(db, 'table_relationships_v2')).toContain('reference_character');
             expect(await countOf(db, 'view_relationship_strength')).toBe(0);
+        });
+
+        it('v4 の DB を v5 へ移行すると、関係 (v2) を作り直して全ファイルを未解決に戻す', async () => {
+            const db = open();
+            await db.table_create();
+            // 0.3.39 (v4) の状態へ戻す: 関係 (v2) に桁が無く、調査経路の列が無い (索引のある表は列を消せないため作り直す)
+            await db.executeQuery('DROP VIEW view_relationship_strength');
+            await db.executeQuery('DROP TABLE table_relationships_v2');
+            await db.executeQuery(`CREATE TABLE table_relationships_v2 (reference_path TEXT, reference_fqn TEXT, define_path TEXT, define_fqn TEXT,
+                kind INTEGER, weight DOUBLE, confidence DOUBLE, reference_line INTEGER, is_intra_file BOOLEAN)`);
+            await db.executeQuery("INSERT INTO table_relationships_v2 VALUES ('src/a.ts', 'src/a.ts#', 'src/b.ts', 'src/b.ts#B', 1, 1, 1, 0, FALSE)");
+            await db.executeQuery('DROP TABLE table_files');
+            await db.executeQuery(`CREATE TABLE table_files (relative_path TEXT PRIMARY KEY, language_id TEXT, updated_at TIMESTAMP,
+                facts_version INTEGER, resolved_version INTEGER)`);
+            await db.executeQuery("INSERT INTO table_files VALUES ('src/a.ts', 'typescript', '2026-01-01 00:00:00', 1, 1)");
+            await db.executeQuery('UPDATE table_schema_version SET version = 4');
+
+            await db.table_create();
+
+            expect(await db.schema_version()).toBe(codeDb.SCHEMA_VERSION);
+            expect(await columnsOf(db, 'table_relationships_v2')).toContain('reference_character');
+            expect(await countOf(db, 'table_relationships_v2')).toBe(0);
+            expect(await db.resolution_pendingFiles(1, 1)).toEqual(['src/a.ts']);
+            // 調査経路の記録が無いファイルは LSP の経路で調べたもの
+            expect(await db.codeFile_queryRelationshipModes()).toEqual(new Map([['src/a.ts', null]]));
         });
 
         it('v1 の DB を、行を保持したまま最新の版へ移行する', async () => {
@@ -237,13 +264,70 @@ describe('codeDb', () => {
             expect(await db.resolution_pendingFiles(2, 1)).toEqual([]);
         });
 
+        it('事実を置き換えると、推移的に import しているファイルも未解決に戻る (段2 の再エクスポート・段3 の型)', async () => {
+            const db = open();
+            await db.table_create();
+            const files = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'];
+            for (const file of files) {
+                await db.codeFile_upsert(new codeFiles.File(file, 'typescript', new Date()), 1);
+            }
+            const importing = (from: string, to: string): FileFacts =>
+                ({ ...FACTS, relativePath: from, definitions: [], occurrences: [], imports: [{ ...FACTS.imports[0], resolvedPath: to }] });
+            // a → b → c (c と b は互いに import する循環)。d は無関係
+            await db.facts_replace('src/a.ts', importing('src/a.ts', 'src/b.ts'));
+            await db.facts_replace('src/b.ts', importing('src/b.ts', 'src/c.ts'));
+            await db.facts_replace('src/c.ts', importing('src/c.ts', 'src/b.ts'));
+            await db.relationships_v2_replace(files, [], 1);
+
+            await db.facts_replace('src/c.ts', importing('src/c.ts', 'src/b.ts'));
+            expect(await db.resolution_pendingFiles(1, 1)).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts']);
+        });
+
+        it('段4 の候補が増減した名前を引いているファイルを未解決に戻す', async () => {
+            const db = open();
+            await db.table_create();
+            const files = ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts'];
+            for (const file of files) {
+                await db.codeFile_upsert(new codeFiles.File(file, 'typescript', new Date()), 1);
+            }
+            const occurrence = FACTS.occurrences[0];
+            // b.ts は型の分からない値のメンバ run を、c.ts は束縛の無い名前 helper を、d.ts は束縛のある名前 run を引く
+            await db.facts_replace('src/b.ts', { ...FACTS, relativePath: 'src/b.ts', definitions: [], imports: [],
+                occurrences: [{ ...occurrence, rootName: 'value', memberPath: 'x.run', scopeId: 1 }] });
+            await db.facts_replace('src/c.ts', { ...FACTS, relativePath: 'src/c.ts', definitions: [], imports: [],
+                occurrences: [{ ...occurrence, rootName: 'helper', memberPath: null, scopeId: null }] });
+            await db.facts_replace('src/d.ts', { ...FACTS, relativePath: 'src/d.ts', definitions: [], imports: [],
+                occurrences: [{ ...occurrence, rootName: 'run', memberPath: null, scopeId: 0 }] });
+            await db.facts_replace('src/a.ts', { ...FACTS, imports: [], occurrences: [] });
+            await db.relationships_v2_replace(files, [], 1);
+
+            // メソッド run を足す: b.ts だけ (d.ts の run はファイル内で束縛されている)
+            const method = { ...FACTS.definitions[1], fqn: 'src/a.ts#A.run', name: 'run', kind: 'method', type: null };
+            await db.facts_replace('src/a.ts', { ...FACTS, imports: [], occurrences: [], definitions: [...FACTS.definitions, method] });
+            expect(await db.resolution_pendingFiles(1, 1)).toEqual(['src/a.ts', 'src/b.ts']);
+
+            // 同じ定義のまま置き換えても他のファイルは対象にならない
+            await db.relationships_v2_replace(files, [], 1);
+            await db.facts_replace('src/a.ts', { ...FACTS, imports: [], occurrences: [], definitions: [...FACTS.definitions, method] });
+            expect(await db.resolution_pendingFiles(1, 1)).toEqual(['src/a.ts']);
+
+            // スクリプト (import / export の無いファイル) のトップレベルの関数 helper はグローバル: 削除すると c.ts が対象になる
+            await db.relationships_v2_replace(files, [], 1);
+            const helper = { ...FACTS.definitions[0], fqn: 'src/e.ts#helper', name: 'helper', kind: 'function', parentFqn: 'src/e.ts#', exportName: null };
+            await db.codeFile_upsert(new codeFiles.File('src/e.ts', 'typescript', new Date()), 1);
+            await db.facts_replace('src/e.ts', { ...FACTS, relativePath: 'src/e.ts', imports: [], occurrences: [], definitions: [helper] });
+            await db.relationships_v2_replace([...files, 'src/e.ts'], [], 1);
+            await db.facts_deleteFile('src/e.ts');
+            expect(await db.resolution_pendingFiles(1, 1)).toEqual(['src/c.ts', 'src/e.ts']);
+        });
+
         it('関係 (v2) を参照元ファイル単位で置き換える', async () => {
             const db = open();
             await db.table_create();
             await db.codeFile_upsert(new codeFiles.File('src/a.ts', 'typescript', new Date()), 1);
             const relationship: RelationshipV2 = {
                 referencePath: 'src/a.ts', referenceFqn: 'src/a.ts#A', definePath: 'src/b.ts', defineFqn: 'src/b.ts#B',
-                kind: RelationshipKind.inheritance, weight: 10, confidence: 0.95, referenceLine: 3, isIntraFile: false,
+                kind: RelationshipKind.inheritance, weight: 10, confidence: 0.95, referenceLine: 3, referenceCharacter: 10, isIntraFile: false,
             };
             await db.relationships_v2_replace(['src/a.ts'], [relationship, { ...relationship, referenceLine: 9 }], 1);
             await db.relationships_v2_replace(['src/b.ts'], [{ ...relationship, referencePath: 'src/b.ts' }], 1);
@@ -264,6 +348,75 @@ describe('codeDb', () => {
             expect((await db.facts_query('src/a.ts')).occurrences).toHaveLength(0);
             expect((await db.facts_query('src/a.ts')).definitions).toHaveLength(0);
             expect((await db.facts_query('src/b.ts')).occurrences).toHaveLength(2);
+        });
+    });
+
+    describe('関係の調査経路 (Stage 4)', () => {
+        const position = new vscode.Position(0, 0);
+        const symbolOf = (id: string, file: string, fqn: string, parentId: string | null) => {
+            const symbol = new SYMBOL.SymbolModel(id, id, parentId ? vscode.SymbolKind.Class : vscode.SymbolKind.File, file,
+                position, position, position, Buffer.alloc(1), parentId);
+            symbol.fqn = fqn;
+            return symbol;
+        };
+        const v2 = (referencePath: string, definePath: string, confidence: number, isIntraFile: boolean = false): RelationshipV2 => ({
+            referencePath: referencePath, referenceFqn: `${referencePath}#`, definePath: definePath, defineFqn: `${definePath}#X`,
+            kind: RelationshipKind.call, weight: 5, confidence: confidence, referenceLine: 1, referenceCharacter: 2, isIntraFile: isIntraFile,
+        });
+
+        it('ファイルごとの調査経路を記録する (既定は lsp)', async () => {
+            const db = open();
+            await db.table_create();
+            await db.codeFile_upsert(new codeFiles.File('src/a.ts', 'typescript', new Date()), 1, 'ast');
+            await db.codeFile_upsert(new codeFiles.File('src/b.c', 'c', new Date()));
+            expect(await db.codeFile_queryRelationshipModes()).toEqual(new Map([['src/a.ts', 'ast'], ['src/b.c', 'lsp']]));
+            await db.codeFile_upsert(new codeFiles.File('src/a.ts', 'typescript', new Date()), 1, 'lsp');
+            expect((await db.codeFile_queryRelationshipModes()).get('src/a.ts')).toBe('lsp');
+        });
+
+        it('図には、定義側が LSP の経路の LSP 由来の関係と、参照元が AST の経路の関係 (v2) を出す', async () => {
+            const db = open();
+            await db.table_create();
+            await db.codeFile_upsert(new codeFiles.File('a.ts', 'typescript', new Date()), 1, 'ast');
+            await db.codeFile_upsert(new codeFiles.File('b.ts', 'typescript', new Date()), 1, 'lsp');
+            await db.codeFile_upsert(new codeFiles.File('c.c', 'c', new Date()));
+            await db.symbol_inserts([symbolOf('a', 'a.ts', 'a.ts#', null), symbolOf('a/A', 'a.ts', 'a.ts#A', 'a'),
+                symbolOf('b', 'b.ts', 'b.ts#', null), symbolOf('b/B', 'b.ts', 'b.ts#B', 'b'), symbolOf('c/C', 'c.c', 'c.c#C', 'c')]);
+            // LSP 由来: b → a (定義側 a は AST の経路なので出さない)、a → b・a → c (定義側が LSP の経路なので出す)
+            await db.executeQuery("INSERT INTO table_relationships VALUES ('b/B', 'a/A'), ('a/A', 'b/B'), ('a/A', 'c/C')");
+            expect((await db.relationship_queryLspMode()).map(entry => `${entry.reference.id}->${entry.define.id}`).sort()).toEqual(['a/A->b/B', 'a/A->c/C']);
+
+            // v2: 参照元が AST の経路で、ファイル間で、確信度が閾値以上のもの
+            await db.relationships_v2_replace(['a.ts'], [v2('a.ts', 'b.ts', 0.95), v2('a.ts', 'b.ts', 0.5), v2('a.ts', 'a.ts', 1, true)], 1);
+            await db.relationships_v2_replace(['b.ts'], [v2('b.ts', 'a.ts', 0.95)], 1);
+            expect((await db.relationships_v2_queryAstMode(0.7)).map(entry => [entry.referencePath, entry.confidence])).toEqual([['a.ts', 0.95]]);
+            expect(await db.relationships_v2_queryAstMode(0)).toHaveLength(2);
+
+            // 定義側のファイル単位で LSP 由来の関係を消す
+            await db.relationship_deleteDefinePath('b.ts');
+            expect((await db.relationship_quaryAll()).map(entry => `${entry.reference.id}->${entry.define.id}`).sort()).toEqual(['a/A->c/C', 'b/B->a/A']);
+        });
+
+        it('低確信度の関係を読み、確定した結果で置き換える', async () => {
+            const db = open();
+            await db.table_create();
+            const weak = v2('a.ts', 'b.ts', 0.25);
+            await db.relationships_v2_replace(['a.ts'], [weak, { ...weak, defineFqn: 'c.ts#X', definePath: 'c.ts' }, v2('a.ts', 'b.ts', 0.95)], 1);
+            const uncertain = await db.relationships_v2_queryUncertain(['a.ts', 'z.ts'], 0.7);
+            expect(uncertain.map(entry => entry.defineFqn)).toEqual(['b.ts#X', 'c.ts#X']);
+
+            await db.relationships_v2_confirm(uncertain, [{ ...weak, confidence: 0.99 }]);
+            expect((await db.relationships_v2_query('a.ts')).map(entry => [entry.defineFqn, entry.confidence]).sort()).toEqual([['b.ts#X', 0.95], ['b.ts#X', 0.99]]);
+        });
+
+        it('名前の位置にある定義を引く (引数は除く)', async () => {
+            const db = open();
+            await db.table_create();
+            const parameter = { ...FACTS.definitions[0], fqn: 'src/a.ts#A.p', name: 'p', kind: 'parameter', nameLine: 9, nameCharacter: 1 };
+            await db.facts_replace('src/a.ts', { ...FACTS, definitions: [...FACTS.definitions, parameter] });
+            expect(await db.definitions_queryAt('src/a.ts', 4, 4)).toBe('src/a.ts#A.m');
+            expect(await db.definitions_queryAt('src/a.ts', 9, 1)).toBeNull();
+            expect(await db.definitions_queryAt('src/b.ts', 4, 4)).toBeNull();
         });
     });
 

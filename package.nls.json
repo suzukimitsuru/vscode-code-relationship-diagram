@@ -5,5 +5,8 @@
     "show-diagram-description": "Show Code Relationship Diagram.",
     "show-diagram-tooltip": "Show Diagram",
     "error-no-associations": "Create workspace and set 'files.associations'.",
-    "error-no-database": "Please run 'CRD: Examine code relationships' command first to create the database."
+    "error-no-database": "Please run 'CRD: Examine code relationships' command first to create the database.",
+    "ast-enabled-description": "Examine relationships of TypeScript/JavaScript files from the syntax tree (tree-sitter) instead of the language server's reference search. Turn off to roll back to the language server; files examined the other way are re-examined.",
+    "ast-lsp-verification-description": "Ask the language server for the definition of relationships whose confidence is below the threshold, and replace them with the answer.",
+    "ast-confidence-threshold-description": "Relationships examined from the syntax tree are shown when their confidence is at least this value. Relationships below it are verified with the language server."
 }

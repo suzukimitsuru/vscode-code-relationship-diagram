@@ -5,5 +5,8 @@
     "show-diagram-description": "コード関係図を表示します。",
     "show-diagram-tooltip": "コード関係図を表示",
     "error-no-associations": "ワークスペースを作り files.associations(ファイルの関連付けのパターン)を設定して下さい。",
-    "error-no-database": "'CRD: Examine Code Relationships' コマンドを実行してデータベースを作成して下さい。"
+    "error-no-database": "'CRD: Examine Code Relationships' コマンドを実行してデータベースを作成して下さい。",
+    "ast-enabled-description": "TypeScript/JavaScript のファイルの関係を、言語サーバの参照検索ではなく構文木（tree-sitter）から調べます。オフにすると言語サーバでの調査に戻り、別の方法で調べたファイルを調べ直します。",
+    "ast-lsp-verification-description": "確信度が閾値未満の関係について言語サーバに定義を問い合わせ、その答えで置き換えます。",
+    "ast-confidence-threshold-description": "構文木から調べた関係のうち、確信度がこの値以上のものを図に表示します。この値未満の関係は言語サーバで確かめます。"
 }

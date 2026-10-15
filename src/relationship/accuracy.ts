@@ -1,5 +1,7 @@
 /** @file 名前解決の精度検証: LSP 由来の関係と AST 由来の関係の突き合わせ (docs/ast-plan.md §11) */
 import type { RelationshipV2 } from './resolve';
+import { normalizeFqn } from './astRelationships';
+export { normalizeFqn } from './astRelationships';
 import { RelationshipKind } from '../extruct/ast/relationshipKind';
 
 /** シンボル (table_symbols の必要な列) */
@@ -56,7 +58,8 @@ export const ACCURACY_THRESHOLDS: readonly number[] = [0, 0.5, 0.7, 0.9];
 /** 確信度の帯 (resolve.ts の CONFIDENCE と対応させる事) */
 export const ACCURACY_BANDS: readonly { label: string, min: number, max: number }[] = [
     { label: '段1 ファイル内の定義（1.0）', min: 1.0, max: 1.0 },
-    { label: '段2 import（0.95）', min: 0.9, max: 1.0 },
+    { label: 'LSP で確定（0.99）', min: 0.97, max: 1.0 },
+    { label: '段2 import（0.95）', min: 0.9, max: 0.97 },
     { label: '段3 型推論（0.8）', min: 0.7, max: 0.9 },
     { label: '段4 一意名（0.6）', min: 0.55, max: 0.7 },
     { label: "段4' 曖昧候補・モジュール単位（≤ 0.5）", min: 0, max: 0.55 },
@@ -106,28 +109,6 @@ export interface AccuracyReport {
 
 const metric = (matched: number, total: number): AccuracyMetric =>
     ({ matched: matched, total: total, ratio: total > 0 ? matched / total : 1 });
-
-/**
- * 完全修飾名を、言語サーバのシンボルに付いた最も近い祖先へ正規化する
- * @param fqn 完全修飾名
- * @param attached シンボルに付いた完全修飾名の集合
- * @returns 正規化した完全修飾名 (どの祖先も付いていなければファイルの完全修飾名)
- * @description AST はコールバックの中の参照を外側の名前付き定義に集約し、ローカル変数のように
- *              シンボルの無い定義も参照元にする。比較は双方をシンボルのある単位へ揃えて行う
- */
-export function normalizeFqn(fqn: string, attached: ReadonlySet<string>): string {
-    let current = fqn;
-    while (!attached.has(current)) {
-        const hash = current.lastIndexOf('#');
-        const name = current.slice(hash + 1);
-        if (name === '') {
-            return current;
-        }
-        const dot = name.lastIndexOf('.');
-        current = dot < 0 ? current.slice(0, hash + 1) : current.slice(0, hash + 1 + dot);
-    }
-    return current;
-}
 
 /** トップレベルの定義か (`<path>#<名前>` で名前に . を含まない) */
 const isTopLevel = (fqn: string): boolean => {

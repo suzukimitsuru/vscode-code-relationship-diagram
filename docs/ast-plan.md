@@ -214,6 +214,14 @@ GROUP BY reference_fqn, define_fqn, kind;
 | `idx_definitions_name` | `table_definitions(name)` の索引を追加 | 段4 / 4' で同名の定義をプロジェクト全体から引くため |
 | `table_occurrences.kind = 10` | オブジェクトリテラルのキー（`object_key`）を記録する | 関係にはしないが、精度検証で文脈による参照を見分けるため（§5.3・§11） |
 
+**Stage 4 での実装差分（スキーマ v5）**（実物は `src/codeDb.ts` の `MIGRATION_V5`）
+
+| 対象 | 計画からの変更 | 理由 |
+| ---- | -------------- | ---- |
+| `table_files.relationship_mode` | ファイルの関係の調査経路（`ast` / `lsp`。NULL は Stage 3 までに調べたファイルで `lsp` と同じ扱い）を追加 | 設定 `ast.enabled` の切り替え（ロールバック）で、内容が同じでも経路の異なるファイルを調べ直すため。図はファイルごとの経路で、LSP 由来の関係（定義側が `lsp`）と AST 由来の関係（参照元が `ast`）を選ぶ |
+| `table_relationships_v2.reference_character` | 参照出現（import 文なら import 束縛）の開始桁を追加。表を作り直し、全ファイルを未解決に戻す（`RESOLVE_VERSION` も 3 に上げた） | §7.4 の LSP による確定で、言語サーバに問い合わせる位置を引くため |
+| 旧 `table_relationships` | **DROP しない**（計画では Stage 4 で DROP） | 文法の無い言語（C など）のフォールバックと、`ast.enabled = false` へのロールバックが LSP の参照検索の結果を置く場所として使うため。AST の経路へ切り替えたファイルを定義側とする行は、切り替えた時に消す |
+
 ### 5.3 関係の種類と基本重み
 
 計画1 の taxonomy を踏襲する。
@@ -238,6 +246,11 @@ GROUP BY reference_fqn, define_fqn, kind;
 2. v1 → v2: `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` と新規テーブル作成のみ（既存行は保持）。**1トランザクション**で行う（DuckDB 1.3.1 はインデックス付きテーブルへの `ADD COLUMN` も DDL のロールバックもできる事を実測で確認した）
 3. 旧 `table_relationships`（id ペア）は**読み取り専用で残す**。`fqn` が未付与のシンボルは旧テーブルの関係を表示に使い、再調査で順次 v2 側へ移る
 4. 全ファイル再調査が完了したら旧テーブルを DROP（Stage 4 の完了条件）
+
+> **Stage 4 で 3・4 を変更した。** 旧テーブルは DROP せず、LSP の経路の関係を置く表として使い続ける（文法の無い言語のフォールバックと
+> ロールバックに要るため）。どちらの表を表示に使うかはファイルごとの調査経路（`table_files.relationship_mode`）で決める。
+> v4 の DB を開くと、全ファイルの経路は記録が無い（`lsp` 扱い）ため、次の全走査で TS/JS のファイルが AST の経路で調べ直され、
+> それまでの LSP 由来の関係（定義側がそのファイルのもの）は消える。
 
 **埋め戻し（Stage 1 で追加）**: 移行直後は全シンボルの `fqn` と全ファイルの事実が空になる。
 内容の変わっていないファイルは再調査されないため、放置すると永久に埋まらない。
@@ -505,6 +518,20 @@ JOIN (SELECT name, ANY_VALUE(fqn) AS fqn FROM table_symbols
 
 confidence < 閾値（既定 0.7）の出現に限り `executeDefinitionProvider` を呼び、返った定義位置を `fqn` に解決できたら confidence を 1.0 に置き換える。設定 `crd.ast.lspVerification` で無効化可能（オフライン・高速モード）。
 
+**Stage 4 の実装**（`src/relationship/lspVerification.ts`）
+
+| 規則 | 内容 |
+| ---- | ---- |
+| 時機 | キューが空になって名前解決を終えた後、解決したファイルだけを対象にする。AST の経路で調べている時だけ（`ast.enabled` と `ast.lspVerification` が両方有効） |
+| 問い合わせの単位 | 確信度が閾値（設定 `ast.confidenceThreshold`）未満の関係を、参照出現の位置 × 定義の名前（完全修飾名の最後の名前）ごとにまとめて1回。段4' の N 個の候補は1回で確定する |
+| 位置 | 参照出現の位置は根の名前の位置なので、`a.b.c` の `c` はソース中で参照出現の開始から後ろを探す（2,000 文字まで。改行をまたぐ連鎖も届く） |
+| 返った位置の解決 | 名前の開始位置が一致する AST の定義（`table_definitions`。引数は除く）の `fqn` |
+| 置き換え | 候補のどれかなら、それだけを残す。候補に無い定義なら、その定義へ置き換える。定義がワークスペースの外（組込み・パッケージ）か AST の定義の無い位置なら、候補を全て消す |
+| 確信度 | 段1 の 1.0 と見分けるため **0.99**（`CONFIDENCE.confirmed`）にした（計画では 1.0） |
+| 答えが無い | 言語サーバが定義を返さない（未導入・起動前・型の分からない `any` のメンバなど）なら、関係はそのまま残す（閾値未満なので図には出ない） |
+| モジュール単位の関係 | 名前が無い（`export default` の無名関数など）ため問い合わせない |
+| 直列区間 | 言語サーバへの問い合わせは直列区間の外で行い、置き換え（読んだ時と全ての列が同じ行を消して加える）だけをコミットの直列区間で書く |
+
 ---
 
 ## 8. Phase C: 集約と描画への受け渡し
@@ -538,6 +565,18 @@ Stage 3 では差分更新の範囲を変えていない。全走査（`RESOLVE_
 - 段3: A が B を import し、B の関数の戻り値の型が C の型である時、A のメンバの解決は C に依存する（import の推移閉包）。C が変わっても A は再解決されない
 - 段4: 同名の定義が増減したファイルは、その名前を段4 で引いた全ファイルに影響する。`table_occurrences` の名前（`root_name` / `member_path` の末尾）で影響するファイルを引く必要がある
 
+**Stage 4 の実装**: 事実を置き換える・削除する時（`Db._markUnresolved()`。同じトランザクション）に、次のファイルを未解決に戻すようにした。
+
+| 範囲 | 引き方 |
+| ---- | ------ |
+| X と、X を**推移的に** import しているファイル | `table_imports` を `resolved_path` から逆に辿る再帰 CTE（`UNION` で重複を除くため循環しても止まる）。段2 の再エクスポート・段3 の戻り値や継承元の型の連鎖をまとめて扱う |
+| 段4 / 4' の候補が増減した名前を引いているファイル | X の変わる前と後の定義を比べ、段4 の候補（メンバの定義と、グローバルになるファイルのトップレベルの定義）のうち名前・`fqn`・種別の組が増減した名前を求める（`candidateNamesChanged()`）。その名前を、ファイル内に束縛の無い根の名前（`scope_id IS NULL`）か、メンバの経路のどこかに持つ参照出現のファイル。スクリプトかどうか（import / export の有無）が変わった時は、トップレベルの定義の名前を全て増減として扱う |
+
+推移閉包は依存の多いファイル（`codeDb.ts` など）の変更で多くのファイルを未解決に戻すが、解決は事実を読んで辿るだけで LSP を使わないため、
+自リポジトリ規模では問題にならない（実測は Stage 4 の実装結果）。大規模なリポジトリで重ければ、export 表と型の手掛かりが変わった時だけ広げる。
+
+Stage 2 の既知の限界（後から作られたファイルへの相対 import が未解決のまま）は残っている。
+
 ---
 
 ## 10. ビルドと配布（WASM）
@@ -560,6 +599,10 @@ Stage 3 では差分更新の範囲を変えていない。全走査（`RESOLVE_
 **Stage 4（切替）の前に、AST 結果と現行 LSP 結果を突き合わせる検証モードを必ず挟む。**
 
 **Stage 2 で実装済み**: `yarn verify:accuracy`（`src/test/astAccuracy.verify.ts`・突き合わせは `src/relationship/accuracy.ts`）。
+
+**Stage 4 での変更**: AST の経路が既定になったため、正解（LSP の参照検索による関係）を作るよう、検証では関係を旧経路（`ast.enabled = false` 相当）で調べる。
+名前解決の後で §7.4 の LSP による確定を行い、確定の前と後の両方の値を出す（基準は両方に掛ける）。段ごとの適合率に「LSP で確定（0.99）」の帯を加えた。
+主経路の切替そのもの（時間・ロールバック・言語サーバ未導入）は `yarn verify:switch`（`verification/ast-switch/`）で測る。
 自リポジトリを拡張機能と同じ差分キュー（LSP の関係調査 + AST の事実抽出 + 名前解決）で調べ、
 `verification/ast-accuracy/report.md` を書き出す。比較の方法は `verification/ast-accuracy/README.md`。
 
@@ -605,7 +648,7 @@ Stage 3 では差分更新の範囲を変えていない。全走査（`RESOLVE_
 | **1** | **完了** | Phase A: defs / imports / occurrences 抽出、`fqn`・`export_name` 付与、スキーマ v2 とマイグレーション、DuckDB へ保存（**まだ関係抽出には使わない**） | 自リポジトリ全ファイルで occurrences が保存される / `fqn` がファイル内で一意 / パース時間 中央値 < 20ms/ファイル / v1 DB から無停止で移行できる | 0.3.37 |
 | **2** | **完了** | Phase B 段1〜2（ローカル + import 解決）、`kind` 付与、`table_relationships_v2` への保存。表示は従来関係のまま | import 由来の関係の再現率 ≥ 95%（対 LSP、§11 のレポート） / 検証レポートが CI or スクリプトで再生成できる | 0.3.38 |
 | **3** | **完了** | Phase B 段3〜4'（型推論・一意名・曖昧候補）、confidence、Phase C 集約 VIEW | 関係全体の再現率 ≥ 90%、適合率 ≥ 90%（閾値 0.7 時。測り方は §11） / 段別内訳がレポートに出る | 0.3.39 |
-| **4** | 未着手 | **主経路の切替**: `examine()` を AST 主体へ。LSP は低 confidence 検証と未対応言語フォールバックに降格。設定 `crd.ast.enabled` で旧経路へ戻せる。旧 `table_relationships` を DROP | 自リポジトリの `examineRelationships` 実行時間が現行比 ≤ 50% / 言語サーバ未導入の状態でも TS/JS の関係が出る / 旧経路へのロールバックが動く | 0.4.0 |
+| **4** | **完了** | **主経路の切替**: `examine()` を AST 主体へ。LSP は低 confidence 検証と未対応言語フォールバックに降格。設定 `crd.ast.enabled` で旧経路へ戻せる。旧 `table_relationships` を DROP | 自リポジトリの `examineRelationships` 実行時間が現行比 ≤ 50% / 言語サーバ未導入の状態でも TS/JS の関係が出る / 旧経路へのロールバックが動く | 0.4.0 |
 | **5** | 未着手 | 描画反映: kind の色分け・strength の線幅・kind トグル・strength 閾値スライダー・ファイル内依存トグル | グラフ上で継承と import が区別できる / 閾値スライダーで幹線のみ表示できる | 0.4.1 |
 | **6** | 未着手 | 言語追加（需要順: Python → Go → Java/C#）。`.scm` とモジュール解決の追加のみで完結 | 追加言語で §11 のレポートが所定値を満たす / WASM は当該言語のファイルが在るときだけロードされる | 0.4.x |
 
@@ -793,6 +836,66 @@ Stage 2 と同じく、自リポジトリの TS/JS 64 ファイルを拡張機�
 - 段4 / 4' は適合率が低い（34.4% / 4.4%）。§7.4 の LSP による確定（confidence < 0.7 の出現だけ定義を問い合わせる）で置き換えるか、表示しない
 - LSP の参照検索は実行ごとに結果が揺れる（スクリプトのトップレベルの変数の扱いなど）。基準の近くで判定する時は複数回測る
 
+### Stage 4 の実装結果（0.4.0 / 2026-10-16）
+
+自リポジトリの TS/JS 70 ファイルを、拡張機能と同じ差分キューで AST の経路と LSP の経路の両方で調べて実測した
+（`yarn verify:switch`、VS Code 1.142.0）。生成されたレポートは `verification/ast-switch/report.md` と `no-lsp.md`。
+
+| 受け入れ基準 | 結果 |
+| ------------ | ---- |
+| 自リポジトリの `examineRelationships` 実行時間が現行比 ≤ 50% | **達成。3.9%（12.1 秒 / 310.9 秒）**。全走査でキューに積んでから、名前解決（AST の経路では LSP による確定も）を終えるまで。言語サーバの起動を待ってから測った。3 回の計測で 3.7〜3.9% |
+| 言語サーバ未導入の状態でも TS/JS の関係が出る | **達成**。TypeScript の言語機能（`vscode.typescript-language-features`）を無効にした VS Code で、AST の経路は図にファイル間の線 212 本を出した（言語サーバのシンボルが無いため、ファイル同士の線）。LSP の経路は 0 件 |
+| 旧経路へのロールバックが動く | **達成**。AST の経路で調べた DB を `ast.enabled = false` で全走査すると、内容が同じでも全 70 ファイルを LSP の経路で調べ直し、図の関係が LSP 由来だけになった（ファイル間の線が初回の LSP の経路と 99.7% 一致）。`true` へ戻すと 11.2 秒で AST 由来だけに戻った（100% 一致） |
+
+**計画から変えた点**
+
+| 計画 | 実装 | 理由 |
+| ---- | ---- | ---- |
+| 旧 `table_relationships` を DROP | **残した**（§5.2・§5.4） | 文法の無い言語のフォールバックと、ロールバックの LSP の経路が使う。どちらの表を図に使うかはファイルごとの調査経路（`table_files.relationship_mode`）で決める |
+| 設定名 `crd.ast.*` | `codeRelationshipDiagram.ast.*` | 既存の設定の名前空間に揃えた。`maxAmbiguousCandidates` は見送った（§12 の設定項目） |
+| LSP で確定した関係の確信度 1.0 | 0.99 | 段1 と見分けるため（§7.4） |
+
+**図に出る線の変化**（初回の AST の経路 と LSP の経路）
+
+| 指標 | 値 | 読み方 |
+| ---- | -- | ---- |
+| LSP の経路の線のうち AST の経路にもある | 53.1%（189 / 356） | 切り替えで線は減る |
+| そのうち構造的な参照だけの線 | 154 本 | 定義側が名前付きの宣言でない LSP の関係（インターフェースを満たすオブジェクトリテラルのメンバなど）だけから成る線。依存ではないため出さない（Stage 2 の判断） |
+| 構造的な参照を除いた LSP の経路の線のうち AST の経路にもある | 93.6%（189 / 202） | 残りは文脈による参照と型を引けない値のメンバ（§11 の取りこぼし） |
+| AST の経路の線のうち LSP の経路にもある | 88.7%（189 / 213） | AST のみの線は import 文・再エクスポート・言語サーバが扱わないファイルなど |
+
+**精度**（`yarn verify:accuracy`。確信度 0.7 以上、シンボル単位）
+
+| 時点 | 再現率 | 適合率 |
+| ---- | ------ | ------ |
+| Stage 3 完了時（64 ファイル） | 92.3%（1,433 / 1,552） | 98.8%（1,433 / 1,451） |
+| Stage 4・LSP による確定の前（70 ファイル） | 90.6%（1,701 / 1,877） | 99.2%（1,701 / 1,715） |
+| **Stage 4・LSP による確定の後**（既定の動作） | **92.5%（1,737 / 1,877）** | **99.2%（1,737 / 1,751）** |
+
+LSP による確定は 264 回問い合わせ、候補を確定 102・置き換え 5・プロジェクト外として消した 119・答え無し 38・位置が見つからない 24
+（`new X()` の `X.constructor` のようにソースに名前が無いものなど）。確定した関係の適合率は 100%（47 / 47）。
+確定の時間は全走査の 12 秒に含まれる。
+
+**計測で分かった事**
+
+1. **言語サーバの起動直後は、参照検索が空を返す**。精度検証は起動を待たずに始めていたため、最初に調べる `codeDb.ts` のトップレベルの
+   シンボル（`Db` など）への関係が正解（LSP）から抜け、段2 の適合率が 91.9% に見えていた（キューの再試行 3 回では間に合わない）。
+   検証の前に起動を待つようにした（`warmUpLanguageServer()`）。拡張機能の LSP の経路も同じ影響を受けうる（従来からの限界。AST の経路は受けない）
+2. **vscode-test の実行中にリポジトリ内のファイルを編集・作成すると、VS Code が結果を出さずに終了する**（TS/JS 以外の Markdown でも）。
+   検証の実行中はリポジトリに触れない事
+3. **DuckDB 1.5.6 で、`WHERE path = '…'` が 0 件を返す DB が1度できた**（精度検証の DB。チェックポイント済み）。最適化の
+   `filter_pushdown` を切ると正しい件数が返り、`table_files` のような一意な列では起きない。再実行では再現せず、単純な構成でも再現できていない。
+   ファイル単位の読み込み（シンボル・事実・関係）が全て空になるため、Stage 4 とは別に調べる（0.3.40 の DuckDB 1.5 への更新から入りうる）
+
+**Stage 5 への申し送り**
+
+- 図は確信度 0.7 以上・ファイル間の AST 由来の関係を、シンボルのある最も近い祖先へ揃えて出している（`toSymbolRelationships()`）。
+  kind・strength・確信度は図へ渡していない（`codeRelationships.Relationship` は ID の組だけ）。Stage 5 で `RelationshipV2` の種類と重みを渡す
+- `import` 関係（ファイル → 取り込んだ定義）は参照元がファイルのルートシンボルになり、シンボル表示ではファイルからシンボルへの線になる
+- 段4 / 4' のうち確定できなかったもの（答え無し・位置が見つからない）は閾値未満のまま残り、図には出ない
+- 名前解決はキューが空になった時点でしか走らないため、全走査の途中で `showDiagram` を開くと AST 由来の関係が古い（LSP の経路も途中では不完全で、同じ扱い）
+- Stage 2 の既知の限界（後から作られたファイルへの相対 import）は残っている（§9）
+
 ### 設定項目（`package.json` の `contributes.configuration`）
 
 | 設定 | 既定 | 用途 |
@@ -802,6 +905,16 @@ Stage 2 と同じく、自リポジトリの TS/JS 64 ファイルを拡張機�
 | `crd.ast.confidenceThreshold` | `0.7` | LSP 確定を起動する閾値 |
 | `crd.ast.maxAmbiguousCandidates` | `4` | 段4' の候補数上限 |
 | `crd.graph.showIntraFile` | `false` | ファイル内依存の表示 |
+
+**Stage 4 の実装**: 既存の設定（`codeRelationshipDiagram.useHierarchicalLayout`）に名前空間を揃え、`codeRelationshipDiagram.ast.*` とした。
+
+| 設定 | 既定 | 実装 |
+| ---- | ---- | ---- |
+| `codeRelationshipDiagram.ast.enabled` | `true` | TS/JS の関係を AST の経路で調べる。`false` にすると全ファイルを LSP の参照検索で調べ直す（ロールバック）。変更は即座に全走査を起動し、経路の異なるファイルだけを調べ直す |
+| `codeRelationshipDiagram.ast.lspVerification` | `true` | §7.4 の LSP による確定 |
+| `codeRelationshipDiagram.ast.confidenceThreshold` | `0.7` | 確定を起動する閾値と、**図に出す AST 由来の関係の確信度の下限**を兼ねる |
+| `crd.ast.maxAmbiguousCandidates` | — | **未実装**。変えると名前解決の結果が変わり、設定ごとに再解決が要るため見送った。段4' は §7.4 の確定でまとめて1回問い合わせるため、上限を変える必要が薄れた |
+| `crd.graph.showIntraFile` | — | Stage 5（描画）で扱う |
 
 ---
 
@@ -819,8 +932,8 @@ Stage 2 と同じく、自リポジトリの TS/JS 64 ファイルを拡張機�
 | 8 | 解決オーケストレータ（段1〜5・confidence） | `src/relationship/resolve.ts`、差分キューへの組み込み: `src/relationship/fileDifference/queue.ts`、型の手掛かり: `src/extruct/ast/localFacts.ts`, `queries/*.scm` | 2-3 | 完了（段1〜4'。段5 は理由ごとに数えるだけ。差分更新の再解決の範囲は Stage 4 で広げる。§9） |
 | 9 | 解決 VIEW 群・集約 VIEW | `src/codeDb.ts`（スキーマ v3・v4・`view_relationship_strength`） | 2-3 | 完了。集約 VIEW は confidence で重み付けする。解決 VIEW は採用せず TypeScript で解決（§7.3） |
 | 10 | 精度検証ハーネスとレポート | `src/test/astAccuracy.verify.ts`, `src/relationship/accuracy.ts`, `verification/ast-accuracy/`, `.vscode-test.mjs`（`accuracy` ラベル） | 2-3 | 完了（Stage 3 で閾値ごと・段ごとの集計と文脈による参照の除外を追加） |
-| 11 | `computeUpsert()` を Phase A + B 呼び出しへ差し替え、LSP 降格 | `src/relationship/examine.ts`, `src/relationship/codeRelationships.ts` | 4 | 未着手 |
-| 12 | 設定項目の追加とロールバック経路 | `package.json`, `src/extension.ts` | 4 | 未着手 |
+| 11 | `computeUpsert()` を Phase A + B 呼び出しへ差し替え、LSP 降格 | `src/relationship/examine.ts`（経路の分岐）, `fileDifference/queue.ts`・`item.ts`（経路の切り替えの調べ直し・確定の起動）, `src/relationship/lspVerification.ts`（§7.4）, `src/relationship/astRelationships.ts`（図への受け渡し）, `src/codeDb.ts`（スキーマ v5・再解決の範囲）, `resolve.ts`（`candidateNamesChanged()`） | 4 | 完了 |
+| 12 | 設定項目の追加とロールバック経路 | `package.json`, `src/extension.ts`、検証: `src/test/astSwitch.verify.ts`, `astNoLsp.verify.ts`, `examineWorkspace.ts`, `verification/ast-switch/`, `.vscode-test.mjs`（`switch` / `nolsp` ラベル） | 4 | 完了 |
 | 13 | kind / strength / intra-file の描画 | `src/relationship/cosmosAdapter.ts`, `src/webview/graphView.ts` | 5 | 未着手 |
 | 14 | 言語追加 | `src/extruct/ast/queries/` | 6 | 未着手 |
 
@@ -844,7 +957,7 @@ Stage 2 と同じく、自リポジトリの TS/JS 64 ファイルを拡張機�
 | 同名メソッド過多で段4' が爆発 | ノイズ・性能低下 | 候補数上限で破棄し、破棄件数をログ出力 |
 | WASM サイズ増 | `.vsix` 肥大 | 言語ごと遅延ロード。サイズを CHANGELOG に記録し、閾値超過時は言語を別 extension pack へ分離を検討 |
 | tree-sitter の位置と LSP の位置のズレ | 判定不能 | `unknown` にフォールバックし既存動作を維持 |
-| 既存 DB の移行失敗 | データ損失 | v1 テーブルは Stage 4 まで DROP しない。移行不能時は再構築を案内 |
+| 既存 DB の移行失敗 | データ損失 | v1 テーブルは Stage 4 まで DROP しない（Stage 4 で、フォールバックとロールバックに使うため残すと決めた）。移行不能時は再構築を案内 |
 | 切替時の精度後退 | 依存が消える | Stage 4 は §11 の基準を満たすまで実施しない。`crd.ast.enabled = false` で即時ロールバック |
 | 言語ごとの構文差（クエリ保守） | 言語追加コスト | キャプチャ名の規約を統一し、言語追加を `.scm` + モジュール解決の2点に限定 |
 
@@ -893,6 +1006,6 @@ Stage 2 と同じく、自リポジトリの TS/JS 64 ファイルを拡張機�
 
 ## 最終更新
 
-- **日付**: 2026-10-08
-- **バージョン**: 0.3.39（Stage 3 完了時点）
+- **日付**: 2026-10-16
+- **バージョン**: 0.4.0（Stage 4 完了時点）
 - **作成者**: Claude Code

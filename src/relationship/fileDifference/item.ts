@@ -50,21 +50,28 @@ export class Difference {
     public readonly removes: string[];
     /** 不変ファイルのうち、AST の事実が未抽出か古い版数のもの */
     public readonly factsStale: codeFiles.File[];
+    /** 不変ファイルのうち、関係の調査経路が今の設定と異なるもの（設定 ast.enabled の切り替え） */
+    public readonly modeStale: codeFiles.File[];
     public constructor(lists: codeFiles.File[], additions: codeFiles.File[], updates: codeFiles.File[], notchanges: codeFiles.File[], removes: string[],
-        factsStale: codeFiles.File[] = []) {
+        factsStale: codeFiles.File[] = [], modeStale: codeFiles.File[] = []) {
         this.lists = lists;
         this.additions = additions;
         this.updates = updates;
         this.notchanges = notchanges;
         this.removes = removes;
         this.factsStale = factsStale;
+        this.modeStale = modeStale;
     }
 
-    /** @description キュー項目へ変換する（不変ファイルは含めない。事実の埋め戻しは factItems で別に扱う） */
+    /**
+     * @description キュー項目へ変換する（不変ファイルは含めない。事実の埋め戻しは factItems で別に扱う）
+     * 調査経路の異なる不変ファイルは、全シンボルの関係を調べ直す（LSP の経路へ戻すと、定義側の関係が無いため）
+     */
     public toItems(): Item[] {
         return [
             ...this.additions.map(file => Item.upsert(file)),
             ...this.updates.map(file => Item.upsert(file)),
+            ...this.modeStale.map(file => Item.upsert(file, true)),
             ...this.removes.map(relative_path => Item.remove(relative_path)),
         ];
     }
