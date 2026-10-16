@@ -183,6 +183,8 @@ export class Visualization {
                 // ファイル間のエッジを作成
                 const fileRelations = new Map<string, number>();
                 relationships.forEach(rel => {
+                    // ファイル内の関係 (Stage 5 のファイル内の依存) はファイル間の辺にしない
+                    if (rel.reference.path === rel.define.path) { return; }
                     const key = `${rel.reference.path}|||${rel.define.path}`;
                     const reverseKey = `${rel.define.path}|||${rel.reference.path}`;
                     if (fileRelations.has(key)) {
@@ -331,6 +333,8 @@ export class Visualization {
                     color: link.color,
                     details: link.details,
                     level: link.level,
+                    strengths: link.strengths,
+                    intraFile: link.intraFile,
                 })),
                 directories: drawingData.directories,
                 entryPoints: drawingData.entryPoints,
@@ -527,7 +531,8 @@ export class Visualization {
 
                 // JavaScriptファイルの開始
                 writeStream.write('// Graph Data for Standalone HTML\n');
-                writeStream.write('window.COSMOS_GRAPH_DATA = {\n');
+                // graphView.ts は STANDALONE_GRAPH_DATA を読む（以前は COSMOS_GRAPH_DATA に書いていたため、書き出した HTML が読み込めなかった）
+                writeStream.write('window.STANDALONE_GRAPH_DATA = {\n');
 
                 // ノード配列
                 writeStream.write('  "nodes": [\n');

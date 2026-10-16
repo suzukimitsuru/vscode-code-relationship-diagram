@@ -1012,14 +1012,14 @@ export class Db extends vscode.Disposable {
     }
 
     /**
-     * @description 図に表示する関係 (v2)。参照元のファイルを AST の経路で調べた、ファイル間の関係
+     * @description 図に表示する関係 (v2)。参照元のファイルを AST の経路で調べた関係 (ファイル内の関係を含む)
      * @param threshold 確信度の下限 (含む)
      * @returns 関係 (参照元ファイル・行の順)
      */
     public async relationships_v2_queryAstMode(threshold: number): Promise<RelationshipV2[]> {
         const rows = await this._all(
             'SELECT r.* FROM table_relationships_v2 r JOIN table_files f ON f.relative_path = r.reference_path ' +
-            "WHERE f.relationship_mode = 'ast' AND NOT r.is_intra_file AND r.confidence >= ? " +
+            "WHERE f.relationship_mode = 'ast' AND r.confidence >= ? " +
             'ORDER BY r.reference_path, r.reference_line, r.reference_character, r.define_fqn;', threshold);
         return rows.map(Db._relationshipV2Of);
     }

@@ -46,8 +46,8 @@ describe('getRelatedNodes', () => {
     it('depth=1では直接リンクしたノードのみ含む', () => {
         const nodes = [makeNode({ id: 'a' }), makeNode({ id: 'b' }), makeNode({ id: 'c' })];
         const links: CosmosLink[] = [
-            { source: 0, target: 1, width: 1, color: 0, details: [], level: 'file' },
-            { source: 1, target: 2, width: 1, color: 0, details: [], level: 'file' },
+            { source: 0, target: 1, width: 1, color: 0, details: [], level: 'file', strengths: {}, intraFile: false },
+            { source: 1, target: 2, width: 1, color: 0, details: [], level: 'file', strengths: {}, intraFile: false },
         ];
         const data = makeData(nodes, links);
         const related = getRelatedNodes(data, 'a', 1);
@@ -57,8 +57,8 @@ describe('getRelatedNodes', () => {
     it('depthを増やすと間接的につながるノードも含む', () => {
         const nodes = [makeNode({ id: 'a' }), makeNode({ id: 'b' }), makeNode({ id: 'c' })];
         const links: CosmosLink[] = [
-            { source: 0, target: 1, width: 1, color: 0, details: [], level: 'file' },
-            { source: 1, target: 2, width: 1, color: 0, details: [], level: 'file' },
+            { source: 0, target: 1, width: 1, color: 0, details: [], level: 'file', strengths: {}, intraFile: false },
+            { source: 1, target: 2, width: 1, color: 0, details: [], level: 'file', strengths: {}, intraFile: false },
         ];
         const data = makeData(nodes, links);
         const related = getRelatedNodes(data, 'a', 2);
@@ -142,7 +142,7 @@ describe('applyForceLayout', () => {
     it('リンクしたノードは引力で理想距離に近づく', () => {
         const a = makeNode({ id: 'a', x: 0, y: 0, size: 10 });
         const b = makeNode({ id: 'b', x: 1000, y: 0, size: 10 });
-        const links: CosmosLink[] = [{ source: 0, target: 1, width: 1, color: 0, details: [], level: 'file' }];
+        const links: CosmosLink[] = [{ source: 0, target: 1, width: 1, color: 0, details: [], level: 'file', strengths: {}, intraFile: false }];
         const data = makeData([a, b], links);
 
         applyForceLayout(data, 50, { gravity: 0 });

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as SYMBOL from '../extruct/symbol';
 import * as path from 'path';
+import type { KindStrengths } from '../webview/linkStyle';
 
 /** シンボル位置 */
 export class SymbolLocation {
@@ -22,10 +23,13 @@ export class Relationship {
     public readonly reference: SymbolLocation;
     /** 定義 */
     public readonly define: SymbolLocation;
+    /** 種類ごとの強さ (AST 由来の関係のみ。LSP 由来は種類が分からないため null) */
+    public readonly strengths: KindStrengths | null;
     /** コンストラクタ */
-    public constructor(reference: SymbolLocation, define: SymbolLocation) {
+    public constructor(reference: SymbolLocation, define: SymbolLocation, strengths: KindStrengths | null = null) {
         this.reference = reference;
         this.define = define;
+        this.strengths = strengths;
     }
 }
 

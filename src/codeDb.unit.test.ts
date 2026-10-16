@@ -443,11 +443,12 @@ describe('codeDb', () => {
             await db.executeQuery("INSERT INTO table_relationships VALUES ('b/B', 'a/A'), ('a/A', 'b/B'), ('a/A', 'c/C')");
             expect((await db.relationship_queryLspMode()).map(entry => `${entry.reference.id}->${entry.define.id}`).sort()).toEqual(['a/A->b/B', 'a/A->c/C']);
 
-            // v2: 参照元が AST の経路で、ファイル間で、確信度が閾値以上のもの
+            // v2: 参照元が AST の経路で、確信度が閾値以上のもの (ファイル内の関係も含む。Stage 5 で表示を切り替える)
             await db.relationships_v2_replace(['a.ts'], [v2('a.ts', 'b.ts', 0.95), v2('a.ts', 'b.ts', 0.5), v2('a.ts', 'a.ts', 1, true)], 1);
             await db.relationships_v2_replace(['b.ts'], [v2('b.ts', 'a.ts', 0.95)], 1);
-            expect((await db.relationships_v2_queryAstMode(0.7)).map(entry => [entry.referencePath, entry.confidence])).toEqual([['a.ts', 0.95]]);
-            expect(await db.relationships_v2_queryAstMode(0)).toHaveLength(2);
+            expect((await db.relationships_v2_queryAstMode(0.7)).map(entry => [entry.definePath, entry.confidence]).sort())
+                .toEqual([['a.ts', 1], ['b.ts', 0.95]]);
+            expect(await db.relationships_v2_queryAstMode(0)).toHaveLength(3);
 
             // 定義側のファイル単位で LSP 由来の関係を消す
             await db.relationship_deleteDefinePath('b.ts');

@@ -88,7 +88,8 @@ src/
 │   ├── communityDetection.ts # Louvainコミュニティ検出
 │   └── visualization.ts      # Webview管理、グラフ生成
 └── webview/
-    └── graphView.ts          # グラフUI（TypeScript、Cosmos.gl制御）
+    ├── graphView.ts          # グラフUI（TypeScript、Cosmos.gl制御）
+    └── linkStyle.ts          # 関係の線の色（種類）・太さ（強さ）・閾値（拡張機能と共用）
 
 templates/
 ├── loading.html              # ローディング画面
@@ -275,7 +276,8 @@ docs/
 **主経路の切替（Stage 4 / v0.4.0～）**: TS/JS の関係は AST の経路で調べ、図に出す（`docs/ast-plan.md` Stage 4）
 
 - **調査経路**: ファイルごとに `table_files.relationship_mode`（`ast` / `lsp`）を記録する。`ast` は LSP の参照検索と fan-out を行わない。設定 `codeRelationshipDiagram.ast.enabled = false` で全ファイルを LSP の経路へ戻せる（全走査で経路の異なるファイルを調べ直す）。文法の無い言語・事実を抽出できなかったファイルは常に `lsp`
-- **図**: `queryDiagramRelationships()` が、定義側が `lsp` の LSP 由来の関係と、参照元が `ast` で確信度が `ast.confidenceThreshold`（0.7）以上のファイル間の AST 由来の関係を読む。AST の `fqn` はシンボルのある最も近い祖先へ揃える（言語サーバのシンボルが無ければファイル）
+- **図**: `queryDiagramRelationships()` が、定義側が `lsp` の LSP 由来の関係と、参照元が `ast` で確信度が `ast.confidenceThreshold`（0.7）以上の AST 由来の関係を読む。AST の `fqn` はシンボルのある最も近い祖先へ揃える（言語サーバのシンボルが無ければファイル）
+- **線の色と太さ**（Stage 5 / v0.4.1～）: 関係を種類別の強さ（Σ 基本重み × 確信度。LSP 由来は unknown に 1 件 = 1）で集計し、線の色は最も強い種類、太さは強さの対数（`src/webview/linkStyle.ts`）。Webview の操作パネルで種類の切替・強さの下位を隠すスライダー・ファイル内の関係（既定は非表示）を切り替える
 - **LSP による確定**（§7.4。`lspVerification.ts`）: 名前解決の後、閾値未満の関係を参照出現の位置 × 名前ごとに `executeDefinitionProvider` で問い合わせ、返った定義（確信度 0.99）へ置き換える。答えが無ければそのまま残す
 - 旧 `table_relationships` は DROP しない（フォールバックとロールバックで使う）
 - 検証: `yarn verify:switch`（時間・ロールバック・言語サーバ未導入。`verification/ast-switch/`）
@@ -510,7 +512,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 ## 最終更新
 
 - **日付**: 2026-10-16
-- **バージョン**: 0.4.0
+- **バージョン**: 0.4.1
 - **作成者**: Claude Code
 
 このファイルはプロジェクトの進化に伴い定期的に更新してください。

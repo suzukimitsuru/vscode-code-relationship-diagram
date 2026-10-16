@@ -8,6 +8,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as SYMBOL from '../extruct/symbol';
 import * as codeRelationships from './codeRelationships';
+import { CIRCULAR_LINK_COLOR, KindStrengths, addStrengths, dominantKindOf, linkColorOf, linkWidthOf, strengthOf } from '../webview/linkStyle';
+import { RelationshipKind } from '../extruct/ast/relationshipKind';
 
 /**
  * Cosmos.glノードデータ
@@ -93,6 +95,10 @@ export interface CosmosLink {
     details: RelationshipDetail[];
     /** リンクレベル: file=ファイル間集約リンク、symbol=シンボル間リンク */
     level: 'file' | 'symbol';
+    /** 種類ごとの強さ (内包する関係の Σ 基本重み × 確信度。LSP 由来の関係は unknown に 1 件 = 1) */
+    strengths: KindStrengths;
+    /** 同じファイルの中のシンボル間の関係か (既定では表示しない) */
+    intraFile: boolean;
 }
 
 /**
@@ -144,14 +150,18 @@ const MAINTENANCE_COLORS = {
 };
 
 /**
- * リンク色（#3498DB - 通常青）
+ * 関係の種類ごとの強さ (AST 由来はそのまま、LSP 由来は種類が分からないため unknown に 1 件 = 1)
  */
-const LINK_COLOR = 0x3498DB;
+function strengthsOf(relationship: codeRelationships.Relationship): KindStrengths {
+    return relationship.strengths ?? { [RelationshipKind.unknown]: 1 };
+}
 
 /**
- * 循環参照リンク色（赤）
+ * 線の太さと色 (強さの合計の対数と、最も強い種類の色)
  */
-const CIRCULAR_LINK_COLOR = 0xFF4444;
+function linkStyleOf(strengths: KindStrengths): { width: number, color: number } {
+    return { width: linkWidthOf(strengthOf(strengths)), color: linkColorOf(dominantKindOf(strengths)) };
+}
 
 /**
  * エントリポイントとみなす命名パターン
@@ -361,7 +371,7 @@ export function convertToCosmosFormat(
 
     // 4. ファイル間リンクを生成
     const fileRelations = aggregateFileRelationships(relationships, symbols);
-    for (const [key, details] of fileRelations) {
+    for (const [key, { details, strengths }] of fileRelations) {
         const [sourcePath, targetPath] = key.split('|||');
         const sourceFile = fileNodes.get(sourcePath);
         const targetFile = fileNodes.get(targetPath);
@@ -374,10 +384,11 @@ export function convertToCosmosFormat(
                 links.push({
                     source: sourceIdx,
                     target: targetIdx,
-                    width: calculateLinkWidth(details.length),
-                    color: LINK_COLOR,
+                    ...linkStyleOf(strengths),
                     details: details,
                     level: 'file',
+                    strengths: strengths,
+                    intraFile: false,
                 });
             }
         }
@@ -431,7 +442,7 @@ export function convertToCosmosFormat(
     }
 
     // 10. シンボル間リンクを生成（シンボルモード表示用、§2-2-1）
-    const symbolRelationMap = new Map<string, RelationshipDetail[]>();
+    const symbolRelationMap = new Map<string, { details: RelationshipDetail[], strengths: KindStrengths }>();
     for (const rel of relationships) {
         const sourceIdx = nodeIndex.get(rel.reference.id);
         const targetIdx = nodeIndex.get(rel.define.id);
@@ -440,11 +451,13 @@ export function convertToCosmosFormat(
 
         const key = `${sourceIdx}|||${targetIdx}`;
         if (!symbolRelationMap.has(key)) {
-            symbolRelationMap.set(key, []);
+            symbolRelationMap.set(key, { details: [], strengths: {} });
         }
         const sourceNode = nodes[sourceIdx];
         const targetNode = nodes[targetIdx];
-        symbolRelationMap.get(key)!.push({
+        const entry = symbolRelationMap.get(key)!;
+        addStrengths(entry.strengths, strengthsOf(rel));
+        entry.details.push({
             sourceName: sourceNode?.label || 'Unknown',
             targetName: targetNode?.label || 'Unknown',
             sourceLine: rel.reference.startLine,
@@ -453,15 +466,18 @@ export function convertToCosmosFormat(
             targetPath: rel.define.path,
         });
     }
-    for (const [key, details] of symbolRelationMap) {
+    for (const [key, { details, strengths }] of symbolRelationMap) {
         const parts = key.split('|||');
+        const source = parseInt(parts[0]);
+        const target = parseInt(parts[1]);
         links.push({
-            source: parseInt(parts[0]),
-            target: parseInt(parts[1]),
-            width: calculateLinkWidth(details.length),
-            color: LINK_COLOR,
+            source: source,
+            target: target,
+            ...linkStyleOf(strengths),
             details,
             level: 'symbol',
+            strengths: strengths,
+            intraFile: nodes[source].path === nodes[target].path,
         });
     }
 
@@ -566,13 +582,13 @@ function getSymbolColor(kind: vscode.SymbolKind): number {
 function aggregateFileRelationships(
     relationships: codeRelationships.Relationship[],
     symbols: SYMBOL.SymbolModel[]
-): Map<string, RelationshipDetail[]> {
+): Map<string, { details: RelationshipDetail[], strengths: KindStrengths }> {
     const symbolIndex = new Map<string, SYMBOL.SymbolModel>();
     for (const symbol of symbols) {
         symbolIndex.set(symbol.id, symbol);
     }
 
-    const fileRelations = new Map<string, RelationshipDetail[]>();
+    const fileRelations = new Map<string, { details: RelationshipDetail[], strengths: KindStrengths }>();
 
     for (const rel of relationships) {
         const sourcePath = rel.reference.path;
@@ -587,13 +603,15 @@ function aggregateFileRelationships(
         const key = `${sourcePath}|||${targetPath}`;
 
         if (!fileRelations.has(key)) {
-            fileRelations.set(key, []);
+            fileRelations.set(key, { details: [], strengths: {} });
         }
 
         const sourceSymbol = symbolIndex.get(rel.reference.id);
         const targetSymbol = symbolIndex.get(rel.define.id);
 
-        fileRelations.get(key)!.push({
+        const entry = fileRelations.get(key)!;
+        addStrengths(entry.strengths, strengthsOf(rel));
+        entry.details.push({
             sourceName: sourceSymbol?.name || 'Unknown',
             targetName: targetSymbol?.name || 'Unknown',
             sourceLine: rel.reference.startLine,
@@ -604,14 +622,6 @@ function aggregateFileRelationships(
     }
 
     return fileRelations;
-}
-
-/**
- * リンク幅を計算（関係数に基づく対数スケール）
- */
-function calculateLinkWidth(relationshipCount: number): number {
-    // 1-10の範囲で対数スケール
-    return Math.min(1 + Math.log2(relationshipCount + 1) * 2, 10);
 }
 
 /**

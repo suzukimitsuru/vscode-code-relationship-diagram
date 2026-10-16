@@ -34,21 +34,34 @@ const pairs = (relationships: Relationship[]): string[] => relationships.map(ent
 describe('toSymbolRelationships', () => {
     it('両端をシンボルのある最も近い祖先へ揃える', () => {
         const found = toSymbolRelationships(SYMBOLS, [v2('a.ts#A.m.local', 'b.ts#helper')]);
-        expect(found).toEqual([new Relationship(new SymbolLocation('a/A.m', 'a.ts', 7), new SymbolLocation('b', 'b.ts', 0))]);
+        expect(found).toEqual([new Relationship(new SymbolLocation('a/A.m', 'a.ts', 7), new SymbolLocation('b', 'b.ts', 0),
+            { [RelationshipKind.call]: 5 * 0.95 })]);
     });
 
     it('言語サーバのシンボルが無いファイル同士は、ファイル (ルートシンボル) の関係になる', () => {
         expect(pairs(toSymbolRelationships(SYMBOLS, [v2('b.ts#f', 'a.ts#A')]))).toEqual(['b->a/A']);
     });
 
-    it('参照元・定義の組で一意にし、ファイル内の関係とシンボルの無いファイルは除く', () => {
+    it('参照元・定義の組で一意にし、種類ごとの強さを足し合わせる。シンボルの無いファイルは除く', () => {
         const found = toSymbolRelationships(SYMBOLS, [
             v2('a.ts#A.m', 'b.ts#x'), v2('a.ts#A.m', 'b.ts#y', 9),     // b.ts#x と b.ts#y はどちらも b.ts に揃う
-            v2('a.ts#A.m', 'a.ts#A'),                                // ファイル内
+            { ...v2('a.ts#A.m', 'b.ts#z'), kind: RelationshipKind.import, weight: 1, confidence: 0.95 },
             v2('a.ts#A', 'c.ts#C'),                                  // c.ts のシンボルが無い (未調査)
         ]);
         expect(pairs(found)).toEqual(['a/A.m->b']);
         expect(found[0].reference.startLine).toBe(7);
+        // 強さ = Σ 基本重み × 確信度 (call 5 × 0.95 が2件、import 1 × 0.95)
+        expect(found[0].strengths![RelationshipKind.call]).toBeCloseTo(9.5);
+        expect(found[0].strengths![RelationshipKind.import]).toBeCloseTo(0.95);
+    });
+
+    it('ファイル内の関係は、両端が別のシンボル (ルートシンボルを除く) のものだけを残す', () => {
+        const found = toSymbolRelationships(SYMBOLS, [
+            v2('a.ts#A.m', 'a.ts#A'),            // メソッド → クラス: 残す
+            v2('a.ts#A.m.local', 'a.ts#A.m'),    // 自分の内側への参照 (同じシンボルに揃う): 除く
+            v2('a.ts#', 'a.ts#A'),               // ファイル (import 文など) → 自ファイルのシンボル: 除く
+        ]);
+        expect(pairs(found)).toEqual(['a/A.m->a/A']);
     });
 });
 

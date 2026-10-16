@@ -3,6 +3,7 @@ import type * as codeDb from '../codeDb';
 import * as SYMBOL from '../extruct/symbol';
 import { Relationship, SymbolLocation } from './codeRelationships';
 import type { RelationshipV2 } from './resolve';
+import { addStrengths } from '../webview/linkStyle';
 
 /**
  * 完全修飾名を、言語サーバのシンボルに付いた最も近い祖先へ正規化する
@@ -29,10 +30,11 @@ export function normalizeFqn(fqn: string, attached: ReadonlySet<string>): string
 /**
  * AST 由来の関係を、シンボル ID の関係 (図の入力) にする
  * @param symbols 全シンボル (解決キー付き。ファイルのルートシンボルの解決キーは `<path>#`)
- * @param relationships AST 由来の関係 (ファイル間のもの)
- * @returns シンボルの関係 (参照元・定義の組で一意。ファイル内の関係は含めない)
+ * @param relationships AST 由来の関係
+ * @returns シンボルの関係 (参照元・定義の組で一意。種類ごとの強さ = Σ 基本重み × 確信度 を組ごとに足し合わせる)
  * @description 両端をシンボルのある最も近い祖先へ揃える。言語サーバのシンボルが無いファイル (言語サーバ未導入など) は
- *              ルートシンボル (ファイル) に揃うため、ファイル単位の関係として表示される
+ *              ルートシンボル (ファイル) に揃うため、ファイル単位の関係として表示される。
+ *              ファイル内の関係は、両端が別のシンボル (ルートシンボルを除く) になるものだけを残す (Stage 5 のファイル内の依存の表示)
  */
 export function toSymbolRelationships(symbols: readonly SYMBOL.SymbolModel[], relationships: readonly RelationshipV2[]): Relationship[] {
     const byFqn = new Map<string, SYMBOL.SymbolModel>();
@@ -46,15 +48,19 @@ export function toSymbolRelationships(symbols: readonly SYMBOL.SymbolModel[], re
     for (const relationship of relationships) {
         const reference = byFqn.get(normalizeFqn(relationship.referenceFqn, attached));
         const define = byFqn.get(normalizeFqn(relationship.defineFqn, attached));
-        if (!reference || !define || reference.path === define.path) {
+        if (!reference || !define || reference.id === define.id ||
+            (reference.path === define.path && (reference.parentId === null || define.parentId === null))) {
             continue;
         }
         const key = JSON.stringify([reference.id, define.id]);
-        if (!result.has(key)) {
-            result.set(key, new Relationship(
+        let found = result.get(key);
+        if (!found) {
+            found = new Relationship(
                 new SymbolLocation(reference.id, reference.path, relationship.referenceLine),
-                new SymbolLocation(define.id, define.path, define.start.line)));
+                new SymbolLocation(define.id, define.path, define.start.line), {});
+            result.set(key, found);
         }
+        addStrengths(found.strengths!, { [relationship.kind]: relationship.weight * relationship.confidence });
     }
     return [...result.values()];
 }

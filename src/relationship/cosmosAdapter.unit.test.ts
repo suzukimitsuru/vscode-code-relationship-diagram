@@ -11,6 +11,8 @@ import {
     CosmosNode,
     CosmosLink,
 } from './cosmosAdapter';
+import { RelationshipKind } from '../extruct/ast/relationshipKind';
+import { linkColorOf, linkWidthOf } from '../webview/linkStyle';
 
 function fileSymbol(path: string, lineCount: number): SYMBOL.SymbolModel {
     return new SYMBOL.SymbolModel(
@@ -48,6 +50,37 @@ function relationship(refId: string, refPath: string, refLine: number, defId: st
 }
 
 describe('convertToCosmosFormat', () => {
+    it('線に種類ごとの強さを集計し、色は最も強い種類・太さは強さの合計で決める (Stage 5)', () => {
+        const a = fileSymbol('src/a.ts', 10);
+        const b = fileSymbol('src/b.ts', 10);
+        const aRun = childSymbol('a/run', 'run', 'src/a.ts', a.id);
+        const aHelp = childSymbol('a/help', 'help', 'src/a.ts', a.id);
+        const bBase = childSymbol('b/Base', 'Base', 'src/b.ts', b.id);
+        const withStrengths = (refId: string, refPath: string, defId: string, defPath: string, strengths: Record<number, number>) =>
+            new codeRelationships.Relationship(new codeRelationships.SymbolLocation(refId, refPath, 1),
+                new codeRelationships.SymbolLocation(defId, defPath, 1), strengths);
+        const data = convertToCosmosFormat([a, b, aRun, aHelp, bBase], [
+            withStrengths(aRun.id, 'src/a.ts', bBase.id, 'src/b.ts', { [RelationshipKind.inheritance]: 9.5, [RelationshipKind.import]: 0.95 }),
+            withStrengths(aHelp.id, 'src/a.ts', bBase.id, 'src/b.ts', { [RelationshipKind.call]: 2.85 }),
+            withStrengths(aRun.id, 'src/a.ts', aHelp.id, 'src/a.ts', { [RelationshipKind.call]: 3 }),     // ファイル内
+            relationship(bBase.id, 'src/b.ts', 1, aRun.id, 'src/a.ts', 1),                                  // LSP 由来 (種類無し)
+        ]);
+        const fileLink = data.links.find(link => link.level === 'file' && data.nodes[link.source].path === 'src/a.ts')!;
+        expect(fileLink.strengths).toEqual({ [RelationshipKind.inheritance]: 9.5, [RelationshipKind.import]: 0.95, [RelationshipKind.call]: 2.85 });
+        expect(fileLink.color).toBe(linkColorOf(RelationshipKind.inheritance));
+        expect(fileLink.width).toBeCloseTo(linkWidthOf(13.3));
+        expect(fileLink.intraFile).toBe(false);
+
+        // LSP 由来の関係は種類不明 (unknown) に 1 件 = 1
+        const lspLink = data.links.find(link => link.level === 'file' && data.nodes[link.source].path === 'src/b.ts')!;
+        expect(lspLink.strengths).toEqual({ [RelationshipKind.unknown]: 1 });
+
+        // ファイル内の関係はシンボル間の線だけになり、印が付く。ファイル間の線・次数には数えない
+        const intra = data.links.filter(link => link.intraFile);
+        expect(intra.map(link => [data.nodes[link.source].id, data.nodes[link.target].id, link.level])).toEqual([[aRun.id, aHelp.id, 'symbol']]);
+        expect(data.links.filter(link => link.level === 'file')).toHaveLength(2);
+    });
+
     it('参照も被参照も無い孤立ファイルはDead codeとして扱われる', () => {
         const foo = fileSymbol('src/foo.ts', 50);
         const data = convertToCosmosFormat([foo], []);
@@ -152,7 +185,7 @@ describe('Cosmos.gl向け配列変換', () => {
         },
     ];
     const links: CosmosLink[] = [
-        { source: 0, target: 1, width: 1, color: 0x3498DB, details: [], level: 'file' },
+        { source: 0, target: 1, width: 1, color: 0x3498DB, details: [], level: 'file', strengths: {}, intraFile: false },
     ];
 
     it('getPositionsAsFloat32Arrayはx,yを交互に並べる', () => {
